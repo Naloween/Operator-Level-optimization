@@ -1,7 +1,8 @@
 """Smoke-test operator / ALS variants used in the paper appendix.
 
 Exits non-zero if any implemented variant raises. Prints a summary table and
-writes ``outputs/smoke/variants/smoke_variants.json`` (under gitignored outputs).
+writes ``outputs/smoke/variants/smoke_variants.json`` (under gitignored outputs)
+and a sibling ``config.json`` with CLI, environment, and a summary of fixed defaults.
 
 Not implemented in this repository (no entry points / code paths):
   * D&C appendix-only heuristics: cross-sample target penalty, node linearized
@@ -12,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
+import sys
 import traceback
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -402,6 +405,34 @@ def main() -> None:
     # --- Report ---
     out_path = Path(args.out_json)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    repro = {
+        "script_module": "operator_level_optimization.scripts.smoke_variants",
+        "cli_args": vars(args),
+        "environment": {
+            "python": sys.version,
+            "platform": platform.platform(),
+            "torch": torch.__version__,
+        },
+        "outputs": {
+            "results_json": str(out_path.resolve()),
+            "config_json": str((out_path.parent / "config.json").resolve()),
+        },
+        "implementation_note": (
+            "Each smoke case builds ``OperatorLevelMLP`` / ``deep_linear_run`` / ``MaskedOperatorALS`` "
+            "with literals in this file. Search for ``OperatorLevelMLP(``, ``deep_linear_run(``, and "
+            "``MaskedOperatorALS(`` for exact kwargs, shapes, and seeds."
+        ),
+        "fixed_defaults": {
+            "mlp_architecture": "24 -> 8 -> 5 (bias-free), ReLU, CrossEntropyLoss, cpu float64, torch.manual_seed(0)",
+            "mlp_smoke_steps": 2,
+            "mlp_smoke_batch": 8,
+            "deep_linear": "depth=8, d=4, n=8, cpu float64, seed=0, target_kind=orth, mse_grad (see smoke_deep_linear_pair)",
+            "fgln_smoke": "d=8, depth=12, n=16, p_gate=0.85, outer lr=0.5, lam=1e-4, n_sweeps=2, adaptive_lambda_step=True",
+        },
+    }
+    (out_path.parent / "config.json").write_text(json.dumps(repro, indent=2, sort_keys=True))
+
     payload: dict[str, Any] = {"results": [asdict(r) for r in results]}
     out_path.write_text(json.dumps(payload, indent=2))
 
@@ -412,7 +443,7 @@ def main() -> None:
         print(f"{tag}  {r.name:{w_name}s}  {first_line}")
 
     failed = [r for r in results if not r.skipped and not r.ok]
-    print(f"\nWrote {out_path}")
+    print(f"\nWrote {out_path} and {out_path.parent / 'config.json'}")
     if failed:
         print(f"\n{len(failed)} failure(s):")
         for r in failed:

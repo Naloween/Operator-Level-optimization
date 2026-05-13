@@ -189,11 +189,27 @@ python -m operator_level_optimization.scripts.train.mnist_smoke --help
 
 ### 5) Appendix-style solver smoke (CI-friendly)
 
-Runs tiny deep-linear, MLP (`OperatorLevelMLP`), and FGLN configurations for each implemented variant; writes `outputs/smoke/variants/smoke_variants.json`. Three D\&C heuristics from the paper text are **skipped** (not implemented).
+Runs tiny deep-linear, MLP (`OperatorLevelMLP`), and FGLN configurations for each implemented variant; writes `outputs/smoke/variants/smoke_variants.json` and `outputs/smoke/variants/config.json` (CLI, environment, summary defaults). Three D\&C heuristics from the paper text are **skipped** (not implemented).
 
 ```bash
 python -m operator_level_optimization.scripts.smoke_variants
 ```
+
+### 6) Variant training curves (appendix-style optimizers)
+
+Generates per-variant loss plots and overlays (deep linear, tiny gated MLP on synthetic CE, FGLN), plus ``variant_curves.json`` under ``--out_dir``.
+
+```bash
+python -m operator_level_optimization.scripts.train.variant_loss_curves \\
+  --out_dir outputs/variant_curves/run01
+```
+
+Use shorter runs while iterating on layout or hyperparameters, for example
+``--steps_deeplinear 80 --steps_mlp 60 --steps_fgln 40``.
+
+Diverging traces are **clipped for display only** at ``--plot_y_max`` (default ``10``) so overlays stay readable; raw metrics remain in ``variant_curves.json``. Disable with ``--plot_y_max 0``.
+
+Canonical hyperparameters for the run are in ``config.json`` (same directory as the figures).
 
 ---
 
