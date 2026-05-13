@@ -1027,6 +1027,15 @@ class OperatorLevelMLP(Optimizer):
         # Contexts
         A_list, B_list = self._compute_contexts(params_list, batch_size, device, dtype)
 
+        d_in0 = int(params_list[0].shape[1])
+
+        def _B_or_identity(Bk: Optional[torch.Tensor]) -> torch.Tensor:
+            """B_0 is omitted (identity); materialise (batch, d_in0, d_in0) for matmuls."""
+            if Bk is not None:
+                return Bk
+            eye = torch.eye(d_in0, device=device, dtype=dtype)
+            return eye.unsqueeze(0).expand(batch_size, -1, -1)
+
         # Assemble block Kronecker system
         shapes = [p.shape for p in params_list]
         n_per_layer = [s[0] * s[1] for s in shapes]
@@ -1047,9 +1056,9 @@ class OperatorLevelMLP(Optimizer):
                 At_Al = torch.bmm(
                     A_list[k].transpose(1, 2), A_list[l]
                 )  # (batch, d_k_out, d_l_out)
-                Bk_Blt = torch.bmm(
-                    B_list[k], B_list[l].transpose(1, 2)
-                )  # (batch, d_k_in,  d_l_in)
+                Bk_b = _B_or_identity(B_list[k])
+                Bl_b = _B_or_identity(B_list[l])
+                Bk_Blt = torch.bmm(Bk_b, Bl_b.transpose(1, 2))  # (batch, d_k_in,  d_l_in)
 
                 kron_block = torch.zeros(n_k, n_l, device=device, dtype=dtype)
                 for b in range(batch_size):
@@ -1061,7 +1070,10 @@ class OperatorLevelMLP(Optimizer):
                         # Adaptive λ per layer: scale by spectral norm of each context.
                         # A_list[k]: (batch, d_out, d_out_k), B_list[k]: (batch, d_in_k, d_in)
                         sv_A = torch.linalg.svdvals(A_list[k].mean(0))
-                        sv_B = torch.linalg.svdvals(B_list[k].mean(0))
+                        B_mean = B_list[k].mean(0) if B_list[k] is not None else torch.eye(
+                            d_in0, device=device, dtype=dtype
+                        )
+                        sv_B = torch.linalg.svdvals(B_mean)
                         lam_k = max(lam_alpha * (sv_A[0].item() + sv_B[0].item()), 1e-30)
                     else:
                         lam_k = lam
