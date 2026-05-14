@@ -2,11 +2,6 @@
 
 Repository for reproducing operator-projection experiments and figures accompanying the NeurIPS submission *Operator Projection for Depth-Robust Optimization in Factored Networks* (anonymous code release).
 
-## Artifacts layout
-
-- **`outputs/`** — run logs, JSON metrics, and intermediate plots from training scripts. This directory is **gitignored**; regenerate locally after cloning.
-- **`images/`** — **tracked** PNG (or PDF) exports meant for this README and for syncing with the LaTeX paper’s `images/` includes. Add generated files here; filenames below match `notes/operator_optimizer/neurips26_als.tex` in the companion paper repo where applicable.
-
 ## Core idea
 
 Weight-space optimizers update parameters `W`, but the map depends on the end-to-end operator `P(W)`. This code builds operator-space targets (typically gradient targets on `P`) and solves for layer updates with ALS-style block solves, plus warm-starts that counter spectral collapse of context matrices.
@@ -15,7 +10,7 @@ Weight-space optimizers update parameters `W`, but the map depends on the end-to
 
 - `src/operator_level_optimization/core/optim/` — core optimizers: `operator.py`, `muon.py`, `kfac.py`, `shampoo.py`, `soap.py`
 - `src/operator_level_optimization/models/fgln.py` — FGLN + masked ALS
-- `src/operator_level_optimization/scripts/train/` — `deep_linear_compare.py`, `fgln_compare.py`, `mnist_smoke.py`
+- `src/operator_level_optimization/scripts/train/` — `deep_linear_compare.py`, `fgln_compare.py`, `mnist_smoke.py`, `variant_loss_curves.py`
 - `src/operator_level_optimization/scripts/figures/` — plotting helpers for deep linear / FGLN
 - `src/operator_level_optimization/scripts/toy2d.py` — 2D toy trajectories and one-step figures
 
@@ -29,191 +24,389 @@ pip install -e .
 
 ---
 
-## Paper figures (`images/`)
+## Reproducing Paper Figures
 
-Regenerate from `outputs/...` runs, then copy or symlink exports into `images/` with the names below so README and LaTeX stay aligned.
+### 1) 2D toy — one-step arrows and trajectories
 
-| File | Paper | What to plot | Status |
-|------|--------|----------------|--------|
-| `toy_2d_trajectories.png` | Fig. `fig:2d-traj` | Operator-space trajectories, $L=2$ and $L=32$, same $P_0$, all methods | *placeholder — generate* |
-| `toy_2d_L2_h2.png` | Fig. `fig:2d` (appendix) | One-step $\Delta P$ arrows in $\mathbb{R}^{1\times2}$, $L=2$, $h=2$, Xavier | *placeholder — generate* |
-| `deeplinear_convergence.png` | Fig. `fig:deeplinear-convergence` | Rel.\ error $\|P-P^\star\|_F/\|P^\star\|_F$ vs step, Xavier, $d=16$, $L=128$ | *placeholder — generate* |
-| `deeplinear_spectrum.png` | Fig. `fig:deeplinear-spectrum` | SVD spectrum of $P(t)$, Xavier, $L=128$ | *placeholder — generate* |
-| `deeplinear_convergence_identity.png` | Fig. `fig:deeplinear-convergence-identity` | Same as convergence panel, identity init, $\lambda=0$, 500 steps | *placeholder — generate* |
-| `deeplinear_spectrum_identity.png` | Fig. `fig:deeplinear-spectrum-identity` | Spectrum snapshots at steps $\{0,50,500\}$, identity init | *placeholder — generate* |
-| `mnist_mlp_depth.png` | Fig. `fig:mnist-depth` | Best val loss vs depth $L\in\{1,2,4,8,16,32\}$, MLP $784\to[32]^L\to10$ | *placeholder — generate* |
+Generates `outputs/paper/toy2d/trajectory_paper.png` and `outputs/paper/toy2d/one_step_paper.png`.
 
-### Appendix-only figures (`images/`)
-
-| File | Paper | What to plot | Status |
-|------|--------|----------------|--------|
-| `toy_2d_identity_traj_L256.png` | Fig. `fig:2d-id-traj-L256` | Trajectories at $L=256$, $h=2$, identity init — all optimizers converge | *placeholder — generate* |
-| `toy_2d_haar_traj_L256.png` | Fig. `fig:2d-haar-traj-L256` | Same at $L=256$, Haar orthogonal init — GD methods fail, ALS-Exact ok | *placeholder — generate* |
-| `loss_fgln.png` | Fig. `fig:fgln-convergence` | FGLN rel.\ operator error vs step, $d=16$, $L=128$, Xavier, Bernoulli gates $p=0.9$ | *placeholder — generate* |
-| `spectrum_fgln.png` | Fig. `fig:fgln-spectrum` | SVD spectrum of $P(t)$ for same FGLN setting | *placeholder — generate* |
-
-### Embedding in the README (after generation)
-
-Uncomment or add standard markdown once the corresponding files exist under `images/`:
-
-```markdown
-![2D trajectories (L=2 and L=32)](images/toy_2d_trajectories.png)
-![Deep linear convergence (Xavier, L=128)](images/deeplinear_convergence.png)
+```bash
+python -m operator_level_optimization.scripts.toy2d \
+  --paper_depths 2 32 \
+  --out_traj outputs/paper/toy2d/trajectory_paper.png \
+  --out     outputs/paper/toy2d/one_step_paper.png
 ```
 
----
+### 2) Deep linear — Xavier init ($d=16$, $L=128$)
 
-## Main-body tables (export to `images/` or document in JSON)
-
-| Artifact | Paper | Content | Status |
-|----------|--------|---------|--------|
-| One-step 2D cosine / norm table | Tab. `tab:2d-cos` | Methods vs cosine w.r.t.\ ideal $\Delta P^\star$ and $\|\Delta P\|_F$ | *placeholder — paste from run summary* |
-| Per-step cost table | Tab. `tab:cost` | Asymptotic costs (GD, Muon, ALS-exact linear/FGLN, ALS-MN, ALS-exact MLP) | *optional figure: typeset table as PNG* |
-
----
-
-## Appendix B: solver variants and approximations
-
-Cross-reference: Appendix `\ref{app:variants}` and subsections in the paper. Below is a checklist of **what to benchmark or ablate**, suggested metrics, and where results should land. Implementation may be partial in this repo; placeholders record intent.
-
-### B.1 Mean-field (per-sample solve, then batch mean)
-
-- **Idea:** $\bar{\Delta\theta} = \frac{1}{B}\sum_b \arg\min_{\Delta\theta} \mathcal{L}_b(\Delta\theta)$ vs exact shared $\Delta\theta$.
-- **Metrics:** operator alignment (cosine / rel.\ Frobenius error on $\Delta P$), train MSE, steps to threshold.
-- **Regimes:** MLP frozen-gate batches (paper: not accurate enough); deep linear/FGLN (paper: collapses to exact equivalence in the trivial sense).
-- **Output:** `outputs/ablations/mean_field_mlp/results.json` (+ optional plot in `images/ablation_mean_field_mlp.png`).
-
-### B.2 Linearized operator objective
-
-| Variant | Description | Metrics | Suggested output |
-|---------|-------------|---------|------------------|
-| **Linearized exact (coupled)** | Single coupled normal system over all $\Delta W_\ell$ | Same as one-step / short-horizon operator error vs ALS-exact nonlinear objective | `outputs/ablations/linobj_coupled/` |
-| **Block-diagonal (one-shot)** | Drop cross-layer blocks; per-layer Sylvester with batch Grams | Stress cross-layer coupling: deep $L$, large steps | `outputs/ablations/linobj_block_diag/` |
-
-### B.3 Operator-KFAC
-
-- **Idea:** Operator-context statistics + K-FAC-style factored inverse (not full Sylvester solve).
-- **Metrics:** vs classical K-FAC and ALS-MN on depth sweep or operator cosine.
-- **Output:** `outputs/ablations/operator_kfac/` + `images/ablation_operator_kfac_depth.png` *placeholder*.
-
-### B.4 Divide-and-conquer (D\&C) on operator projection
-
-| Variant | Notes | Output dir *placeholder* |
-|---------|--------|--------------------------|
-| **D\&C baseline** | Recursive two-factor solves; valid deep linear / FGLN | `outputs/ablations/dnc_linear/` |
-| **D\&C + cross-sample target penalty** | Node-level penalty to align targets across samples | `outputs/ablations/dnc_penalty/` |
-| **D\&C + node linearized schedule** | Strengthen batch coupling root→leaves | `outputs/ablations/dnc_schedule/` |
-| **D\&C + multi-pass tree** | Several tree passes per outer step | `outputs/ablations/dnc_multipass/` |
-| **D\&C on MLP (expected fail)** | Per-sample subtree solves + average — documents incoherence | `outputs/ablations/dnc_mlp_fail/` + short note / plot |
-
-### B.5 Secant gate linearization (`secant`, `secant_r`)
-
-| Variant | Description | Metrics | Output *placeholder* |
-|---------|-------------|---------|----------------------|
-| **Rank-1 secant** | $\widehat A_\ell$, $\widehat B_\ell$ rank-1 surrogates | Val loss / operator error vs full frozen-gate ALS | `outputs/ablations/secant_r1/` |
-| **Rank-$r$ secant (`secant_r`)** | Richer subspace per layer | Cost vs accuracy tradeoff | `outputs/ablations/secant_r/` |
-| **Approx vs exact gradient** | Forward-derived vs exact backprop direction + secant curvature | Stability at depth | `outputs/ablations/secant_grad_exact/` |
-
-### B.6 Adaptive per-layer $\lambda_k$ (Appendix adaptive regularization)
-
-- **Idea:** $\lambda_k \propto \sigma_{\max}(M_k)+\sigma_{\max}(N_k)$ on MLP ALS-MN blocks.
-- **Metrics:** per-layer step norms, residual decay, failure mode diagnostics (noise amplification in middle layers).
-- **Output:** `outputs/ablations/adaptive_lambda/` + learning curves in `images/ablation_adaptive_lambda.png` *placeholder*.
-
-### B.7 Core methods already in main experiments (reference)
-
-| Method | Role in paper | Typical script knob |
-|--------|----------------|---------------------|
-| ALS-exact (deep linear / FGLN) | Exact modewise solve, $O(Ld^3)$ | `als_exact`, masked ALS |
-| ALS-exact (MLP) | Sum of Kronecker normal eq., $O(Ld^6)$ | `operator.py` exact path |
-| ALS-MN | Kronecker approx.\ of batch normal eq. | MLP approximate solve |
-| Heavy Ball, Adam, Muon, K-FAC, Shampoo, SOAP | Baselines | `deep_linear_compare`, `fgln_compare`, `mnist_smoke` |
-
----
-
-## Reproduce paper runs (commands)
-
-### 1) Deep linear ($L=128$)
+Generates convergence and spectrum figures.
 
 ```bash
 python -m operator_level_optimization.scripts.train.deep_linear_compare \
-  --out_dir outputs/deep_linear/l128_ginibre_msegrad \
-  --depth 128 \
-  --steps 2000 \
+  --out_dir outputs/deep_linear/l128_xavier \
+  --depth 128 --d 16 --n 64 \
+  --steps 10000 \
+  --init_mode xavier \
   --target_mode mse_grad \
   --methods heavyball adam muon kfac shampoo soap als_exact
+
+python -m operator_level_optimization.scripts.figures.plot_deep_linear_figures \
+  --run_dir outputs/deep_linear/l128_xavier
 ```
 
-Optional plotting:
+### 3) Deep linear — identity init ($d=16$, $L=128$, $\lambda=0$)
+
+Generates convergence and spectrum figures isolating direction mismatch without spectral collapse.
 
 ```bash
+python -m operator_level_optimization.scripts.train.deep_linear_compare \
+  --out_dir outputs/deep_linear/l128_identity \
+  --depth 128 --d 16 --n 64 \
+  --steps 500 \
+  --init_mode identity \
+  --als_lam 0.0 \
+  --target_mode mse_grad \
+  --methods heavyball adam muon kfac shampoo soap als_exact
+
 python -m operator_level_optimization.scripts.figures.plot_deep_linear_figures \
-  --run_dir outputs/deep_linear/l128_ginibre_msegrad
+  --run_dir outputs/deep_linear/l128_identity
 ```
 
-### 2) FGLN ($L=128$, e.g.\ $p=0.9$ / $p=0.5$)
+### 4) FGLN ($L=128$, $p=0.9$)
+
+Generates FGLN convergence and spectrum figures.
 
 ```bash
 python -m operator_level_optimization.scripts.train.fgln_compare \
   --out_dir outputs/fgln/fgln_compare_p09_L128 \
-  --p 0.9 \
-  --depth 128 \
-  --steps 10000 \
-  --als_lam 1e-4 \
-  --als_sweeps 4 \
+  --p 0.9 --depth 128 --steps 10000 \
+  --als_lam 1e-4 --als_sweeps 4 \
   --als_gateperm_warmstart_once \
   --als_lam_anchor_post_warmstart \
   --spec_every 50
-```
 
-Spectrum snapshots:
-
-```bash
 python -m operator_level_optimization.scripts.figures.plot_fgln_spectrum_snapshots \
   --run_dir outputs/fgln/fgln_compare_p09_L128
 ```
 
-### 3) Toy 2D
+### 5) MNIST MLP depth sweep
+
+Trains bias-free ReLU MLP at depths $L \in \{1, 2, 4, 8, 16, 32\}$ and plots best val loss vs depth.
 
 ```bash
-python -m operator_level_optimization.scripts.toy2d
+python -m operator_level_optimization.scripts.train.mnist_smoke \
+  --out_dir outputs/mnist/depth_sweep \
+  --depths 1 2 4 8 16 32 \
+  --epochs 50 --batch_size 128 \
+  --seeds 0 1 2
+
+python -m operator_level_optimization.scripts.figures.plot_mnist_depth \
+  --run_dir outputs/mnist/depth_sweep
 ```
 
-### 4) MNIST MLP smoke / depth sweep
+### 6) Appendix 2D toy — $L=256$ trajectories (identity and Haar init)
 
 ```bash
-python -m operator_level_optimization.scripts.train.mnist_smoke --help
+python -m operator_level_optimization.scripts.toy2d \
+  --trajectory --depth 256 --hidden 2 \
+  --init_mode identity --n_steps 300 \
+  --out_traj outputs/paper/toy2d/identity_traj_L256.png
+
+python -m operator_level_optimization.scripts.toy2d \
+  --trajectory --depth 256 --hidden 2 \
+  --init_mode haar --n_steps 300 \
+  --out_traj outputs/paper/toy2d/haar_traj_L256.png
 ```
 
-*(Extend or add a dedicated depth-sweep driver to match paper protocol: seeds, LR grid, best checkpoint per depth.)*
+### 7) Appendix solver smoke (CI-friendly)
 
-### 5) Appendix-style solver smoke (CI-friendly)
-
-Runs tiny deep-linear, MLP (`OperatorLevelMLP`), and FGLN configurations for each implemented variant; writes `outputs/smoke/variants/smoke_variants.json` and `outputs/smoke/variants/config.json` (CLI, environment, summary defaults). Three D\&C heuristics from the paper text are **skipped** (not implemented).
+Runs tiny deep-linear, MLP, and FGLN for each implemented variant; writes `outputs/smoke/variants/smoke_variants.json` and `config.json`.
 
 ```bash
 python -m operator_level_optimization.scripts.smoke_variants
 ```
 
-### 6) Variant training curves (appendix-style optimizers)
+### 8) Variant training curves (appendix-style optimizers)
 
-Generates per-variant loss plots and overlays (deep linear, tiny gated MLP on synthetic CE, FGLN), plus ``variant_curves.json`` under ``--out_dir``.
+Generates per-variant loss plots and overlays (deep linear D&C, MLP approximations, FGLN adaptive-λ) plus `variant_curves.json` and `config.json`.
 
 ```bash
-python -m operator_level_optimization.scripts.train.variant_loss_curves \\
+python -m operator_level_optimization.scripts.train.variant_loss_curves \
   --out_dir outputs/variant_curves/run01
 ```
 
-Use shorter runs while iterating on layout or hyperparameters, for example
-``--steps_deeplinear 80 --steps_mlp 60 --steps_fgln 40``.
+For a more convincing demonstration closer to paper scale:
 
-Diverging traces are **clipped for display only** at ``--plot_y_max`` (default ``10``) so overlays stay readable; raw metrics remain in ``variant_curves.json``. Disable with ``--plot_y_max 0``.
+```bash
+python -m operator_level_optimization.scripts.train.variant_loss_curves \
+  --out_dir outputs/variant_curves/canonical \
+  --deeplinear_depth 32 --deeplinear_d 8 --deeplinear_n 64 --steps_deeplinear 2000 \
+  --fgln_depth 32 --fgln_d 8 --fgln_n 64 --steps_fgln 500 \
+  --mlp_batch 128 --steps_mlp 400
+```
 
-Canonical hyperparameters for the run are in ``config.json`` (same directory as the figures).
+---
+
+## Variant Experiments — Evidence for Appendix Claims
+
+For every approximation and variant described in the paper's Appendix B, the sub-sections below specify the **claim** being evidenced, the **generate command**, and the **expected result / interpretation**. Figures will be added here as they are generated.
+
+---
+
+### B.1 Mean-field approximation (App. B.1)
+
+**Claim:** Per-sample ALS solved independently then averaged is not accurate enough in the MLP case — the expectation–minimization swap introduces bias under gate heterogeneity. In the deep linear case (no ReLU), all samples share the same operator context, so per-sample and batch solves are mathematically equivalent.
+
+**Experiment:** Two-panel controlled comparison. Same optimizer (ALS, 3 sweeps, warmstart, lr=0.15), same architecture (4 layers, d=32, batch=64) — only the activation function differs.
+- *Left panel — deep linear (no ReLU):* `als_layer_solve="per_sample"` must overlap `als_layer_solve="mn"` because D_l=1 for every sample → gate heterogeneity is zero.
+- *Right panel — ReLU MLP:* per-sample solves push shared weights in incompatible directions (each sample activates a different ~50% of neurons per layer); their average satisfies nobody's equations.
+
+**Generate:**
+```bash
+python -m operator_level_optimization.scripts.train.variant_loss_curves \
+  --out_dir outputs/variant_curves/mean_field \
+  --steps_deeplinear 2 --steps_mlp 2 --steps_fgln 2 \
+  --steps_kfac_depth 2 --kfac_depths 2 \
+  --steps_mean_field 300 \
+  --mf_depth 4 --mf_hidden 32 --mf_d_in 32 --mf_d_out 8 \
+  --mf_batch 64 --mf_lr 0.15 --mf_lam 1e-3 --mf_n_sweeps 3
+# Output: outputs/variant_curves/mean_field/mean_field_comparison.png
+```
+
+![Mean-field vs batch ALS — deep linear (overlap) and ReLU MLP (diverge)](images/ablation_mean_field_mlp.png)
+
+**Result:** Deep linear: both curves are near-identical (final CE ≈ 1.82 for both), confirming the theoretical equivalence. ReLU MLP: batch ALS-MN reaches CE ≈ 1.02 while mean-field stalls at ≈ 1.73 (barely below the random-init level of ≈ 2.08 for 8 classes). The gap is caused entirely by gate heterogeneity — the same optimizer, same data, same initialization, only the activation function changed.
+
+---
+
+### B.2 Linearized operator objective (App. B.2)
+
+**Claim:** The linearized operator objective is a good approximation at small learning rates but breaks down at large ones, where only ALS-exact (which solves the true nonlinear objective) remains stable.
+
+**Experiment:** Bias-free ReLU MLP (depth=3, hidden=16, d_in=16, d_out=8) trained to match a random linear teacher (P*x) via MSE. Three solvers compared across two learning rate regimes:
+- **ALS-exact** — iterative (5 sweeps, no gate-permutation warmstart), solves the true nonlinear operator objective.
+- **Linearized-exact** — one-shot coupled solve via first-order Taylor expansion of the operator objective.
+- **Block-diagonal** — one-shot per-layer solve, decouples inter-layer coupling entirely.
+
+**Generate:**
+```bash
+venv/bin/python -m operator_level_optimization.scripts.train.variant_loss_curves \
+  --out_dir outputs/variant_curves/linobj \
+  --linobj_lr_small 0.05 --linobj_steps_small 200 \
+  --linobj_lr_large 1.0  --linobj_steps_large 60
+# Output: outputs/variant_curves/linobj/linearized_obj_comparison.png
+```
+
+**Results (seed=0):**
+
+| Panel | Solver | Final MSE (step) |
+|---|---|---|
+| Small lr=0.05 (200 steps) | ALS-exact | 1.183 |
+| Small lr=0.05 (200 steps) | Linearized-exact | 0.064 |
+| Small lr=0.05 (200 steps) | Block-diagonal | 0.046 |
+| Large lr=1.0  (60 steps)  | ALS-exact | 0.620 |
+| Large lr=1.0  (60 steps)  | Linearized-exact | NaN (diverged) |
+| Large lr=1.0  (60 steps)  | Block-diagonal | 1.334 (stalled) |
+
+At small lr all three are stable; block-diagonal converges fastest (efficient per-layer Newton step), ALS-exact slowest (constrained to factored manifold, no warmstart). At large lr, the first-order Taylor approximation collapses immediately for linearized-exact; block-diagonal stalls at a poor local minimum; ALS-exact, operating on the exact nonlinear objective, stays monotonically convergent.
+
+![Linearized objective: approximation hierarchy](images/ablation_linobj.png)
+
+---
+
+### B.3 Operator-KFAC depth sweep (App. B.3)
+
+**Claim:** Operator-KFAC uses better (operator-aligned) statistics than classical K-FAC but avoids the full Sylvester solve. This should give an advantage over classical K-FAC at depth while still trailing ALS-exact.
+
+**Experiment:** Depth sweep comparing `operator_kfac` vs `block_diagonal` vs `als_mn` across $L \in \{2, 4, 8\}$ on a synthetic cross-entropy task with a purely linear MLP (no ReLU), plotting final loss vs depth.
+
+**Generate:**
+```bash
+python -m operator_level_optimization.scripts.train.variant_loss_curves \
+  --out_dir outputs/variant_curves/canonical \
+  --steps_kfac_depth 200 \
+  --kfac_depths 2,4,8 \
+  --kfac_d_in 32 --kfac_hidden 32 --kfac_d_out 16 --kfac_batch 64
+# Relevant outputs:
+#   outputs/variant_curves/canonical/operator_kfac_depth_summary.png
+#   outputs/variant_curves/canonical/operator_kfac_depth_2.png
+#   outputs/variant_curves/canonical/operator_kfac_depth_4.png
+#   outputs/variant_curves/canonical/operator_kfac_depth_8.png
+```
+
+**Expected result:** At each depth, `operator_kfac` outperforms `block_diagonal` (due to operator-aligned geometry) but trails `als_mn` (which solves Sylvester exactly). The gap between `operator_kfac` and `block_diagonal` should grow with depth.
+
+<!-- ![Operator-KFAC depth sweep](images/ablation_operator_kfac_depth.png) -->
+
+---
+
+### B.4 Divide-and-Conquer (D&C) solver
+
+#### B.4a D&C on deep linear / FGLN — valid case (App. B.4)
+
+**Claim:** D&C works correctly for deep linear and FGLN networks. Sub-operators at every node are deterministic, so node targets propagate cleanly down the tree.
+
+**Experiment:** D&C (`dc`, both `identity_delta` and `plain` init modes) vs ALS-exact on the deep linear teacher-student task.
+
+**Generate:**
+```bash
+python -m operator_level_optimization.scripts.train.variant_loss_curves \
+  --out_dir outputs/variant_curves/canonical \
+  --deeplinear_depth 32 --deeplinear_d 8 --deeplinear_n 64 --steps_deeplinear 2000
+# Relevant outputs:
+#   outputs/variant_curves/canonical/deep_linear_rel_operator_error.png  (overlay)
+#   outputs/variant_curves/canonical/deep_linear_mse_als_exact.png
+#   outputs/variant_curves/canonical/deep_linear_mse_dc_identity_delta.png
+#   outputs/variant_curves/canonical/deep_linear_mse_dc_plain.png
+```
+
+**Expected result:** D&C and ALS-exact both converge. Node targets propagate cleanly in the deterministic (linear) setting.
+
+<!-- ![D&C vs ALS-exact, deep linear](images/ablation_dc_linear_vs_als.png) -->
+
+---
+
+#### B.4b D&C on MLP — expected failure (App. B.4)
+
+**Claim:** Because gate patterns differ across samples, per-sample solutions push shared factors in incompatible directions. The averaged update satisfies no individual sample's equations, and the resulting operator residual does not decrease reliably.
+
+**Experiment:** `dc_mlp` (per-sample ALS → batch average) vs `mlp_als_mn` on the synthetic cross-entropy task.
+
+**Generate:**
+```bash
+python -m operator_level_optimization.scripts.train.variant_loss_curves \
+  --out_dir outputs/variant_curves/canonical \
+  --steps_mlp 400 --mlp_batch 128
+# Relevant outputs:
+#   outputs/variant_curves/canonical/loss_mlp_dc_mlp.png
+#   outputs/variant_curves/canonical/loss_mlp_als_mn.png
+```
+
+**Expected result:** `dc_mlp` stalls or diverges relative to `mlp_als_mn`, illustrating that gate heterogeneity makes per-sample decomposition incoherent when the results are averaged back to shared weights.
+
+<!-- ![D&C MLP failure](images/ablation_dc_mlp_fail.png) -->
+
+---
+
+### B.5 Secant gate linearization
+
+#### B.5a Rank-1 secant vs ALS-MN (App. B.5)
+
+**Claim:** Rank-1 secant is much cheaper than full ALS context systems but introduces bias because only rank-1 secant directions are retained.
+
+**Experiment:** `mlp_secant` (rank-1) vs `mlp_als_mn` (full batch ALS) on the synthetic cross-entropy task.
+
+**Generate:**
+```bash
+python -m operator_level_optimization.scripts.train.variant_loss_curves \
+  --out_dir outputs/variant_curves/canonical \
+  --steps_mlp 400 --mlp_batch 128
+# Relevant output:
+#   outputs/variant_curves/canonical/loss_mlp_secant.png
+```
+
+**Expected result:** `mlp_secant` converges more slowly than `mlp_als_mn`. The rank-1 bias reflects the cost-accuracy trade-off: cheaper context (no frozen gate storage) at the cost of convergence quality.
+
+<!-- ![Secant rank-1 vs ALS-MN](images/ablation_secant_r1_vs_als.png) -->
+
+---
+
+#### B.5b Rank-1 vs rank-$r$ secant (App. B.5)
+
+**Claim:** Higher-rank secant interpolates between rank-1 secant and richer context representations. Larger $r$ improves fidelity but removes most of the computational advantage since the full frozen gate pattern must be stored.
+
+**Experiment:** `mlp_secant` (rank-1) vs `mlp_secant_r3` (rank-3) vs `mlp_als_mn` (full Sylvester).
+
+**Generate:**
+```bash
+python -m operator_level_optimization.scripts.train.variant_loss_curves \
+  --out_dir outputs/variant_curves/canonical \
+  --steps_mlp 400
+# Relevant outputs:
+#   outputs/variant_curves/canonical/loss_mlp_secant.png
+#   outputs/variant_curves/canonical/loss_mlp_secant_r3.png
+#   outputs/variant_curves/canonical/mlp_cross_entropy_logy.png  (all variants overlay)
+```
+
+**Expected result:** `mlp_secant_r3` outperforms `mlp_secant` and approaches `mlp_als_mn` as rank grows, showing the monotone fidelity–cost trade-off.
+
+<!-- ![Rank-1 vs rank-r secant](images/ablation_secant_rankr.png) -->
+
+---
+
+#### B.5c Secant exact-gradient variant (App. B.5)
+
+**Claim:** Using exact backprop gradient direction while only approximating curvature with rank-1 secant statistics reduces one source of bias but is still insufficient to correctly correct operator mismatch at depth.
+
+**Experiment:** `mlp_secant_grad_exact` (rank-1 curvature, exact gradient) vs `mlp_secant` (both approximate) vs `mlp_als_mn` (exact Sylvester) on the synthetic cross-entropy task.
+
+**Generate:**
+```bash
+python -m operator_level_optimization.scripts.train.variant_loss_curves \
+  --out_dir outputs/variant_curves/canonical \
+  --steps_mlp 400 --mlp_batch 128
+# Relevant outputs:
+#   outputs/variant_curves/canonical/loss_mlp_secant_grad_exact.png
+#   outputs/variant_curves/canonical/loss_mlp_secant.png
+#   outputs/variant_curves/canonical/loss_mlp_als_mn.png
+```
+
+**Expected result:** `mlp_secant_grad_exact` improves over `mlp_secant` (exact gradient removes one source of bias) but still falls short of `mlp_als_mn`, since curvature approximation alone is insufficient at depth.
+
+<!-- ![Secant exact-gradient vs rank-1 vs ALS](images/ablation_secant_exact_grad.png) -->
+
+---
+
+### B.6 Adaptive regularization
+
+#### B.6a Adaptive $\lambda$ failure (MLP) (App. B.6)
+
+**Claim:** Setting $\lambda_k \propto \sigma_{\max}(M_k) + \sigma_{\max}(N_k)$ equalizes per-layer update magnitudes. For middle layers in deep networks, contexts are nearly random and carry no useful direction signal — amplifying those updates injects noise that compounds over depth and ALS sweeps, preventing convergence.
+
+**Experiment:** `mlp_block_diagonal_adaptive_lam` / `mlp_als_adaptive_lam` (adaptive $\lambda$) vs `mlp_block_diagonal` / `mlp_als_mn` (fixed $\lambda$) on the synthetic cross-entropy task.
+
+**Generate:**
+```bash
+python -m operator_level_optimization.scripts.train.variant_loss_curves \
+  --out_dir outputs/variant_curves/canonical \
+  --steps_mlp 400 --mlp_batch 128
+# Relevant outputs:
+#   outputs/variant_curves/canonical/loss_mlp_block_diagonal.png
+#   outputs/variant_curves/canonical/loss_mlp_block_diagonal_adaptive_lam.png
+#   outputs/variant_curves/canonical/loss_mlp_als_adaptive_lam.png
+```
+
+**Expected result:** Adaptive-$\lambda$ variants converge more slowly or less reliably than their fixed-$\lambda$ counterparts.
+
+<!-- ![Adaptive lambda failure (MLP)](images/ablation_adaptive_lambda_mlp.png) -->
+
+---
+
+#### B.6b Adaptive $\lambda$ vs fixed $\lambda$ — FGLN (App. B.6)
+
+**Claim:** The warm-start resolves spectral collapse at its source by restoring bounded context singular values. Adaptive $\lambda$ only rescales the update without restoring the geometry that makes the update meaningful.
+
+**Experiment:** FGLN fixed $\lambda$ (`als_fixed_lam`) vs FGLN adaptive-$\lambda$ step (`als_adaptive_lambda_step`) on the teacher-student task, both starting from Xavier initialization.
+
+**Generate:**
+```bash
+python -m operator_level_optimization.scripts.train.variant_loss_curves \
+  --out_dir outputs/variant_curves/canonical \
+  --fgln_depth 32 --fgln_d 8 --fgln_n 64 --steps_fgln 500
+# Relevant outputs:
+#   outputs/variant_curves/canonical/fgln_mse_als_fixed_lam.png
+#   outputs/variant_curves/canonical/fgln_mse_als_adaptive_lam.png
+#   outputs/variant_curves/canonical/fgln_train_mse.png  (overlay)
+```
+
+**Expected result:** `als_fixed_lam` converges while `als_adaptive_lambda_step` stalls or diverges. Fixed $\lambda$ correctly suppresses zero singular-value directions; adaptive $\lambda$ tries to amplify corrections along them, producing instability.
+
+<!-- ![Adaptive lambda vs fixed (FGLN)](images/ablation_adaptive_lambda_fgln.png) -->
 
 ---
 
 ## Notes
 
 - Deep linear and FGLN training defaults favor `float64` for deep settings.
-- After generating files under `outputs/`, export publication figures into `images/` using the table filenames so this README and the LaTeX `\\includegraphics{images/...}` paths stay consistent.
+- Three D&C heuristics (cross-sample target penalty, node-linearized schedule, multi-pass tree) have no code path; the smoke test documents this explicitly.
+- All variant figures are generated by `variant_loss_curves.py`. Run the canonical command (depth 32, $d=8$, longer steps) to produce figures suitable for the README.

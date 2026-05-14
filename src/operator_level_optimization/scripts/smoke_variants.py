@@ -7,6 +7,10 @@ and a sibling ``config.json`` with CLI, environment, and a summary of fixed defa
 Not implemented in this repository (no entry points / code paths):
   * D&C appendix-only heuristics: cross-sample target penalty, node linearized
     schedule, multi-pass tree (discussed in the paper; only baseline ``dc`` exists).
+
+Implemented in this repository:
+  * ``secant_grad_exact``: rank-1 secant curvature with exact backprop gradient (App. B.5).
+  * ``dc_mlp``: per-sample ALS averaged across samples — D&C failure demo (App. B.4).
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ import torch.nn as nn
 from operator_level_optimization.core.optim.operator import OperatorLevelMLP
 from operator_level_optimization.models.fgln import FGLN, MaskedOperatorALS, compute_P_fgln, init_weights
 from operator_level_optimization.scripts.train.deep_linear_compare import run_method as deep_linear_run
+from operator_level_optimization.scripts.utils.tasks import make_tiny_mlp
 
 
 @dataclass
@@ -34,14 +39,6 @@ class SmokeResult:
     ok: bool
     detail: str
     skipped: bool = False
-
-
-def _tiny_mlp(d_in: int = 24, h: int = 8, n_cls: int = 5) -> nn.Module:
-    return nn.Sequential(
-        nn.Linear(d_in, h, bias=False),
-        nn.ReLU(inplace=False),
-        nn.Linear(h, n_cls, bias=False),
-    )
 
 
 def smoke_mlp(
@@ -54,7 +51,7 @@ def smoke_mlp(
     device = torch.device("cpu")
     dtype = torch.float64
     torch.manual_seed(0)
-    model = _tiny_mlp().to(device=device, dtype=dtype)
+    model = make_tiny_mlp().to(device=device, dtype=dtype)
     params = list(model.parameters())
     opt = build_opt(params)
     opt.attach_hooks(model)
@@ -395,6 +392,39 @@ def main() -> None:
                 als_gateperm_warmstart=True,
                 als_gateperm_warmstart_once=True,
                 als_lam_anchor_post_warmstart=False,
+            ),
+        )
+    )
+
+    # --- MLP: secant_grad_exact (rank-1 curvature + exact gradient, App. B.5) ---
+    results.append(
+        smoke_mlp(
+            "mlp:secant_grad_exact(rank1_curv+exact_grad)",
+            steps=2,
+            batch=8,
+            build_opt=lambda p: OperatorLevelMLP(
+                p,
+                lr=0.05,
+                lam=1e-3,
+                approximation="secant_grad_exact",
+                momentum=0.0,
+            ),
+        )
+    )
+
+    # --- MLP: dc_mlp (per-sample ALS averaged, D&C failure demo, App. B.4) ---
+    results.append(
+        smoke_mlp(
+            "mlp:dc_mlp(per_sample_als_avg)",
+            steps=2,
+            batch=8,
+            build_opt=lambda p: OperatorLevelMLP(
+                p,
+                lr=0.3,
+                lam=1e-3,
+                approximation="dc_mlp",
+                n_sweeps=2,
+                momentum=0.0,
             ),
         )
     )

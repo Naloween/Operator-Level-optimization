@@ -6,9 +6,6 @@ import json
 import math
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -18,6 +15,9 @@ from operator_level_optimization.core.optim.kfac import KFAC
 from operator_level_optimization.core.optim.muon import Muon
 from operator_level_optimization.core.optim.shampoo import Shampoo
 from operator_level_optimization.core.optim.soap import SOAP
+from operator_level_optimization.scripts.utils.io import get_device
+from operator_level_optimization.scripts.utils.plotting import save_fig
+from operator_level_optimization.scripts.utils.training import EarlyStopping
 
 
 def ginibre_sn1(shape: tuple[int, int], device: torch.device, dtype: torch.dtype, g: torch.Generator) -> torch.Tensor:
@@ -267,9 +267,8 @@ def run_method(
     hist = []
     spectra = {}
     target_residual_history = []
-    best_mse = float("inf")
-    stall = 0
     early_stop_triggered_at: int | None = None
+    es = EarlyStopping(early_stop_patience, early_stop_rel_tol, early_stop_abs_tol, early_stop_min_steps)
     for t in range(steps + 1):
         p_tgt_step = None
         with torch.no_grad():
@@ -284,26 +283,9 @@ def run_method(
                 spectra[int(t)] = torch.linalg.svdvals(p).detach().cpu().numpy()
 
         mse = float(loss.item())
-        if best_mse == float("inf"):
-            best_mse = mse
-        else:
-            thr = max(early_stop_rel_tol * best_mse, early_stop_abs_tol)
-            if mse < best_mse - thr:
-                best_mse = mse
-                stall = 0
-            elif t >= early_stop_min_steps and early_stop_patience is not None:
-                stall += 1
-
-        if (
-            early_stop_patience is not None
-            and t >= early_stop_min_steps
-            and stall >= early_stop_patience
-        ):
-            early_stop_triggered_at = t
-            print(
-                f"[early_stop] method={method} t={t} stall={stall} "
-                f"best_mse={best_mse:.6e}"
-            )
+        if es.check(mse, t):
+            early_stop_triggered_at = es.triggered_at
+            print(f"[early_stop] method={method} t={t} stall={es._stall} best_mse={es._best:.6e}")
             break
 
         # ALS reaches numerical zero quickly; no need to wait on stall logic.
@@ -475,8 +457,7 @@ def save_loss_over_training_figure(
     ax.grid(True, alpha=0.25)
     ax.legend(frameon=False)
     path = out_dir / filename
-    fig.savefig(path, dpi=180, bbox_inches="tight")
-    plt.close(fig)
+    save_fig(fig, path, dpi=180, bbox_inches="tight")
     return path
 
 
@@ -703,10 +684,7 @@ def main() -> None:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.device == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        device = torch.device(args.device)
+    device = get_device(args.device)
     dtype = torch.float64
 
     sweep_raw: dict | None = None

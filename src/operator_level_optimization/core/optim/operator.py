@@ -541,7 +541,7 @@ class OperatorLevelMLP(Optimizer):
             raise ValueError(f"Invalid lam: {lam}")
         if not 0.0 < lam_alpha:
             raise ValueError(f"Invalid lam_alpha: {lam_alpha}")
-        if approximation not in ("exact", "block_diagonal", "local_bd", "forward_pass", "fp_ps", "fpc", "kfac", "operator_kfac", "cg", "whitened", "secant", "secant_r", "als"):
+        if approximation not in ("exact", "block_diagonal", "local_bd", "forward_pass", "fp_ps", "fpc", "kfac", "operator_kfac", "cg", "whitened", "secant", "secant_grad_exact", "secant_r", "als", "dc_mlp"):
             raise ValueError(f"Unknown approximation: {approximation!r}")
         if rescale_variant not in ("max", "sum", "cascade"):
             raise ValueError(f"Unknown rescale_variant: {rescale_variant!r}. Choose 'max', 'sum', or 'cascade'.")
@@ -947,10 +947,14 @@ class OperatorLevelMLP(Optimizer):
                 self._step_whitened(group)
             elif method == "secant":
                 self._step_secant(group)
+            elif method == "secant_grad_exact":
+                self._step_secant_grad_exact(group)
             elif method == "secant_r":
                 self._step_secant_r(group)
             elif method == "als":
                 self._step_als(group)
+            elif method == "dc_mlp":
+                self._step_dc_mlp(group)
             else:
                 raise ValueError(f"Unknown approximation: {method!r}")
             self._update_1d_params(group)
@@ -1556,6 +1560,161 @@ class OperatorLevelMLP(Optimizer):
             num = (P_final - P_target).norm(dim=(1, 2))
             den = P_target.norm(dim=(1, 2)).clamp_min(1e-30)
             self._als_prev_rel_jac = float((num / den).mean().item())
+
+        self.activations.clear()
+        self.pre_acts.clear()
+        self.grad_acts.clear()
+
+    # ------------------------------------------------------------------
+    # dc_mlp: per-sample ALS + batch average (D&C failure demo)
+    # ------------------------------------------------------------------
+
+    def _step_dc_mlp(self, group: Dict[str, Any]):
+        """Per-sample ALS averaged across samples — D&C-on-MLP failure demo.
+
+        Each sample b is treated as a single-sample FGLN with its own frozen
+        ReLU gate pattern.  ALS is run in isolation for that single sample,
+        producing a ΔW^b.  The final update is the batch average of these
+        per-sample increments.
+
+        This is incoherent: different samples activate different neurons, so
+        a ΔW that is optimal for sample b conflicts with the optimum for
+        sample b′.  The averaged update satisfies nobody's equations and
+        typically diverges or stalls compared to batch ALS
+        (``approximation='als'``).  This is the D&C-on-MLP failure discussed
+        in Appendix B.4.
+        """
+        if not self.activations:
+            raise RuntimeError(
+                "attach_hooks(model) must be called before training when using "
+                "approximation='dc_mlp'."
+            )
+        if not self.grad_acts:
+            raise RuntimeError(
+                "approximation='dc_mlp' requires loss.backward() before step()."
+            )
+
+        lr        = group["lr"]
+        lam       = group["lam"]
+        lam_alpha = group["lam_alpha"]
+        n_sweeps  = group.get("n_sweeps", 2)
+
+        params_list = [p for p in group["params"] if p.ndim == 2]
+        if not params_list:
+            self.activations.clear()
+            self.pre_acts.clear()
+            self.grad_acts.clear()
+            return
+
+        L      = len(params_list)
+        device = params_list[0].device
+        dtype  = params_list[0].dtype
+        Bs     = next(iter(self.activations.values())).shape[0]
+        D_out  = params_list[-1].shape[0]
+
+        delta = self.grad_acts[L - 1].to(dtype)   # (Bs, D_out)
+        x_in  = self.pre_acts[0].to(dtype)        # (Bs, D_in)
+
+        # Per-sample operator gradient
+        dP_star = torch.einsum("bi,bj->bij", delta, x_in)  # (Bs, D_out, D_in)
+        if bool(group.get("als_ce_batch_scale", False)):
+            dP_star = dP_star * float(Bs)
+
+        # Frozen ReLU secant gates
+        eps_gate = 1e-8
+        D_list: List[torch.Tensor] = []
+        for l in range(L):
+            z_l = self.activations[l].to(dtype)
+            if l + 1 < L:
+                h_next = self.pre_acts[l + 1].to(dtype)
+                D_l = torch.where(z_l.abs() > eps_gate, h_next / z_l, torch.ones_like(z_l))
+            else:
+                D_l = torch.ones_like(z_l)
+            D_list.append(D_l)   # (Bs, d_l)
+
+        W_work: List[torch.Tensor] = [p.data.clone() for p in params_list]
+
+        # Per-sample P_init and P_target (2D operators, shape D_out×D_in)
+        def _op_single_b(Ws: List[torch.Tensor], b: int) -> torch.Tensor:
+            P = Ws[0]
+            for l in range(1, L):
+                d = D_list[l - 1][b]                   # (d_{l-1},)
+                W_D = Ws[l] * d.unsqueeze(0)           # scale columns: (d_out_l, d_{l-1})
+                P = W_D @ P
+            return P  # (D_out, D_in)
+
+        # Accumulate per-sample ΔW
+        dW_sum: List[torch.Tensor] = [torch.zeros_like(W_work[k]) for k in range(L)]
+
+        for b in range(Bs):
+            P_init_b = _op_single_b(W_work, b)
+            P_tgt_b  = P_init_b - lr * dP_star[b]     # (D_out, D_in)
+
+            # Working copy for this sample
+            W_b: List[torch.Tensor] = [w.clone() for w in W_work]
+
+            for _ in range(n_sweeps):
+                # Build right-context A_k^b for all k (top-down)
+                # A_{L-1}^b = I_{D_out}
+                # A_k^b = A_{k+1}^b @ (W[k+1] * diag(D[k][b]))  (columns scaled)
+                A_b: List[Optional[torch.Tensor]] = [None] * L
+                A_b[L - 1] = torch.eye(D_out, device=device, dtype=dtype)
+                for k in range(L - 2, -1, -1):
+                    d = D_list[k][b]                       # (d_k,)
+                    W_D = W_b[k + 1] * d.unsqueeze(0)     # (d_out_{k+1}, d_k)
+                    A_b[k] = A_b[k + 1] @ W_D             # (D_out, d_k)
+
+                # Forward sweep: visit layers 0 → L-1
+                B_b: Optional[torch.Tensor] = None   # left context below k (d_in_k × D_in)
+
+                for k in range(L):
+                    A_k = A_b[k]   # (D_out, d_out_k); None handled via identity below
+
+                    # Current per-sample operator contribution at layer k
+                    if B_b is None:
+                        P_curr = A_k @ W_b[k]              # (D_out, D_in)
+                    else:
+                        P_curr = A_k @ (W_b[k] @ B_b)     # (D_out, D_in)
+
+                    R_b = P_tgt_b - P_curr                 # (D_out, D_in)
+
+                    # Gram matrices for single-sample Sylvester
+                    # M_k^b = A_k^{bT} A_k^b  (or None at top layer → I)
+                    M_k: Optional[torch.Tensor] = None
+                    if k < L - 1:
+                        M_k = A_k.T @ A_k                  # (d_out_k, d_out_k)
+
+                    # N_k^b = B_k^b B_k^{bT}  (or None at bottom layer → I)
+                    N_k: Optional[torch.Tensor] = None
+                    if B_b is not None:
+                        N_k = B_b @ B_b.T                  # (d_in_k, d_in_k)
+
+                    # RHS: G_k^b = A_k^{bT} R^b B_k^{bT}
+                    if B_b is None and k < L - 1:
+                        G_k = A_k.T @ R_b                  # (d_out_k, D_in)
+                    elif B_b is not None and k == L - 1:
+                        G_k = R_b @ B_b.T                  # (D_out, d_in_k)
+                    elif B_b is not None:
+                        G_k = A_k.T @ R_b @ B_b.T          # (d_out_k, d_in_k)
+                    else:
+                        G_k = R_b                          # (D_out, D_in) — both None
+
+                    dW = _als_dW_from_mn(M_k, N_k, G_k, lam, lam_alpha)
+                    W_b[k].add_(dW)
+
+                    # Update left context B_b for next layer (bottom-up)
+                    if k < L - 1:
+                        d = D_list[k][b]                   # (d_k,)
+                        D_W = d.unsqueeze(1) * W_b[k]     # scale rows: (d_k, d_in_k)
+                        B_b = D_W if B_b is None else D_W @ B_b  # (d_k, D_in)
+
+            for k in range(L):
+                dW_sum[k].add_(W_b[k] - W_work[k])
+
+        # Batch-average and apply
+        inv_Bs = 1.0 / float(Bs)
+        for k, p in enumerate(params_list):
+            p.data.add_(dW_sum[k], alpha=inv_Bs)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -2248,6 +2407,99 @@ class OperatorLevelMLP(Optimizer):
         if use_ns:
             dW_list = [_newton_schulz(dW, steps=ns_steps) for dW in dW_list]
         if group["rescale_lr"]:
+            dW_list = self._rescale_dW(dW_list, group.get("rescale_variant", "max"))
+        for p, dW in zip(params_list, dW_list):
+            p.add_(dW, alpha=-lr)
+
+        self.activations.clear()
+        self.pre_acts.clear()
+        self.grad_acts.clear()
+
+    # ------------------------------------------------------------------
+    # secant_grad_exact: rank-1 secant curvature + exact backprop gradient
+    # ------------------------------------------------------------------
+
+    def _step_secant_grad_exact(self, group: Dict[str, Any]):
+        """Rank-1 secant curvature with exact backprop gradient direction.
+
+        Paper App. B.5 variant: separates the curvature approximation from the
+        gradient direction.  Builds Gram matrices from rank-1 secant surrogates:
+
+            M_k = (1/B) Σ_b (‖f^b‖ / ‖z_k^b‖²)² z_k^b z_k^{bT}
+            N_k = (1/B) Σ_b (1 / ‖x^b‖²) h_{k-1}^b h_{k-1}^{bT}
+
+        where  Â_k(x^b) = f(x^b) z_k^{bT} / ‖z_k^b‖²   (rank-1 left context)
+               B̂_k(x^b) = h_{k-1}(x^b) (x^b)^T / ‖x^b‖² (rank-1 right context).
+
+        Then solves the Sylvester equation with the exact backprop gradient:
+            M_k ΔW_k N_k + λ ΔW_k = G_k   where G_k = p.grad
+
+        Compared to 'secant': the Woodbury formula projects both gradient direction
+        and curvature through rank-1 contexts.  Here only the curvature is rank-1;
+        the gradient direction comes from exact backprop.
+        Compared to 'block_diagonal': block_diagonal propagates full Jacobian chains
+        for exact M_k, N_k.  Here we use cheap rank-1 approximations instead.
+        """
+        if not self.activations:
+            raise RuntimeError(
+                "attach_hooks(model) must be called before training when using "
+                "approximation='secant_grad_exact'."
+            )
+
+        lr        = group["lr"]
+        lam       = group["lam"]
+        lam_alpha = group["lam_alpha"]
+        beta      = group["momentum"]
+        wd        = group["weight_decay"]
+
+        params_list = [p for p in group["params"] if p.grad is not None and p.ndim == 2]
+        if not params_list:
+            return
+
+        device = params_list[0].device
+        dtype  = params_list[0].dtype
+        L      = len(params_list)
+        eps    = 1e-12
+
+        Z = [self.activations[l].to(dtype) for l in range(L)]   # (B, n_l)
+        H = [self.pre_acts[l].to(dtype)    for l in range(L)]   # (B, n_{l-1})
+        f = self.activations[L - 1].to(dtype)                    # (B, D_out)
+        x = self.pre_acts[0].to(dtype)                           # (B, D_in)
+        B = Z[0].shape[0]
+
+        z_norm_sq = [z.pow(2).sum(1).clamp(min=eps) for z in Z]  # list of (B,)
+        f_norm_sq = f.pow(2).sum(1)                               # (B,)
+        x_norm_sq = x.pow(2).sum(1).clamp(min=eps)               # (B,)
+
+        # Exact backprop gradients as RHS (same source as block_diagonal)
+        G = [
+            p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone()
+            for p in params_list
+        ]
+
+        dW_raw_list = []
+        for k in range(L):
+            # Rank-1 secant Gram M_k:
+            # M_k = (1/B) Σ_b (‖f^b‖² / ‖z_k^b‖⁴) z_k^b z_k^{bT}
+            #      = (Z_k * w_M_sqrt)^T (Z_k * w_M_sqrt) / B
+            # where w_M_sqrt^b = ‖f^b‖ / ‖z_k^b‖²
+            w_M_sqrt = f_norm_sq.sqrt() / z_norm_sq[k]          # (B,)
+            Z_scaled = Z[k] * w_M_sqrt.unsqueeze(1)             # (B, n_k)
+            M_k = Z_scaled.T @ Z_scaled / B                     # (n_k, n_k)
+
+            # Rank-1 secant Gram N_k:
+            # N_k = (1/B) Σ_b (1 / ‖x^b‖²) h_{k-1}^b h_{k-1}^{bT}
+            #      = (H_k * w_N_sqrt)^T (H_k * w_N_sqrt) / B
+            # where w_N_sqrt^b = 1 / ‖x^b‖
+            w_N_sqrt = 1.0 / x_norm_sq.sqrt()                   # (B,)
+            H_scaled = H[k] * w_N_sqrt.unsqueeze(1)             # (B, n_{k-1})
+            N_k = H_scaled.T @ H_scaled / B                     # (n_{k-1}, n_{k-1})
+
+            dW_raw = _solve_sylvester(M_k, N_k, G[k], lam, lam_alpha)
+            dW_raw_list.append(dW_raw)
+
+        dW_list = self._nesterov_grads(params_list, dW_raw_list, beta)
+        if group.get("rescale_lr", False):
             dW_list = self._rescale_dW(dW_list, group.get("rescale_variant", "max"))
         for p, dW in zip(params_list, dW_list):
             p.add_(dW, alpha=-lr)

@@ -5,9 +5,6 @@ import copy
 import json
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -18,6 +15,9 @@ from operator_level_optimization.core.optim.kfac import KFAC
 from operator_level_optimization.core.optim.muon import Muon
 from operator_level_optimization.core.optim.shampoo import Shampoo
 from operator_level_optimization.core.optim.soap import SOAP
+from operator_level_optimization.scripts.utils.io import get_device
+from operator_level_optimization.scripts.utils.plotting import save_fig
+from operator_level_optimization.scripts.utils.training import EarlyStopping
 
 
 _METHOD_PLOT = {
@@ -70,8 +70,7 @@ def save_loss_plot(
     ax.grid(True, alpha=0.25)
     ax.legend(frameon=False)
     out = out_dir / filename
-    fig.savefig(out, dpi=180, bbox_inches="tight")
-    plt.close(fig)
+    save_fig(fig, path=out, dpi=180, bbox_inches="tight")
     return out
 
 
@@ -144,9 +143,8 @@ def run_method(
     p_star_norm = torch.norm(p_star).clamp(min=1e-30)
     hist = []
     spectra: dict[int, list[float]] = {}
-    best_mse = float("inf")
-    stall = 0
     early_stop_triggered_at: int | None = None
+    es = EarlyStopping(early_stop_patience, early_stop_rel_tol, early_stop_abs_tol, early_stop_min_steps)
     for t in range(steps + 1):
         with torch.no_grad():
             p = compute_P_fgln(model)
@@ -158,21 +156,8 @@ def run_method(
         if t == steps:
             break
         mse_val = float(loss.item())
-        if best_mse == float("inf"):
-            best_mse = mse_val
-        else:
-            thr = max(early_stop_rel_tol * best_mse, early_stop_abs_tol)
-            if mse_val < best_mse - thr:
-                best_mse = mse_val
-                stall = 0
-            elif t >= early_stop_min_steps and early_stop_patience is not None:
-                stall += 1
-        if (
-            early_stop_patience is not None
-            and t >= early_stop_min_steps
-            and stall >= early_stop_patience
-        ):
-            early_stop_triggered_at = t
+        if es.check(mse_val, t):
+            early_stop_triggered_at = es.triggered_at
             break
         if method == "als_exact":
             try:
@@ -244,10 +229,7 @@ def main() -> None:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    if args.device == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        device = torch.device(args.device)
+    device = get_device(args.device)
     dtype = torch.float64
 
     x, y, p_star = make_dataset(args.d, args.n, args.seed)

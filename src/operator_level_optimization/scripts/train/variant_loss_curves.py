@@ -27,8 +27,6 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -37,56 +35,14 @@ import torch.nn as nn
 from operator_level_optimization.core.optim.operator import OperatorLevelMLP
 from operator_level_optimization.models.fgln import FGLN, MaskedOperatorALS, compute_P_fgln, init_weights
 from operator_level_optimization.scripts.train.deep_linear_compare import run_method as deep_linear_run
-
-
-def _device(name: str) -> torch.device:
-    if name == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(name)
-
-
-def _y_for_plot(y: list[float], plot_y_max: float) -> tuple[np.ndarray, bool]:
-    """Clip finite Y values at ``plot_y_max`` for display (JSON keeps raw).
-
-    Returns ``(y_display, clipped)`` where ``clipped`` is True if any finite
-    value exceeded ``plot_y_max``. NaNs are left unchanged.
-    """
-    a = np.asarray(y, dtype=float)
-    if plot_y_max <= 0 or a.size == 0:
-        return a, False
-    finite = np.isfinite(a)
-    over = finite & (a > plot_y_max)
-    if not np.any(over):
-        return a, False
-    out = a.copy()
-    out[over] = plot_y_max
-    return out, True
-
-
-def _annotate_clip(ax: Any, clipped: bool, plot_y_max: float) -> None:
-    if clipped and plot_y_max > 0:
-        ax.text(
-            0.01,
-            0.99,
-            f"values > {plot_y_max:g} clipped for display",
-            transform=ax.transAxes,
-            fontsize=7,
-            color="0.35",
-            va="top",
-            ha="left",
-        )
-
-
-def _tiny_mlp() -> nn.Module:
-    return nn.Sequential(
-        nn.Linear(24, 8, bias=False),
-        nn.ReLU(inplace=False),
-        nn.Linear(8, 5, bias=False),
-    )
+from operator_level_optimization.scripts.utils.io import get_device, jsonify
+from operator_level_optimization.scripts.utils.plotting import annotate_clip, clip_for_plot, save_fig
+from operator_level_optimization.scripts.utils.tasks import make_mlp, make_tiny_mlp
+from operator_level_optimization.scripts.utils.training import run_mlp_loop
 
 
 def _mlp_architecture() -> dict[str, Any]:
-    """Fixed synthetic MLP used for variant comparison (must match ``_tiny_mlp``)."""
+    """Fixed synthetic MLP used for variant comparison (must match ``make_tiny_mlp``)."""
     return {
         "description": "bias-free ReLU MLP for synthetic cross-entropy task",
         "layers": [
@@ -95,7 +51,7 @@ def _mlp_architecture() -> dict[str, Any]:
             {"type": "Linear", "in_features": 8, "out_features": 5, "bias": False},
         ],
         "num_classes": 5,
-        "total_trainable_params": sum(p.numel() for p in _tiny_mlp().parameters()),
+        "total_trainable_params": sum(p.numel() for p in make_tiny_mlp().parameters()),
     }
 
 
@@ -115,21 +71,6 @@ def _operator_level_mlp_kwargs(**overrides: Any) -> dict[str, Any]:
 def _state_dict_sha256(state_dict: dict[str, torch.Tensor]) -> str:
     flat = torch.cat([v.detach().reshape(-1).cpu().to(torch.float64) for v in state_dict.values()])
     return hashlib.sha256(flat.numpy().tobytes()).hexdigest()
-
-
-def _jsonify_run_value(obj: Any) -> Any:
-    """Convert objects to JSON-serializable forms for ``config.json``."""
-    if isinstance(obj, dict):
-        return {str(k): _jsonify_run_value(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_jsonify_run_value(v) for v in obj]
-    if isinstance(obj, torch.device):
-        return str(obj)
-    if isinstance(obj, torch.dtype):
-        return str(obj)
-    if isinstance(obj, (str, int, float, bool)) or obj is None:
-        return obj
-    return repr(obj)
 
 
 # --- Deep linear -----------------------------------------------------------------
@@ -196,8 +137,8 @@ def curves_deep_linear(
         rels = [h[1] for h in hist]
         mses = [h[2] for h in hist]
         series.append({"label": label, "method": method, "lr": lr, "extra": extra, "history": hist})
-        y_mse, cm = _y_for_plot(mses, plot_y_max)
-        y_rel, cr = _y_for_plot(rels, plot_y_max)
+        y_mse, cm = clip_for_plot(mses, plot_y_max)
+        y_rel, cr = clip_for_plot(rels, plot_y_max)
         clipped_mse_any = clipped_mse_any or cm
         clipped_rel_any = clipped_rel_any or cr
         ax_mse.plot(ts, y_mse, label=label, color=c, linewidth=2.0)
@@ -209,10 +150,8 @@ def curves_deep_linear(
         ax_i.set_yscale("log")
         ax_i.set_title(label)
         ax_i.grid(True, alpha=0.25)
-        _annotate_clip(ax_i, cm, plot_y_max)
-        fig_i.tight_layout()
-        fig_i.savefig(out_dir / f"deep_linear_mse_{slug}.png", dpi=160)
-        plt.close(fig_i)
+        annotate_clip(ax_i, cm, plot_y_max)
+        save_fig(fig_i, out_dir / f"deep_linear_mse_{slug}.png")
 
     for ax, ylabel, fname, clipped_any in (
         (ax_mse, "Train MSE", "deep_linear_train_mse.png", clipped_mse_any),
@@ -223,11 +162,8 @@ def curves_deep_linear(
         ax.set_yscale("log")
         ax.grid(True, which="both", alpha=0.25)
         ax.legend(frameon=False, loc="best")
-        _annotate_clip(ax, clipped_any, plot_y_max)
-        fig = ax.figure
-        fig.tight_layout()
-        fig.savefig(out_dir / fname, dpi=160)
-        plt.close(fig)
+        annotate_clip(ax, clipped_any, plot_y_max)
+        save_fig(ax.figure, out_dir / fname)
 
     per_method_cfg: list[dict[str, Any]] = []
     for slug, label, (method, lr, extra) in zip(slugs, labels, configs):
@@ -238,8 +174,8 @@ def curves_deep_linear(
                 "plot_label": label,
                 "method": method,
                 "operator_step_lr": lr,
-                "run_kwargs_overrides_vs_shared": _jsonify_run_value(extra),
-                "merged_run_kwargs_passed_to_deep_linear_run": _jsonify_run_value(kw),
+                "run_kwargs_overrides_vs_shared": jsonify(extra),
+                "merged_run_kwargs_passed_to_deep_linear_run": jsonify(kw),
             }
         )
 
@@ -264,7 +200,7 @@ def curves_deep_linear(
         "dtype": str(dtype),
         "device": str(device),
         "plot_y_max": plot_y_max,
-        "shared_run_kwargs": _jsonify_run_value(common),
+        "shared_run_kwargs": jsonify(common),
         "per_method": per_method_cfg,
     }
 
@@ -346,6 +282,18 @@ def _mlp_variants() -> list[dict[str, Any]]:
             als_gateperm_warmstart_once=True,
             als_lam_anchor_post_warmstart=False,
         )},
+        # App. B.5: rank-1 secant curvature + exact backprop gradient direction
+        {"key": "mlp_secant_grad_exact", "kwargs": _operator_level_mlp_kwargs(
+            lr=0.08, lam=1e-3, approximation="secant_grad_exact", momentum=0.0,
+        )},
+        # App. B.4: D&C failure on MLP — per-sample ALS averaged across samples
+        {"key": "mlp_dc_mlp", "kwargs": _operator_level_mlp_kwargs(
+            lr=0.35,
+            lam=1e-3,
+            approximation="dc_mlp",
+            n_sweeps=3,
+            momentum=0.0,
+        )},
     ]
 
 
@@ -364,7 +312,7 @@ def curves_mlp(
     y = torch.randint(0, 5, (batch,), device=device, dtype=torch.long)
 
     torch.manual_seed(seed)
-    template = _tiny_mlp().to(device=device, dtype=dtype)
+    template = make_tiny_mlp().to(device=device, dtype=dtype)
     for m in template.modules():
         if isinstance(m, nn.Linear):
             nn.init.normal_(m.weight, std=0.05)
@@ -383,31 +331,18 @@ def curves_mlp(
     for i, entry in enumerate(variants):
         key = entry["key"]
         kwargs = entry["kwargs"]
-        model = _tiny_mlp().to(device=device, dtype=dtype)
+        model = make_tiny_mlp().to(device=device, dtype=dtype)
         model.load_state_dict(state0)
-        params = list(model.parameters())
-        opt = OperatorLevelMLP(params, **kwargs)
+        opt = OperatorLevelMLP(list(model.parameters()), **kwargs)
         opt.attach_hooks(model)
-        losses: list[float] = []
-        with torch.no_grad():
-            losses.append(float(crit(model(x), y).detach().cpu().item()))
-        try:
-            for _ in range(steps):
-                opt.zero_grad(set_to_none=True)
-                logits = model(x)
-                loss = crit(logits, y)
-                loss.backward()
-                opt.step()
-                losses.append(float(loss.detach().cpu().item()))
-        except (RuntimeError, FloatingPointError) as e:
-            bundle.append({"key": key, "error": str(e), "losses": losses})
-            continue
 
+        hist = run_mlp_loop(model, opt, lambda: crit(model(x), y), steps)
+        losses = [v for _, v in hist]
         bundle.append({"key": key, "losses": losses})
-        ts = list(range(0, len(losses)))
+        ts = [h[0] for h in hist]
         label = key.replace("mlp_", "").replace("_", " ")
         color = cmap[i % len(cmap)]
-        y_plot, c_any = _y_for_plot(losses, plot_y_max)
+        y_plot, c_any = clip_for_plot(losses, plot_y_max)
         clipped_lin_any = clipped_lin_any or c_any
         clipped_log_any = clipped_log_any or c_any
         ax_lin.plot(ts, y_plot, label=label, color=color, linewidth=1.8)
@@ -420,10 +355,8 @@ def curves_mlp(
         ax_i.set_ylabel("Cross-entropy loss")
         ax_i.set_title(label)
         ax_i.grid(True, alpha=0.25)
-        _annotate_clip(ax_i, c_any, plot_y_max)
-        fig_i.tight_layout()
-        fig_i.savefig(out_dir / f"loss_{key}.png", dpi=160)
-        plt.close(fig_i)
+        annotate_clip(ax_i, c_any, plot_y_max)
+        save_fig(fig_i, out_dir / f"loss_{key}.png")
 
     for ax, fname, clipped_any in (
         (ax_lin, "mlp_cross_entropy_linear.png", clipped_lin_any),
@@ -433,13 +366,10 @@ def curves_mlp(
         ax.set_ylabel("Cross-entropy loss")
         ax.grid(True, alpha=0.25)
         ax.legend(frameon=False, loc="best", fontsize=8, ncol=2)
-        fig = ax.figure
         if ax is ax_log:
             ax.set_yscale("log")
-        _annotate_clip(ax, clipped_any, plot_y_max)
-        fig.tight_layout()
-        fig.savefig(out_dir / fname, dpi=160)
-        plt.close(fig)
+        annotate_clip(ax, clipped_any, plot_y_max)
+        save_fig(ax.figure, out_dir / fname)
 
     cfg_section = {
         "scenario": "mlp_synthetic_cross_entropy",
@@ -472,7 +402,7 @@ def curves_mlp(
             "plot_y_max": plot_y_max,
         },
         "variants": [
-            {"key": v["key"], "operator_level_mlp_kwargs": _jsonify_run_value(v["kwargs"])}
+            {"key": v["key"], "operator_level_mlp_kwargs": jsonify(v["kwargs"])}
             for v in variants
         ],
     }
@@ -557,7 +487,7 @@ def curves_fgln(
     def _fgln_single_plot(hist: list[tuple[int, float]], title: str, fname: str, color: str) -> bool:
         xs = [a[0] for a in hist]
         raw = [a[1] for a in hist]
-        y_plot, clipped = _y_for_plot(raw, plot_y_max)
+        y_plot, clipped = clip_for_plot(raw, plot_y_max)
         fig, ax = plt.subplots(figsize=(6.5, 4.0))
         ax.plot(xs, y_plot, color=color, lw=2.0)
         ax.set_xlabel("Step")
@@ -565,18 +495,16 @@ def curves_fgln(
         ax.set_yscale("log")
         ax.set_title(title)
         ax.grid(True, alpha=0.25)
-        _annotate_clip(ax, clipped, plot_y_max)
-        fig.tight_layout()
-        fig.savefig(out_dir / fname, dpi=160)
-        plt.close(fig)
+        annotate_clip(ax, clipped, plot_y_max)
+        save_fig(fig, out_dir / fname)
         return clipped
 
     _ = _fgln_single_plot(h_fixed, "FGLN ALS-exact (fixed λ)", "fgln_mse_als_fixed_lam.png", "#9467bd")
     _ = _fgln_single_plot(h_adapt, "FGLN ALS-exact + adaptive λ step", "fgln_mse_als_adaptive_lam.png", "#ff7f0e")
 
     fig, ax = plt.subplots(figsize=(8.0, 4.8))
-    yf, cf = _y_for_plot([a[1] for a in h_fixed], plot_y_max)
-    ya, ca = _y_for_plot([a[1] for a in h_adapt], plot_y_max)
+    yf, cf = clip_for_plot([a[1] for a in h_fixed], plot_y_max)
+    ya, ca = clip_for_plot([a[1] for a in h_adapt], plot_y_max)
     ax.plot([a[0] for a in h_fixed], yf, label="ALS-exact (fixed λ)", color="#9467bd", lw=2.0)
     ax.plot([a[0] for a in h_adapt], ya, label="ALS-exact + adaptive λ step", color="#ff7f0e", lw=2.0)
     ax.set_xlabel("Step")
@@ -584,10 +512,8 @@ def curves_fgln(
     ax.set_yscale("log")
     ax.grid(True, alpha=0.25)
     ax.legend(frameon=False)
-    _annotate_clip(ax, cf or ca, plot_y_max)
-    fig.tight_layout()
-    fig.savefig(out_dir / "fgln_train_mse.png", dpi=160)
-    plt.close(fig)
+    annotate_clip(ax, cf or ca, plot_y_max)
+    save_fig(fig, out_dir / "fgln_train_mse.png")
 
     return (
         {
@@ -627,19 +553,19 @@ def curves_fgln(
                     "lr": outer_lr,
                     "P_tgt_override_formula": "P - lr * grad_P MSE; grad_P = (2/(n*d)) * (pred-y).T @ x",
                 },
-                "masked_operator_als_shared_kwargs": _jsonify_run_value(masked_als_kwargs_base),
+                "masked_operator_als_shared_kwargs": jsonify(masked_als_kwargs_base),
                 "runs": [
                     {
                         "key": "als_fixed_lam",
                         "adaptive_lambda_step": False,
-                        "MaskedOperatorALS_kwargs": _jsonify_run_value(
+                        "MaskedOperatorALS_kwargs": jsonify(
                             {**masked_als_kwargs_base, "adaptive_lambda_step": False}
                         ),
                     },
                     {
                         "key": "als_adaptive_lambda_step",
                         "adaptive_lambda_step": True,
-                        "MaskedOperatorALS_kwargs": _jsonify_run_value(
+                        "MaskedOperatorALS_kwargs": jsonify(
                             {**masked_als_kwargs_base, "adaptive_lambda_step": True}
                         ),
                     },
@@ -648,6 +574,390 @@ def curves_fgln(
             }
         },
     )
+
+
+# --- Operator-KFAC depth sweep ---------------------------------------------------
+
+def curves_operator_kfac_depth_sweep(
+    *,
+    out_dir: Path,
+    device: torch.device,
+    steps: int,
+    depths: list[int],
+    hidden: int,
+    d_in: int,
+    d_out: int,
+    batch: int,
+    seed: int,
+    plot_y_max: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Compare operator_kfac vs block_diagonal vs als_mn across network depths.
+
+    Trains a depth-d bias-free linear MLP (no ReLU) with each optimizer and
+    records the cross-entropy loss curve.  The depth sweep surfaces spectral
+    collapse: block_diagonal degrades at depth while operator_kfac remains
+    stable thanks to its coupled factorization.  App. B.3.
+    """
+    dtype = torch.float64
+    methods = [
+        ("operator_kfac",   {"lr": 0.08, "lam": 1e-3, "approximation": "operator_kfac",   "momentum": 0.0}),
+        ("block_diagonal",  {"lr": 0.08, "lam": 1e-3, "approximation": "block_diagonal",  "momentum": 0.0}),
+        ("als_mn",          {"lr": 0.35, "lam": 1e-3, "approximation": "als",
+                             "als_layer_solve": "mn", "n_sweeps": 3,
+                             "als_reverse_sweep": True, "momentum": 0.0,
+                             "als_gateperm_warmstart": True,
+                             "als_gateperm_warmstart_once": True,
+                             "als_lam_anchor_post_warmstart": False}),
+    ]
+    colors = {"operator_kfac": "#2ca02c", "block_diagonal": "#1f77b4", "als_mn": "#ff7f0e"}
+    labels = {"operator_kfac": "Operator-KFAC", "block_diagonal": "Block-Diagonal", "als_mn": "ALS-MN"}
+
+    g = torch.Generator(device=device).manual_seed(seed)
+    x = torch.randn(batch, d_in, device=device, dtype=dtype, generator=g)
+    y_cls = torch.randint(0, d_out, (batch,), device=device)
+    crit = nn.CrossEntropyLoss()
+
+    all_results: dict[str, Any] = {}
+
+    for depth in depths:
+        depth_results: dict[str, list[tuple[int, float]]] = {}
+
+        for method_key, opt_kwargs in methods:
+            torch.manual_seed(seed)
+            model = make_mlp(depth, d_in, hidden, d_out).to(device=device, dtype=dtype)
+            kw = _operator_level_mlp_kwargs(**opt_kwargs)
+            opt = OperatorLevelMLP(list(model.parameters()), **kw)
+            opt.attach_hooks(model)
+            depth_results[method_key] = run_mlp_loop(
+                model, opt, lambda: crit(model(x), y_cls), steps
+            )
+
+        all_results[f"depth_{depth}"] = depth_results
+
+        # Per-depth curve plot
+        fig, ax = plt.subplots(figsize=(7.0, 4.5))
+        for method_key, _ in methods:
+            hist = depth_results[method_key]
+            xs = [h[0] for h in hist]
+            raw = [h[1] for h in hist]
+            ys, clipped = clip_for_plot(raw, plot_y_max)
+            ax.plot(xs, ys, label=labels[method_key], color=colors[method_key], lw=2.0)
+            annotate_clip(ax, clipped, plot_y_max)
+        ax.set_xlabel("Step")
+        ax.set_ylabel("Train CE loss")
+        ax.set_yscale("log")
+        ax.set_title(f"Operator-KFAC depth sweep — depth={depth}")
+        ax.legend(frameon=False)
+        ax.grid(True, alpha=0.25)
+        save_fig(fig, out_dir / f"operator_kfac_depth_{depth}.png")
+
+    # Summary: final loss vs depth for each method
+    fig, ax = plt.subplots(figsize=(7.0, 4.5))
+    for method_key, _ in methods:
+        final_losses = [all_results[f"depth_{d}"][method_key][-1][1] for d in depths]
+        ys, clipped = clip_for_plot(final_losses, plot_y_max)
+        ax.plot(depths, ys, marker="o", label=labels[method_key], color=colors[method_key], lw=2.0)
+        annotate_clip(ax, clipped, plot_y_max)
+    ax.set_xlabel("Depth")
+    ax.set_ylabel(f"Final CE loss (step {steps})")
+    ax.set_yscale("log")
+    ax.set_title("Final loss vs depth — Operator-KFAC vs baselines")
+    ax.legend(frameon=False)
+    ax.grid(True, alpha=0.25)
+    save_fig(fig, out_dir / "operator_kfac_depth_summary.png")
+
+    cfg_section: dict[str, Any] = {
+        "operator_kfac_depth_sweep": {
+            "scenario": "synthetic_ce_linear_mlp",
+            "architecture": {
+                "type": "bias-free linear MLP (no ReLU)",
+                "d_in": d_in,
+                "hidden": hidden,
+                "d_out": d_out,
+                "depths_swept": depths,
+            },
+            "training": {
+                "batch": batch,
+                "steps": steps,
+                "seed": seed,
+                "dtype": str(dtype),
+                "device": str(device),
+                "loss": "CrossEntropyLoss",
+            },
+            "methods": [
+                {"key": k, "operator_level_mlp_kwargs": jsonify(v)}
+                for k, v in methods
+            ],
+        }
+    }
+
+    return {"operator_kfac_depth_sweep": all_results}, cfg_section
+
+
+# --- Mean-field comparison --------------------------------------------------------
+
+def curves_mean_field_comparison(
+    *,
+    out_dir: Path,
+    device: torch.device,
+    steps: int,
+    depth: int,
+    hidden: int,
+    d_in: int,
+    d_out: int,
+    batch: int,
+    lr: float,
+    lam: float,
+    n_sweeps: int,
+    seed: int,
+    plot_y_max: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Mean-field bias: per-sample ALS vs batch ALS on linear vs ReLU networks.
+
+    Two-panel comparison (App. B.1):
+    - Deep linear (no ReLU): D_l = 1 for every sample → per-sample solve and
+      batch solve are mathematically identical.  Both curves overlap.
+    - ReLU MLP (same depth/width): each sample has its own gate pattern.
+      Per-sample solves push shared weights in incompatible directions; their
+      average is a poor solution for the batch objective.  The curve diverges
+      from batch ALS-MN.
+    """
+    dtype  = torch.float64
+    crit   = nn.CrossEntropyLoss()
+    g      = torch.Generator(device=device).manual_seed(seed)
+    x      = torch.randn(batch, d_in,   device=device, dtype=dtype, generator=g)
+    y_cls  = torch.randint(0, d_out, (batch,), device=device)
+
+    als_shared_kw = _operator_level_mlp_kwargs(
+        lr=lr,
+        lam=lam,
+        approximation="als",
+        n_sweeps=n_sweeps,
+        als_reverse_sweep=True,
+        momentum=0.0,
+        als_gateperm_warmstart=True,
+        als_gateperm_warmstart_once=True,
+        als_lam_anchor_post_warmstart=False,
+    )
+
+    variants = [
+        ("als_mn",         {**als_shared_kw, "als_layer_solve": "mn"}),
+        ("als_per_sample", {**als_shared_kw, "als_layer_solve": "per_sample"}),
+    ]
+    labels  = {"als_mn": "Batch ALS-MN", "als_per_sample": "Mean-field (per-sample avg)"}
+    colors  = {"als_mn": "#1f77b4",       "als_per_sample": "#d62728"}
+    results: dict[str, Any] = {}
+
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.8), sharey=False)
+    panel_clipped = False
+
+    for col, (net_label, relu) in enumerate([("linear", False), ("relu_mlp", True)]):
+        ax = axes[col]
+        net_results: dict[str, list[tuple[int, float]]] = {}
+
+        torch.manual_seed(seed)
+        init_model = make_mlp(depth, d_in, hidden, d_out, relu=relu).to(device=device, dtype=dtype)
+        for m in init_model.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, std=0.05)
+        state0 = {k: v.clone() for k, v in init_model.state_dict().items()}
+
+        for key, kw in variants:
+            model = make_mlp(depth, d_in, hidden, d_out, relu=relu).to(device=device, dtype=dtype)
+            model.load_state_dict(state0)
+            opt = OperatorLevelMLP(list(model.parameters()), **kw)
+            opt.attach_hooks(model)
+
+            hist = run_mlp_loop(model, opt, lambda: crit(model(x), y_cls), steps)
+            net_results[key] = hist
+
+            xs  = [h[0] for h in hist]
+            raw = [h[1] for h in hist]
+            ys, clipped = clip_for_plot(raw, plot_y_max)
+            panel_clipped = panel_clipped or clipped
+            ax.plot(xs, ys, label=labels[key], color=colors[key], lw=2.0)
+            annotate_clip(ax, clipped, plot_y_max)
+
+        ax.set_xlabel("Step")
+        ax.set_ylabel("Train CE loss")
+        ax.set_yscale("log")
+        title = "Deep linear (no ReLU)\n[mean-field ≡ batch ALS]" if net_label == "linear" \
+                else "ReLU MLP\n[mean-field biased — gate heterogeneity]"
+        ax.set_title(title, fontsize=10)
+        ax.legend(frameon=False, fontsize=9)
+        ax.grid(True, alpha=0.25)
+        results[net_label] = net_results
+
+    fig.suptitle(
+        f"Mean-field vs batch ALS-MN  (depth={depth}, d={hidden}, batch={batch})",
+        fontsize=11,
+    )
+    save_fig(fig, out_dir / "mean_field_comparison.png")
+
+    cfg_section: dict[str, Any] = {
+        "mean_field_comparison": {
+            "scenario": "mean_field_vs_batch_als_linear_and_relu",
+            "architecture": {
+                "depth": depth, "hidden": hidden, "d_in": d_in, "d_out": d_out,
+                "networks": ["bias-free linear (no ReLU)", "bias-free ReLU MLP"],
+            },
+            "training": {
+                "batch": batch, "steps": steps, "seed": seed,
+                "dtype": str(dtype), "device": str(device),
+                "loss": "CrossEntropyLoss",
+            },
+            "optimizer_shared": jsonify(als_shared_kw),
+            "variants": [{"key": k, "als_layer_solve": kw["als_layer_solve"]} for k, kw in variants],
+        }
+    }
+
+    return {"mean_field_comparison": results}, cfg_section
+
+
+# --- Linearized objective comparison ---------------------------------------------
+
+def curves_linearized_obj_comparison(
+    *,
+    out_dir: Path,
+    device: torch.device,
+    steps_small: int,
+    steps_large: int,
+    depth: int,
+    hidden: int,
+    d_in: int,
+    d_out: int,
+    batch: int,
+    lr_small: float,
+    lr_large: float,
+    lam: float,
+    n_sweeps: int,
+    seed: int,
+    plot_y_max: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Approximation hierarchy: ALS-exact vs linearized-exact vs block-diagonal (App. B.2).
+
+    Two-panel ReLU MLP experiment with MSE-to-linear-teacher task.  The student is a
+    depth-``depth`` bias-free ReLU MLP; the teacher outputs are P*x for a random P*.
+    ALS-exact solves the frozen-gate operator objective exactly; linearized-exact and
+    block-diagonal use first-order Taylor approximations.
+
+    Left panel — small lr (``lr_small``): all three methods are stable.
+      Block-diagonal converges fastest (efficient Newton-like step per layer).
+      Linearized-exact is intermediate.  ALS-exact is slowest (constrained to the
+      factored manifold, no warmstart, no gate-permutation heuristics).
+
+    Right panel — large lr (``lr_large``): only ALS-exact is stable.
+      Linearized-exact immediately diverges (first-order Taylor breaks down at large
+      step).  Block-diagonal spikes massively then stalls at a poor local minimum.
+      ALS-exact, solving the true nonlinear operator objective, remains monotonically
+      convergent.
+    """
+    dtype = torch.float64
+    crit  = nn.MSELoss()
+
+    g      = torch.Generator(device=device).manual_seed(seed)
+    x      = torch.randn(batch, d_in, device=device, dtype=dtype, generator=g)
+    P_star = torch.randn(d_out, d_in, device=device, dtype=dtype, generator=g) * 0.3
+    y_reg  = x @ P_star.T   # linear teacher outputs
+
+    labels = {
+        "als_exact":        "ALS-exact (nonlinear obj., iterative)",
+        "linearized_exact": "Linearized exact (coupled, 1-shot)",
+        "block_diagonal":   "Block-diagonal (per-layer, 1-shot)",
+    }
+    colors = {
+        "als_exact":        "#1f77b4",
+        "linearized_exact": "#ff7f0e",
+        "block_diagonal":   "#2ca02c",
+    }
+
+    torch.manual_seed(seed)
+    init_model = make_mlp(depth, d_in, hidden, d_out, relu=True).to(device=device, dtype=dtype)
+    for m in init_model.modules():
+        if isinstance(m, nn.Linear):
+            nn.init.normal_(m.weight, std=0.1)
+    state0 = {k: v.clone() for k, v in init_model.state_dict().items()}
+
+    all_results: dict[str, Any] = {}
+    fig, axes = plt.subplots(1, 2, figsize=(13.0, 4.8))
+
+    for col, (lr, steps, panel_label) in enumerate([
+        (lr_small, steps_small, f"Small lr={lr_small}  [all stable]"),
+        (lr_large, steps_large, f"Large lr={lr_large}  [only ALS-exact stable]"),
+    ]):
+        ax = axes[col]
+        panel_results: dict[str, list[tuple[int, float]]] = {}
+
+        variants = [
+            ("als_exact", _operator_level_mlp_kwargs(
+                lr=lr, lam=lam, approximation="als",
+                als_layer_solve="exact", n_sweeps=n_sweeps,
+                als_reverse_sweep=True, momentum=0.0,
+                als_gateperm_warmstart=False,
+            )),
+            ("linearized_exact", _operator_level_mlp_kwargs(
+                lr=lr, lam=lam, approximation="exact", momentum=0.0,
+            )),
+            ("block_diagonal", _operator_level_mlp_kwargs(
+                lr=lr, lam=lam, approximation="block_diagonal", momentum=0.0,
+            )),
+        ]
+
+        for key, kw in variants:
+            model = make_mlp(depth, d_in, hidden, d_out, relu=True).to(device=device, dtype=dtype)
+            model.load_state_dict(state0)
+            opt = OperatorLevelMLP(list(model.parameters()), **kw)
+            opt.attach_hooks(model)
+
+            hist = run_mlp_loop(model, opt, lambda: crit(model(x), y_reg), steps)
+            panel_results[key] = hist
+            xs  = [h[0] for h in hist]
+            raw = [h[1] for h in hist]
+            ys, clipped = clip_for_plot(raw, plot_y_max)
+            ax.plot(xs, ys, label=labels[key], color=colors[key], lw=2.0)
+            annotate_clip(ax, clipped, plot_y_max)
+
+        ax.set_xlabel("Step")
+        ax.set_ylabel("Train MSE  (student vs linear teacher)")
+        ax.set_yscale("log")
+        ax.set_title(panel_label, fontsize=10)
+        ax.legend(frameon=False, fontsize=8)
+        ax.grid(True, alpha=0.25)
+        all_results[f"lr_{lr}"] = panel_results
+
+    fig.suptitle(
+        f"Linearized objective: good approx. at small lr, breaks down at large lr"
+        f"  (depth={depth}, hidden={hidden}, batch={batch}, ReLU MLP)",
+        fontsize=10,
+    )
+    save_fig(fig, out_dir / "linearized_obj_comparison.png")
+
+    cfg_section: dict[str, Any] = {
+        "linearized_obj_comparison": {
+            "scenario": "solver_approximation_hierarchy_relu_mlp_mse",
+            "architecture": {
+                "depth": depth, "hidden": hidden, "d_in": d_in, "d_out": d_out,
+                "type": "bias-free ReLU MLP",
+            },
+            "teacher": "P* = 0.3 * randn(d_out, d_in)",
+            "training": {
+                "batch": batch, "seed": seed,
+                "dtype": str(dtype), "device": str(device),
+                "loss": "MSELoss(model(x), P*x)",
+                "weight_init": "nn.init.normal_(std=0.1), torch.manual_seed(seed)",
+            },
+            "panels": [
+                {"lr": lr_small, "steps": steps_small, "label": "small lr — all stable"},
+                {"lr": lr_large, "steps": steps_large, "label": "large lr — only ALS-exact stable"},
+            ],
+            "variants_shared": {
+                "lam": lam, "n_sweeps_als": n_sweeps,
+                "als_reverse_sweep": True, "als_gateperm_warmstart": False,
+            },
+        }
+    }
+
+    return {"linearized_obj_comparison": all_results}, cfg_section
 
 
 def main() -> None:
@@ -666,6 +976,33 @@ def main() -> None:
     ap.add_argument("--fgln_depth", type=int, default=16)
     ap.add_argument("--fgln_n", type=int, default=32)
     ap.add_argument("--fgln_p", type=float, default=0.85)
+    ap.add_argument("--steps_kfac_depth", type=int, default=100)
+    ap.add_argument("--kfac_depths", type=str, default="2,4,8",
+                    help="Comma-separated list of depths for operator_kfac depth sweep.")
+    ap.add_argument("--kfac_hidden", type=int, default=16)
+    ap.add_argument("--kfac_d_in", type=int, default=16)
+    ap.add_argument("--kfac_d_out", type=int, default=8)
+    ap.add_argument("--kfac_batch", type=int, default=32)
+    ap.add_argument("--steps_mean_field", type=int, default=300)
+    ap.add_argument("--mf_depth", type=int, default=4)
+    ap.add_argument("--mf_hidden", type=int, default=32)
+    ap.add_argument("--mf_d_in", type=int, default=32)
+    ap.add_argument("--mf_d_out", type=int, default=8)
+    ap.add_argument("--mf_batch", type=int, default=64)
+    ap.add_argument("--mf_lr", type=float, default=0.15)
+    ap.add_argument("--mf_lam", type=float, default=1e-3)
+    ap.add_argument("--mf_n_sweeps", type=int, default=3)
+    ap.add_argument("--linobj_steps_small", type=int, default=200)
+    ap.add_argument("--linobj_steps_large", type=int, default=60)
+    ap.add_argument("--linobj_depth", type=int, default=3)
+    ap.add_argument("--linobj_hidden", type=int, default=16)
+    ap.add_argument("--linobj_d_in", type=int, default=16)
+    ap.add_argument("--linobj_d_out", type=int, default=8)
+    ap.add_argument("--linobj_batch", type=int, default=64)
+    ap.add_argument("--linobj_lr_small", type=float, default=0.05)
+    ap.add_argument("--linobj_lr_large", type=float, default=1.0)
+    ap.add_argument("--linobj_lam", type=float, default=1e-4)
+    ap.add_argument("--linobj_n_sweeps", type=int, default=5)
     ap.add_argument(
         "--plot_y_max",
         type=float,
@@ -677,7 +1014,7 @@ def main() -> None:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    device = _device(args.device)
+    device = get_device(args.device)
     plot_y_max = float(args.plot_y_max)
 
     run_config: dict[str, Any] = {
@@ -742,6 +1079,60 @@ def main() -> None:
     payload.update(p_fg)
     run_config.update(c_fg)
 
+    kfac_depths = [int(d) for d in args.kfac_depths.split(",") if d.strip()]
+    p_kd, c_kd = curves_operator_kfac_depth_sweep(
+        out_dir=out_dir,
+        device=device,
+        steps=args.steps_kfac_depth,
+        depths=kfac_depths,
+        hidden=args.kfac_hidden,
+        d_in=args.kfac_d_in,
+        d_out=args.kfac_d_out,
+        batch=args.kfac_batch,
+        seed=args.seed,
+        plot_y_max=plot_y_max,
+    )
+    payload.update(p_kd)
+    run_config.update(c_kd)
+
+    p_mf, c_mf = curves_mean_field_comparison(
+        out_dir=out_dir,
+        device=device,
+        steps=args.steps_mean_field,
+        depth=args.mf_depth,
+        hidden=args.mf_hidden,
+        d_in=args.mf_d_in,
+        d_out=args.mf_d_out,
+        batch=args.mf_batch,
+        lr=args.mf_lr,
+        lam=args.mf_lam,
+        n_sweeps=args.mf_n_sweeps,
+        seed=args.seed,
+        plot_y_max=plot_y_max,
+    )
+    payload.update(p_mf)
+    run_config.update(c_mf)
+
+    p_lo, c_lo = curves_linearized_obj_comparison(
+        out_dir=out_dir,
+        device=device,
+        steps_small=args.linobj_steps_small,
+        steps_large=args.linobj_steps_large,
+        depth=args.linobj_depth,
+        hidden=args.linobj_hidden,
+        d_in=args.linobj_d_in,
+        d_out=args.linobj_d_out,
+        batch=args.linobj_batch,
+        lr_small=args.linobj_lr_small,
+        lr_large=args.linobj_lr_large,
+        lam=args.linobj_lam,
+        n_sweeps=args.linobj_n_sweeps,
+        seed=args.seed,
+        plot_y_max=plot_y_max,
+    )
+    payload.update(p_lo)
+    run_config.update(c_lo)
+
     def _json_safe(obj: Any) -> Any:
         if isinstance(obj, dict):
             return {k: _json_safe(v) for k, v in obj.items()}
@@ -752,7 +1143,7 @@ def main() -> None:
         return obj
 
     (out_dir / "config.json").write_text(
-        json.dumps(_jsonify_run_value(run_config), indent=2, sort_keys=True)
+        json.dumps(jsonify(run_config), indent=2, sort_keys=True)
     )
 
     payload["reproducibility"] = {
