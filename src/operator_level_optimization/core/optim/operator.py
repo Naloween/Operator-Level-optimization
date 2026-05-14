@@ -502,6 +502,7 @@ class OperatorLevelMLP(Optimizer):
         als_early_stop_rel_tol: float = 0.0,
         als_early_stop_patience: int = 0,
         als_lam_regularize_delta: bool = False,
+        als_linear_target: bool = False,
     ):
         """
         Args:
@@ -590,6 +591,7 @@ class OperatorLevelMLP(Optimizer):
             als_early_stop_rel_tol=als_early_stop_rel_tol,
             als_early_stop_patience=als_early_stop_patience,
             als_lam_regularize_delta=als_lam_regularize_delta,
+            als_linear_target=als_linear_target,
         )
         super().__init__(params, defaults)
 
@@ -1090,6 +1092,9 @@ class OperatorLevelMLP(Optimizer):
 
             offset_k += n_k
 
+        # lr on operator target: scale RHS so the solve gives the lr-scaled weight update.
+        b_sys.mul_(lr)
+
         # Solve: A_sys vec(dW) = vec(G_W)
         # With lam=0 the system may be singular; use lstsq (min-norm pseudoinverse).
         if lam == 0.0:
@@ -1113,7 +1118,7 @@ class OperatorLevelMLP(Optimizer):
             dW_list = self._rescale_dW(dW_list, group.get("rescale_variant", "max"))
 
         for p, dW in zip(params_list, dW_list):
-            p.add_(dW, alpha=-lr)
+            p.add_(dW, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -1177,7 +1182,7 @@ class OperatorLevelMLP(Optimizer):
         activation gates (secant linearisation).
 
         Per-sample operator:  P^b = A_k^b W_k B_k^b.
-        Target per sample:    P_target^b = P_init^b + lr * dP*^b.
+        Target per sample:    P_target^b = P_init^b - lr * dP*^b.
         Residual:             R^b = P_target^b - P_curr^b.
 
         The lr is baked into the sweep target so that live contexts see the
@@ -1278,8 +1283,17 @@ class OperatorLevelMLP(Optimizer):
         # P_init from base weights (before optional non-zero ΔW init).
         P_init = _operator_from_weights(W_work)              # (Bs, D_out, D_in)
 
-        # P_target^b = P_init^b - lr * dP*^b  (gradient descent in operator space)
-        P_target = P_init - lr * dP_star                     # (Bs, D_out, D_in)
+        if bool(group.get("als_linear_target", False)):
+            # Deep-linear: P(W) = W_L…W_1 is identical for all samples.
+            # The ALS objective min_W (1/B)Σ_b ||P - P_target^b||² collapses to
+            # matching a single shared target.  Use dP_star.sum(0) = dL/dP (full
+            # operator gradient, same 1/B already in delta from MSELoss mean
+            # reduction), consistent with the BD/LE effective lr.
+            G_P = dP_star.sum(0)                              # (D_out, D_in) = dL/dP
+            P_target = (P_init[0] - lr * G_P).unsqueeze(0).expand(Bs, -1, -1)
+        else:
+            # P_target^b = P_init^b - lr * dP*^b  (gradient descent in operator space)
+            P_target = P_init - lr * dP_star                 # (Bs, D_out, D_in)
 
         als_reverse = bool(group.get("als_reverse_sweep", False))
         layer_solve = group.get("als_layer_solve", "mn")
@@ -1762,7 +1776,7 @@ class OperatorLevelMLP(Optimizer):
         batch_size = next(iter(self.activations.values())).shape[0]
 
         grad_list = [
-            p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone()
+            lr * (p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone())
             for p in params_list
         ]
 
@@ -1843,7 +1857,7 @@ class OperatorLevelMLP(Optimizer):
         if group["rescale_lr"]:
             dW_list = self._rescale_dW(dW_list, group.get("rescale_variant", "max"))
         for p, dW in zip(params_list, dW_list):
-            p.add_(dW, alpha=-lr)
+            p.add_(dW, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -1965,6 +1979,7 @@ class OperatorLevelMLP(Optimizer):
         M_list, N_list, G_list = self._compute_fp_covariances(
             params_list, batch_size, device, dtype
         )
+        G_list = [lr * G for G in G_list]
 
         dW_raw_list = []
         for l, p in enumerate(params_list):
@@ -2006,7 +2021,7 @@ class OperatorLevelMLP(Optimizer):
         if group["rescale_lr"]:
             dW_list = self._rescale_dW(dW_list, group.get("rescale_variant", "max"))
         for p, dW in zip(params_list, dW_list):
-            p.add_(dW, alpha=-lr)
+            p.add_(dW, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -2067,9 +2082,9 @@ class OperatorLevelMLP(Optimizer):
         L          = len(params_list)
         batch_size = next(iter(self.activations.values())).shape[0]
 
-        f_x   = self.activations[L - 1].to(dtype)   # (B, D_out)
-        del_f = self.grad_acts[L - 1].to(dtype)      # (B, D_out)
-        x_in  = self.pre_acts[0].to(dtype)           # (B, D_in)
+        f_x   = self.activations[L - 1].to(dtype)        # (B, D_out)
+        del_f = lr * self.grad_acts[L - 1].to(dtype)    # (B, D_out)  lr on operator target
+        x_in  = self.pre_acts[0].to(dtype)              # (B, D_in)
 
         x_in_norm_sq = (x_in * x_in).sum(1).clamp(min=1e-30)   # (B,)
         f_norm_sq    = (f_x * f_x).sum(1)                       # (B,)
@@ -2104,7 +2119,7 @@ class OperatorLevelMLP(Optimizer):
         if group["rescale_lr"]:
             dW_list = self._rescale_dW(dW_list, group.get("rescale_variant", "max"))
         for p, dW in zip(params_list, dW_list):
-            p.add_(dW, alpha=-lr)
+            p.add_(dW, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -2173,7 +2188,7 @@ class OperatorLevelMLP(Optimizer):
 
         dW_raw_list = []
         for l, p in enumerate(params_list):
-            G      = p.grad.to(dtype)              # exact gradient (d_out, d_in)
+            G      = lr * p.grad.to(dtype)         # exact gradient scaled by lr (operator target)
             x_l    = self.activations[l].to(dtype) # (B, d_l)
             h_prev = self.pre_acts[l].to(dtype)    # (B, d_{l-1})
 
@@ -2228,7 +2243,7 @@ class OperatorLevelMLP(Optimizer):
         if group["rescale_lr"]:
             dW_list = self._rescale_dW(dW_list, group.get("rescale_variant", "max"))
         for p, dW in zip(params_list, dW_list):
-            p.add_(dW, alpha=-lr)
+            p.add_(dW, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -2335,10 +2350,10 @@ class OperatorLevelMLP(Optimizer):
         Z_tilde = [Z[l] / z_norm_sq[l].unsqueeze(1) for l in range(L)]
 
         # ------------------------------------------------------------------
-        # Raw gradients (+ optional weight decay)
+        # Raw gradients (+ optional weight decay), scaled by lr for operator target.
         # ------------------------------------------------------------------
         G = [
-            p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone()
+            lr * (p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone())
             for p in params_list
         ]  # list of (n_l, n_{l-1})
 
@@ -2409,7 +2424,7 @@ class OperatorLevelMLP(Optimizer):
         if group["rescale_lr"]:
             dW_list = self._rescale_dW(dW_list, group.get("rescale_variant", "max"))
         for p, dW in zip(params_list, dW_list):
-            p.add_(dW, alpha=-lr)
+            p.add_(dW, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -2471,9 +2486,9 @@ class OperatorLevelMLP(Optimizer):
         f_norm_sq = f.pow(2).sum(1)                               # (B,)
         x_norm_sq = x.pow(2).sum(1).clamp(min=eps)               # (B,)
 
-        # Exact backprop gradients as RHS (same source as block_diagonal)
+        # Exact backprop gradients as RHS, scaled by lr for operator target.
         G = [
-            p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone()
+            lr * (p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone())
             for p in params_list
         ]
 
@@ -2502,7 +2517,7 @@ class OperatorLevelMLP(Optimizer):
         if group.get("rescale_lr", False):
             dW_list = self._rescale_dW(dW_list, group.get("rescale_variant", "max"))
         for p, dW in zip(params_list, dW_list):
-            p.add_(dW, alpha=-lr)
+            p.add_(dW, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -2588,10 +2603,10 @@ class OperatorLevelMLP(Optimizer):
         Gates = [(Z[l] > 0).to(dtype) for l in range(L)]  # (B, n_l)
 
         # ------------------------------------------------------------------
-        # Raw gradients
+        # Raw gradients scaled by lr for operator target.
         # ------------------------------------------------------------------
         G = [
-            p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone()
+            lr * (p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone())
             for p in params_list
         ]
 
@@ -2699,7 +2714,7 @@ class OperatorLevelMLP(Optimizer):
         if group["rescale_lr"]:
             dW_list = self._rescale_dW(dW_list, group.get("rescale_variant", "max"))
         for p, dW in zip(params_list, dW_list):
-            p.add_(dW, alpha=-lr)
+            p.add_(dW, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -2767,7 +2782,7 @@ class OperatorLevelMLP(Optimizer):
             A_avg_list[l] = A_curr.mean(0)                      # (D_out, d_l)
 
         # ---- Steps 2 & 3: mixed gradient + left-context whitening ----
-        delta_y = self.grad_acts[L - 1]   # (batch, D_out)
+        delta_y = lr * self.grad_acts[L - 1]  # (batch, D_out)  lr on operator target
         dW_raw_list = []
         for l, p in enumerate(params_list):
             h = self.pre_acts[l]                                 # (batch, d_{l-1})
@@ -2786,7 +2801,7 @@ class OperatorLevelMLP(Optimizer):
         dW_list = self._nesterov_grads(params_list, dW_raw_list, beta)
         for p, dW in zip(params_list, dW_list):
             dW_final = _newton_schulz(dW, steps=ns_steps)
-            p.add_(dW_final, alpha=-lr)
+            p.add_(dW_final, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -2832,7 +2847,7 @@ class OperatorLevelMLP(Optimizer):
         batch_size = next(iter(self.activations.values())).shape[0]
 
         grad_list = [
-            p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone()
+            lr * (p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone())
             for p in params_list
         ]
 
@@ -2879,7 +2894,7 @@ class OperatorLevelMLP(Optimizer):
 
         dW_list = self._nesterov_grads(params_list, dW_raw_list, beta)
         for p, dW in zip(params_list, dW_list):
-            p.add_(dW, alpha=-lr)
+            p.add_(dW, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -2933,7 +2948,7 @@ class OperatorLevelMLP(Optimizer):
         dtype = params_list[0].dtype
 
         grad_list = [
-            p.grad.clone().to(dtype).add_(p, alpha=wd) if wd else p.grad.clone().to(dtype)
+            lr * (p.grad.clone().to(dtype).add_(p, alpha=wd) if wd else p.grad.clone().to(dtype))
             for p in params_list
         ]
 
@@ -3022,7 +3037,7 @@ class OperatorLevelMLP(Optimizer):
             dW_list = [next(it) if ok else dW for dW, ok in zip(dW_list, sylvester_mask)]
 
         for p, dW in zip(params_list, dW_list):
-            p.add_(dW, alpha=-lr)
+            p.add_(dW, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()
@@ -3071,7 +3086,7 @@ class OperatorLevelMLP(Optimizer):
         dtype = params_list[0].dtype
 
         grad_list = [
-            p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone()
+            lr * (p.grad.clone().add_(p, alpha=wd) if wd else p.grad.clone())
             for p in params_list
         ]
 
@@ -3128,7 +3143,7 @@ class OperatorLevelMLP(Optimizer):
         if group["use_ns"]:
             dW_list = [_newton_schulz(dW, steps=group["ns_steps"]) for dW in dW_list]
         for p, dW in zip(params_list, dW_list):
-            p.add_(dW, alpha=-lr)
+            p.add_(dW, alpha=-1.0)
 
         self.activations.clear()
         self.pre_acts.clear()

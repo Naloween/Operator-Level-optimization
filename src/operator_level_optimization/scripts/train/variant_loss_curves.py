@@ -816,6 +816,145 @@ def curves_mean_field_comparison(
 
 # --- Linearized objective comparison ---------------------------------------------
 
+def _linobj_product_P(params: list[torch.Tensor]) -> torch.Tensor:
+    """Compute W_L @ … @ W_1 for a deep-linear stack (2-D weight tensors)."""
+    P = params[0]
+    for W in params[1:]:
+        P = W @ P
+    return P
+
+
+def _linobj_contexts(params: list[torch.Tensor]) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+    """Return left (A_k) and right (B_k) contexts for each layer.
+
+    A_k = W_{k+1} … W_{L-1}  (identity for last layer)  shape (d_out, d_k_out)
+    B_k = W_{k-1} … W_0      (identity for first layer) shape (d_k_in, d_in)
+    """
+    L = len(params)
+    dtype, device = params[0].dtype, params[0].device
+    d_out = params[-1].shape[0]
+    d_in  = params[0].shape[1]
+
+    A: list[torch.Tensor] = [None] * L  # type: ignore[list-item]
+    A[L - 1] = torch.eye(d_out, dtype=dtype, device=device)
+    for k in range(L - 2, -1, -1):
+        A[k] = A[k + 1] @ params[k + 1]   # (d_out, d_{k+1}_in) = (d_out, d_k_out)
+
+    B: list[torch.Tensor] = [None] * L  # type: ignore[list-item]
+    B[0] = torch.eye(d_in, dtype=dtype, device=device)
+    for k in range(1, L):
+        B[k] = params[k - 1] @ B[k - 1]   # (d_k_in, d_in)
+
+    return A, B
+
+
+def _linobj_exact_dual_step(
+    params: list[torch.Tensor],
+    G_P: torch.Tensor,
+    lr: float,
+    lam: float,
+) -> list[torch.Tensor]:
+    """Exact coupled linearised solve via the dual form — O(d_out² · d_in²) per step.
+
+    Minimises  ||Σ_k A_k ΔW_k B_k − lr·G_P||²_F + λ Σ_k ||ΔW_k||²_F  exactly.
+
+    The Kronecker normal-equations system has total size N = Σ_k d_k_out·d_k_in
+    (scales as depth × hidden²).  By duality the solve reduces to a single
+    (d_out·d_in) × (d_out·d_in) system — feasible at depth=16, hidden=32.
+
+    Solution:
+        q   = (MM^T + λI)^{-1} (lr · vec G_P),   dim = d_out·d_in
+        ΔW_k = A_k^T Q B_k^T,                      Q = reshape(q, d_out, d_in)
+    where MM^T = Σ_k kron(A_k A_k^T,  B_k^T B_k).
+    """
+    A_list, B_list = _linobj_contexts(params)
+    d_out, d_in = G_P.shape
+    n_op = d_out * d_in
+    dtype, device = G_P.dtype, G_P.device
+
+    # Build MM^T (d_out·d_in × d_out·d_in) = Σ_k kron(A_k A_k^T, B_k^T B_k)
+    MMT = torch.zeros(n_op, n_op, dtype=dtype, device=device)
+    for k, p in enumerate(params):
+        Ak = A_list[k]   # (d_out, d_k_out)
+        Bk = B_list[k]   # (d_k_in, d_in)
+        MMT.add_(torch.kron(Ak @ Ak.T, Bk.T @ Bk))
+
+    MMT.add_(torch.eye(n_op, dtype=dtype, device=device), alpha=lam)
+    q = torch.linalg.solve(MMT, (lr * G_P).reshape(-1))   # (n_op,)
+    Q = q.reshape(d_out, d_in)
+
+    # ΔW_k = A_k^T Q B_k^T  (gradient of the dual objective w.r.t. each ΔW_k)
+    dW_list = [A_list[k].T @ Q @ B_list[k].T for k, _ in enumerate(params)]
+    return dW_list
+
+
+def _linobj_run(
+    model: nn.Module,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    lr: float,
+    lam: float,
+    steps: int,
+    *,
+    opt: "OperatorLevelMLP | None" = None,
+    use_dual_linearized: bool = False,
+) -> dict[str, list]:
+    """Custom training loop recording loss, target residual, and per-layer ΔW norms.
+
+    Supports two modes:
+      opt != None            — use OperatorLevelMLP (ALS or any hook-based method)
+      use_dual_linearized    — exact coupled linearised solve via dual form (no hooks)
+
+    Returns dict with keys:
+      'loss'     : list of (step, mse)
+      'residual' : list of (step, ||P_new − P_target|| / ||P_target||)
+      'dw_norms' : list of (step, [||ΔW_l|| for l in 0..L-1])
+    """
+    crit = nn.MSELoss()
+    params = [p for p in model.parameters() if p.ndim == 2]
+    B_sz, d_out = y.shape
+
+    losses: list[tuple[int, float]] = []
+    residuals: list[tuple[int, float]] = []
+    dw_norms: list[tuple[int, list[float]]] = []
+
+    for t in range(steps):
+        model.train()
+        with torch.no_grad():
+            P_old = _linobj_product_P(params)
+            G_P = (2.0 / (B_sz * d_out)) * (P_old @ x.T - y.T) @ x
+            P_target = P_old - lr * G_P
+            W_old = [p.data.clone() for p in params]
+
+        if use_dual_linearized:
+            loss_val = crit(model(x), y).item()
+            losses.append((t, loss_val))
+            with torch.no_grad():
+                dW_list = _linobj_exact_dual_step(params, G_P, lr, lam)
+                for p, dW in zip(params, dW_list):
+                    p.data.sub_(dW)
+        else:
+            assert opt is not None
+            opt.zero_grad()
+            loss = crit(model(x), y)
+            losses.append((t, loss.item()))
+            loss.backward()
+            opt.step()
+
+        with torch.no_grad():
+            P_new = _linobj_product_P(params)
+            denom = P_target.norm().clamp(min=1e-30)
+            res = (P_new - P_target).norm() / denom
+            residuals.append((t, res.item()))
+            dw = [(p.data - W_old[l]).norm().item() for l, p in enumerate(params)]
+            dw_norms.append((t, dw))
+
+        if not torch.isfinite(torch.tensor(losses[-1][1])):
+            break
+
+    return {"loss": losses, "residual": residuals, "dw_norms": dw_norms}
+
+
 def curves_linearized_obj_comparison(
     *,
     out_dir: Path,
@@ -834,110 +973,139 @@ def curves_linearized_obj_comparison(
     seed: int,
     plot_y_max: float,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Approximation hierarchy: ALS-exact vs linearized-exact vs block-diagonal (App. B.2).
+    """ALS-exact vs linearized-exact: objective quality at small and large lr (App. B.2).
 
-    Two-panel ReLU MLP experiment with MSE-to-linear-teacher task.  The student is a
-    depth-``depth`` bias-free ReLU MLP; the teacher outputs are P*x for a random P*.
-    ALS-exact solves the frozen-gate operator objective exactly; linearized-exact and
-    block-diagonal use first-order Taylor approximations.
+    Deep linear network (no activations), depth ``depth``.  All samples share the same
+    operator P(W) = W_L…W_1 so ALS uses a single batch-averaged target
+        P_target = P_curr − lr · ∇_P L   (``als_linear_target=True``)
+    and matches it to machine precision via ALS.  Linearized-exact instead solves the
+    first-order Taylor expansion of the product (Sylvester equation), which only
+    approximately achieves P_target.
 
-    Left panel — small lr (``lr_small``): all three methods are stable.
-      Block-diagonal converges fastest (efficient Newton-like step per layer).
-      Linearized-exact is intermediate.  ALS-exact is slowest (constrained to the
-      factored manifold, no warmstart, no gate-permutation heuristics).
-
-    Right panel — large lr (``lr_large``): only ALS-exact is stable.
-      Linearized-exact immediately diverges (first-order Taylor breaks down at large
-      step).  Block-diagonal spikes massively then stalls at a poor local minimum.
-      ALS-exact, solving the true nonlinear operator objective, remains monotonically
-      convergent.
+    Three-row figure (small lr | large lr):
+      Row 0 — Train MSE: both methods converge at small lr; at large lr the linearised
+               method spikes before recovering because it overshoots the target.
+      Row 1 — Target residual ||P_new − P_target|| / ||P_target||: near-zero for
+               ALS-exact at all lr; grows as O(lr²) for linearised-exact (cross-layer
+               coupling terms ignored by the first-order Taylor expansion).
+      Row 2 — Mean per-layer update norm (1/L) Σ ||ΔW_l||: similar for both methods at
+               the same lr, confirming that the target-residual gap is not caused by
+               different step magnitudes but by the quadratic linearisation error.
     """
     dtype = torch.float64
-    crit  = nn.MSELoss()
 
     g      = torch.Generator(device=device).manual_seed(seed)
     x      = torch.randn(batch, d_in, device=device, dtype=dtype, generator=g)
     P_star = torch.randn(d_out, d_in, device=device, dtype=dtype, generator=g) * 0.3
-    y_reg  = x @ P_star.T   # linear teacher outputs
+    y_reg  = x @ P_star.T
 
     labels = {
-        "als_exact":        "ALS-exact (nonlinear obj., iterative)",
+        "als_exact":        "ALS-exact (nonlinear obj.)",
         "linearized_exact": "Linearized exact (coupled, 1-shot)",
-        "block_diagonal":   "Block-diagonal (per-layer, 1-shot)",
     }
     colors = {
         "als_exact":        "#1f77b4",
         "linearized_exact": "#ff7f0e",
-        "block_diagonal":   "#2ca02c",
     }
 
     torch.manual_seed(seed)
-    init_model = make_mlp(depth, d_in, hidden, d_out, relu=True).to(device=device, dtype=dtype)
+    init_model = make_mlp(depth, d_in, hidden, d_out, relu=False).to(device=device, dtype=dtype)
     for m in init_model.modules():
         if isinstance(m, nn.Linear):
             nn.init.normal_(m.weight, std=0.1)
     state0 = {k: v.clone() for k, v in init_model.state_dict().items()}
 
     all_results: dict[str, Any] = {}
-    fig, axes = plt.subplots(1, 2, figsize=(13.0, 4.8))
 
-    for col, (lr, steps, panel_label) in enumerate([
-        (lr_small, steps_small, f"Small lr={lr_small}  [all stable]"),
-        (lr_large, steps_large, f"Large lr={lr_large}  [only ALS-exact stable]"),
-    ]):
-        ax = axes[col]
-        panel_results: dict[str, list[tuple[int, float]]] = {}
+    panel_configs = [
+        (lr_small, steps_small, f"Small lr = {lr_small}"),
+        (lr_large, steps_large, f"Large lr = {lr_large}"),
+    ]
+    row_labels = ["Train MSE", "Target residual\n||P_new − P_target|| / ||P_target||", "Mean ‖ΔW_l‖ per layer"]
+    row_scales = ["log", "log", "log"]
 
-        variants = [
-            ("als_exact", _operator_level_mlp_kwargs(
-                lr=lr, lam=lam, approximation="als",
-                als_layer_solve="exact", n_sweeps=n_sweeps,
-                als_reverse_sweep=True, momentum=0.0,
-                als_gateperm_warmstart=False,
-            )),
-            ("linearized_exact", _operator_level_mlp_kwargs(
-                lr=lr, lam=lam, approximation="exact", momentum=0.0,
-            )),
-            ("block_diagonal", _operator_level_mlp_kwargs(
-                lr=lr, lam=lam, approximation="block_diagonal", momentum=0.0,
-            )),
-        ]
+    fig, axes = plt.subplots(3, 2, figsize=(13.0, 11.0))
 
-        for key, kw in variants:
-            model = make_mlp(depth, d_in, hidden, d_out, relu=True).to(device=device, dtype=dtype)
+    for col, (lr, steps, col_title) in enumerate(panel_configs):
+        als_kw = _operator_level_mlp_kwargs(
+            lr=lr, lam=lam, approximation="als",
+            als_layer_solve="exact", n_sweeps=n_sweeps,
+            als_reverse_sweep=True, momentum=0.0,
+            als_gateperm_warmstart=False,
+            als_linear_target=True,
+        )
+
+        col_data: dict[str, dict] = {}
+        for key in ("als_exact", "linearized_exact"):
+            model = make_mlp(depth, d_in, hidden, d_out, relu=False).to(device=device, dtype=dtype)
             model.load_state_dict(state0)
-            opt = OperatorLevelMLP(list(model.parameters()), **kw)
-            opt.attach_hooks(model)
+            if key == "als_exact":
+                opt = OperatorLevelMLP(list(model.parameters()), **als_kw)
+                opt.attach_hooks(model)
+                col_data[key] = _linobj_run(model, x, y_reg, lr, lam, steps, opt=opt)
+            else:  # linearized_exact: fast dual-form coupled solve, no OperatorLevelMLP
+                col_data[key] = _linobj_run(model, x, y_reg, lr, lam, steps,
+                                            use_dual_linearized=True)
 
-            hist = run_mlp_loop(model, opt, lambda: crit(model(x), y_reg), steps)
-            panel_results[key] = hist
-            xs  = [h[0] for h in hist]
-            raw = [h[1] for h in hist]
+        all_results[f"lr_{lr}"] = col_data
+
+        # Row 0: train MSE
+        ax0 = axes[0, col]
+        for key in labels:
+            rec = col_data[key]
+            xs  = [h[0] for h in rec["loss"]]
+            raw = [h[1] for h in rec["loss"]]
             ys, clipped = clip_for_plot(raw, plot_y_max)
-            ax.plot(xs, ys, label=labels[key], color=colors[key], lw=2.0)
-            annotate_clip(ax, clipped, plot_y_max)
+            ax0.plot(xs, ys, label=labels[key], color=colors[key], lw=2.0)
+            annotate_clip(ax0, clipped, plot_y_max)
+        ax0.set_yscale("log")
+        ax0.set_title(col_title, fontsize=10)
+        ax0.set_ylabel(row_labels[0])
+        ax0.legend(frameon=False, fontsize=8)
+        ax0.grid(True, alpha=0.25)
 
-        ax.set_xlabel("Step")
-        ax.set_ylabel("Train MSE  (student vs linear teacher)")
-        ax.set_yscale("log")
-        ax.set_title(panel_label, fontsize=10)
-        ax.legend(frameon=False, fontsize=8)
-        ax.grid(True, alpha=0.25)
-        all_results[f"lr_{lr}"] = panel_results
+        # Row 1: target residual
+        ax1 = axes[1, col]
+        for key in labels:
+            rec = col_data[key]
+            xs  = [h[0] for h in rec["residual"]]
+            raw = [h[1] for h in rec["residual"]]
+            ys, clipped = clip_for_plot(raw, plot_y_max)
+            ax1.plot(xs, ys, label=labels[key], color=colors[key], lw=2.0)
+            annotate_clip(ax1, clipped, plot_y_max)
+        ax1.set_yscale("log")
+        ax1.set_ylabel(row_labels[1])
+        ax1.legend(frameon=False, fontsize=8)
+        ax1.grid(True, alpha=0.25)
+
+        # Row 2: mean per-layer ΔW norm
+        ax2 = axes[2, col]
+        for key in labels:
+            rec = col_data[key]
+            xs   = [h[0] for h in rec["dw_norms"]]
+            means = [float(np.mean(h[1])) for h in rec["dw_norms"]]
+            ys, clipped = clip_for_plot(means, plot_y_max)
+            ax2.plot(xs, ys, label=labels[key], color=colors[key], lw=2.0)
+            annotate_clip(ax2, clipped, plot_y_max)
+        ax2.set_yscale("log")
+        ax2.set_xlabel("Step")
+        ax2.set_ylabel(row_labels[2])
+        ax2.legend(frameon=False, fontsize=8)
+        ax2.grid(True, alpha=0.25)
 
     fig.suptitle(
-        f"Linearized objective: good approx. at small lr, breaks down at large lr"
-        f"  (depth={depth}, hidden={hidden}, batch={batch}, ReLU MLP)",
-        fontsize=10,
+        f"ALS-exact vs Linearized-exact  (depth={depth}, hidden={hidden}, batch={batch}, deep linear)\n"
+        f"Target residual = ||P_new − P_target|| / ||P_target||  grows as O(lr²) for the linearised objective",
+        fontsize=10, y=1.01,
     )
     save_fig(fig, out_dir / "linearized_obj_comparison.png")
 
     cfg_section: dict[str, Any] = {
         "linearized_obj_comparison": {
-            "scenario": "solver_approximation_hierarchy_relu_mlp_mse",
+            "scenario": "als_exact_vs_linearized_exact_deep_linear_mse",
             "architecture": {
                 "depth": depth, "hidden": hidden, "d_in": d_in, "d_out": d_out,
-                "type": "bias-free ReLU MLP",
+                "type": "bias-free deep linear network",
             },
             "teacher": "P* = 0.3 * randn(d_out, d_in)",
             "training": {
@@ -947,12 +1115,13 @@ def curves_linearized_obj_comparison(
                 "weight_init": "nn.init.normal_(std=0.1), torch.manual_seed(seed)",
             },
             "panels": [
-                {"lr": lr_small, "steps": steps_small, "label": "small lr — all stable"},
-                {"lr": lr_large, "steps": steps_large, "label": "large lr — only ALS-exact stable"},
+                {"lr": lr_small, "steps": steps_small},
+                {"lr": lr_large, "steps": steps_large},
             ],
             "variants_shared": {
                 "lam": lam, "n_sweeps_als": n_sweeps,
                 "als_reverse_sweep": True, "als_gateperm_warmstart": False,
+                "als_linear_target": True,
             },
         }
     }
@@ -994,15 +1163,15 @@ def main() -> None:
     ap.add_argument("--mf_n_sweeps", type=int, default=3)
     ap.add_argument("--linobj_steps_small", type=int, default=200)
     ap.add_argument("--linobj_steps_large", type=int, default=60)
-    ap.add_argument("--linobj_depth", type=int, default=3)
-    ap.add_argument("--linobj_hidden", type=int, default=16)
+    ap.add_argument("--linobj_depth", type=int, default=16)
+    ap.add_argument("--linobj_hidden", type=int, default=32)
     ap.add_argument("--linobj_d_in", type=int, default=16)
     ap.add_argument("--linobj_d_out", type=int, default=8)
     ap.add_argument("--linobj_batch", type=int, default=64)
     ap.add_argument("--linobj_lr_small", type=float, default=0.05)
-    ap.add_argument("--linobj_lr_large", type=float, default=1.0)
+    ap.add_argument("--linobj_lr_large", type=float, default=2.0)
     ap.add_argument("--linobj_lam", type=float, default=1e-4)
-    ap.add_argument("--linobj_n_sweeps", type=int, default=5)
+    ap.add_argument("--linobj_n_sweeps", type=int, default=4)
     ap.add_argument(
         "--plot_y_max",
         type=float,
