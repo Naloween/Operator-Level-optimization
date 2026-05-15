@@ -32,6 +32,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from operator_level_optimization.core.optim.kfac import KFAC
 from operator_level_optimization.core.optim.operator import OperatorLevelMLP
 from operator_level_optimization.models.fgln import FGLN, MaskedOperatorALS, compute_P_fgln, init_weights
 from operator_level_optimization.scripts.train.deep_linear_compare import run_method as deep_linear_run
@@ -99,11 +100,11 @@ def curves_deep_linear(
         target_kind="orth",
         init_mode="xavier",
         als_lam=1e-4,
-        als_sweeps=4,
+        als_sweeps=50,
         dc_lam=1e-4,
         dc_alt=3,
-        dc_init_mode="identity_delta",
-        dc_init_scale=0.01,
+        dc_init_mode="plain",
+        dc_init_scale=1.0,
         spec_every=1_000_000,
         spec_steps=None,
         early_stop_patience=None,
@@ -113,20 +114,17 @@ def curves_deep_linear(
     )
     configs: list[tuple[str, float, dict[str, Any]]] = [
         ("als_exact", 1.0, {}),
-        ("dc", 1.0, {"dc_init_mode": "identity_delta", "dc_init_scale": 0.01}),
-        ("dc", 1.0, {"dc_init_mode": "plain", "dc_init_scale": 1.0, "dc_lam": 1e-4}),
+        ("dc", 1.0, {}),
     ]
-    # Disambiguate duplicate method keys for plotting
     labels = [
         "ALS-exact",
-        "D&C (identity_delta)",
-        "D&C (plain)",
+        "D&C",
     ]
     series: list[dict[str, Any]] = []
     fig_mse, ax_mse = plt.subplots(figsize=(8.0, 4.8))
     fig_rel, ax_rel = plt.subplots(figsize=(8.0, 4.8))
     colors = ["#9467bd", "#17becf", "#bcbd22"]
-    slugs = ["als_exact", "dc_identity_delta", "dc_plain"]
+    slugs = ["als_exact", "dc"]
     clipped_mse_any = False
     clipped_rel_any = False
     for slug, label, (method, lr, extra), c in zip(slugs, labels, configs, colors):
@@ -225,11 +223,10 @@ def _mlp_variants() -> list[dict[str, Any]]:
             lr=0.08, lam=1e-3, approximation="operator_kfac", momentum=0.0,
         )},
         {"key": "mlp_secant", "kwargs": _operator_level_mlp_kwargs(
-            lr=0.08, lam=1e-3, approximation="secant", momentum=0.0,
+            lr=0.01, lam=1e-3, approximation="secant", momentum=0.0,
         )},
-        {"key": "mlp_secant_r3", "kwargs": _operator_level_mlp_kwargs(
-            lr=0.08, lam=1e-3, approximation="secant_r", momentum=0.0, rank=3,
-        )},
+        # secant_r (rank-r) omitted: storing A_l, B_l per layer for rank>1 is equivalent
+        # to using the exact context, removing the point of the secant approximation.
         {"key": "mlp_cg_fallback_bd", "kwargs": _operator_level_mlp_kwargs(
             lr=0.08, lam=1e-3, approximation="cg", momentum=0.0,
         )},
@@ -284,7 +281,7 @@ def _mlp_variants() -> list[dict[str, Any]]:
         )},
         # App. B.5: rank-1 secant curvature + exact backprop gradient direction
         {"key": "mlp_secant_grad_exact", "kwargs": _operator_level_mlp_kwargs(
-            lr=0.08, lam=1e-3, approximation="secant_grad_exact", momentum=0.0,
+            lr=0.01, lam=1e-3, approximation="secant_grad_exact", momentum=0.0,
         )},
         # App. B.4: D&C failure on MLP — per-sample ALS averaged across samples
         {"key": "mlp_dc_mlp", "kwargs": _operator_level_mlp_kwargs(
@@ -425,7 +422,7 @@ def curves_fgln(
     plot_y_max: float,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     dtype = torch.float64
-    g = torch.Generator().manual_seed(seed)
+    g = torch.Generator(device=device).manual_seed(seed)
     x = torch.randn(n, d, generator=g, device=device, dtype=dtype)
     u, _, vh = torch.linalg.svd(torch.randn(d, d, generator=g, device=device, dtype=dtype))
     p_star = u @ vh
@@ -599,18 +596,31 @@ def curves_operator_kfac_depth_sweep(
     stable thanks to its coupled factorization.  App. B.3.
     """
     dtype = torch.float64
+    # Each entry: (key, opt_type, kwargs)
+    # opt_type="kfac" → KFAC; opt_type="operator_level_mlp" → OperatorLevelMLP
     methods = [
-        ("operator_kfac",   {"lr": 0.08, "lam": 1e-3, "approximation": "operator_kfac",   "momentum": 0.0}),
-        ("block_diagonal",  {"lr": 0.08, "lam": 1e-3, "approximation": "block_diagonal",  "momentum": 0.0}),
-        ("als_mn",          {"lr": 0.35, "lam": 1e-3, "approximation": "als",
-                             "als_layer_solve": "mn", "n_sweeps": 3,
-                             "als_reverse_sweep": True, "momentum": 0.0,
-                             "als_gateperm_warmstart": True,
-                             "als_gateperm_warmstart_once": True,
-                             "als_lam_anchor_post_warmstart": False}),
+        ("kfac", "kfac", {
+            "lr": 0.001,  # fine-tuned: smaller lr + larger damping for stability at depth 8-16
+            "factor_decay": 0.95, "damping": 0.1,
+            "momentum": 0.0, "weight_decay": 0.0, "inv_floor": 1e-2,
+        }),
+        ("operator_kfac", "operator_level_mlp", {
+            "lr": 0.08, "lam": 1e-3, "approximation": "operator_kfac", "momentum": 0.0,
+        }),
+        ("als_exact", "operator_level_mlp", {
+            "lr": 50.0, "lam": 1e-3, "approximation": "als",
+            "als_layer_solve": "exact", "n_sweeps": 10,
+            "als_reverse_sweep": True, "momentum": 0.0,
+            "als_gateperm_warmstart": False, "als_gateperm_warmstart_once": False,
+            # als_linear_target: for a linear MLP (no ReLU) all gate masks are
+            # identity, so the single shared target P_target = P - lr*∇_P L is exact.
+            # High lr (50) lets ALS make aggressive operator-space steps; the exact
+            # per-layer factorisation solve keeps the update stable.
+            "als_linear_target": True,
+        }),
     ]
-    colors = {"operator_kfac": "#2ca02c", "block_diagonal": "#1f77b4", "als_mn": "#ff7f0e"}
-    labels = {"operator_kfac": "Operator-KFAC", "block_diagonal": "Block-Diagonal", "als_mn": "ALS-MN"}
+    colors = {"kfac": "#d62728", "operator_kfac": "#2ca02c", "als_exact": "#9467bd"}
+    labels = {"kfac": "K-FAC", "operator_kfac": "Operator-KFAC", "als_exact": "ALS-Exact"}
 
     g = torch.Generator(device=device).manual_seed(seed)
     x = torch.randn(batch, d_in, device=device, dtype=dtype, generator=g)
@@ -622,21 +632,24 @@ def curves_operator_kfac_depth_sweep(
     for depth in depths:
         depth_results: dict[str, list[tuple[int, float]]] = {}
 
-        for method_key, opt_kwargs in methods:
+        for method_key, opt_type, opt_kwargs in methods:
             torch.manual_seed(seed)
             model = make_mlp(depth, d_in, hidden, d_out).to(device=device, dtype=dtype)
-            kw = _operator_level_mlp_kwargs(**opt_kwargs)
-            opt = OperatorLevelMLP(list(model.parameters()), **kw)
+            if opt_type == "kfac":
+                opt = KFAC(list(model.parameters()), **opt_kwargs)
+            else:
+                kw = _operator_level_mlp_kwargs(**opt_kwargs)
+                opt = OperatorLevelMLP(list(model.parameters()), **kw)
             opt.attach_hooks(model)
             depth_results[method_key] = run_mlp_loop(
-                model, opt, lambda: crit(model(x), y_cls), steps
+                model, opt, lambda: crit(model(x), y_cls), steps  # noqa: B023
             )
 
         all_results[f"depth_{depth}"] = depth_results
 
         # Per-depth curve plot
         fig, ax = plt.subplots(figsize=(7.0, 4.5))
-        for method_key, _ in methods:
+        for method_key, _, __ in methods:
             hist = depth_results[method_key]
             xs = [h[0] for h in hist]
             raw = [h[1] for h in hist]
@@ -653,7 +666,7 @@ def curves_operator_kfac_depth_sweep(
 
     # Summary: final loss vs depth for each method
     fig, ax = plt.subplots(figsize=(7.0, 4.5))
-    for method_key, _ in methods:
+    for method_key, _, __ in methods:
         final_losses = [all_results[f"depth_{d}"][method_key][-1][1] for d in depths]
         ys, clipped = clip_for_plot(final_losses, plot_y_max)
         ax.plot(depths, ys, marker="o", label=labels[method_key], color=colors[method_key], lw=2.0)
@@ -661,10 +674,28 @@ def curves_operator_kfac_depth_sweep(
     ax.set_xlabel("Depth")
     ax.set_ylabel(f"Final CE loss (step {steps})")
     ax.set_yscale("log")
-    ax.set_title("Final loss vs depth — Operator-KFAC vs baselines")
+    ax.set_title("Final loss vs depth — K-FAC vs Operator-KFAC vs ALS-Exact")
     ax.legend(frameon=False)
     ax.grid(True, alpha=0.25)
     save_fig(fig, out_dir / "operator_kfac_depth_summary.png")
+
+    # Featured: per-step loss curve at the maximum depth (most informative)
+    featured_depth = max(depths)
+    fig_f, ax_f = plt.subplots(figsize=(7.0, 4.5))
+    for method_key, _, __ in methods:
+        hist = all_results[f"depth_{featured_depth}"][method_key]
+        xs = [h[0] for h in hist]
+        raw = [h[1] for h in hist]
+        ys, clipped = clip_for_plot(raw, plot_y_max)
+        ax_f.plot(xs, ys, label=labels[method_key], color=colors[method_key], lw=2.0)
+        annotate_clip(ax_f, clipped, plot_y_max)
+    ax_f.set_xlabel("Step")
+    ax_f.set_ylabel("Train CE loss")
+    ax_f.set_yscale("log")
+    ax_f.set_title(f"K-FAC vs Operator-KFAC vs ALS-Exact — depth={featured_depth} (App. B.3)")
+    ax_f.legend(frameon=False)
+    ax_f.grid(True, alpha=0.25)
+    save_fig(fig_f, out_dir / "operator_kfac_featured.png")
 
     cfg_section: dict[str, Any] = {
         "operator_kfac_depth_sweep": {
@@ -685,8 +716,8 @@ def curves_operator_kfac_depth_sweep(
                 "loss": "CrossEntropyLoss",
             },
             "methods": [
-                {"key": k, "operator_level_mlp_kwargs": jsonify(v)}
-                for k, v in methods
+                {"key": k, "opt_type": ot, "kwargs": jsonify(v)}
+                for k, ot, v in methods
             ],
         }
     }
@@ -735,9 +766,8 @@ def curves_mean_field_comparison(
         n_sweeps=n_sweeps,
         als_reverse_sweep=True,
         momentum=0.0,
-        als_gateperm_warmstart=True,
-        als_gateperm_warmstart_once=True,
-        als_lam_anchor_post_warmstart=False,
+        als_gateperm_warmstart=False,
+        als_gateperm_warmstart_once=False,
     )
 
     variants = [
@@ -759,7 +789,11 @@ def curves_mean_field_comparison(
         init_model = make_mlp(depth, d_in, hidden, d_out, relu=relu).to(device=device, dtype=dtype)
         for m in init_model.modules():
             if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, std=0.05)
+                if relu:
+                    nn.init.kaiming_normal_(m.weight, mode="fan_in", nonlinearity="relu")
+                else:
+                    # LeCun init (gain=1): preserves signal variance through linear chain
+                    nn.init.kaiming_normal_(m.weight, mode="fan_in", nonlinearity="linear")
         state0 = {k: v.clone() for k, v in init_model.state_dict().items()}
 
         for key, kw in variants:
@@ -1129,10 +1163,537 @@ def curves_linearized_obj_comparison(
     return {"linearized_obj_comparison": all_results}, cfg_section
 
 
+# --- Focused MLP variant comparisons -----------------------------------------------
+
+def _run_mlp_variants_focused(
+    variant_keys: list[str],
+    *,
+    out_dir: Path,
+    device: torch.device,
+    steps: int,
+    batch: int,
+    seed: int,
+    plot_y_max: float,
+    figure_name: str,
+    title: str,
+    kwarg_overrides: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run a named subset of _mlp_variants() and save a single focused comparison figure.
+
+    ``kwarg_overrides`` is merged into every variant's kwargs before constructing
+    OperatorLevelMLP — use it to disable options (e.g. warmstart) that are only
+    meaningful for deep/ill-conditioned regimes.
+    """
+    dtype = torch.float64
+    g = torch.Generator(device=device).manual_seed(seed)
+    x = torch.randn(batch, 24, device=device, dtype=dtype, generator=g)
+    y_cls = torch.randint(0, 5, (batch,), device=device, dtype=torch.long)
+
+    torch.manual_seed(seed)
+    template = make_tiny_mlp().to(device=device, dtype=dtype)
+    for m in template.modules():
+        if isinstance(m, nn.Linear):
+            nn.init.normal_(m.weight, std=0.05)
+    state0 = {k: v.clone() for k, v in template.state_dict().items()}
+
+    crit = nn.CrossEntropyLoss()
+    all_variants = {v["key"]: v for v in _mlp_variants()}
+    selected = [all_variants[k] for k in variant_keys if k in all_variants]
+    cmap = plt.cm.tab10(np.linspace(0, 1, max(len(selected), 1)))
+
+    bundle: list[dict[str, Any]] = []
+    fig, ax = plt.subplots(figsize=(8.0, 5.0))
+    clipped_any = False
+
+    for i, entry in enumerate(selected):
+        key = entry["key"]
+        kwargs = {**entry["kwargs"], **(kwarg_overrides or {})}
+        model = make_tiny_mlp().to(device=device, dtype=dtype)
+        model.load_state_dict(state0)
+        opt = OperatorLevelMLP(list(model.parameters()), **kwargs)
+        opt.attach_hooks(model)
+
+        hist = run_mlp_loop(model, opt, lambda: crit(model(x), y_cls), steps)  # noqa: B023
+        losses = [v for _, v in hist]
+        bundle.append({"key": key, "losses": losses})
+        ts = [h[0] for h in hist]
+        label = key.replace("mlp_", "").replace("_", " ")
+        color = cmap[i % len(cmap)]
+        y_plot, c_any = clip_for_plot(losses, plot_y_max)
+        clipped_any = clipped_any or c_any
+        ax.plot(ts, y_plot, label=label, color=color, linewidth=2.0)
+
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Cross-entropy loss")
+    ax.set_yscale("log")
+    ax.set_title(title, fontsize=10)
+    ax.grid(True, alpha=0.25)
+    ax.legend(frameon=False, fontsize=9)
+    annotate_clip(ax, clipped_any, plot_y_max)
+    save_fig(fig, out_dir / f"{figure_name}.png")
+
+    cfg_section: dict[str, Any] = {
+        figure_name: {
+            "scenario": "mlp_synthetic_cross_entropy_focused",
+            "architecture": _mlp_architecture(),
+            "variant_keys": variant_keys,
+            "dtype": str(dtype),
+            "device": str(device),
+            "training": {
+                "batch": batch,
+                "steps": steps,
+                "seed": seed,
+                "plot_y_max": plot_y_max,
+            },
+        }
+    }
+    return {figure_name: bundle}, cfg_section
+
+
+_NO_WARMSTART = {
+    "als_gateperm_warmstart": False,
+    "als_gateperm_warmstart_once": False,
+}
+
+
+def _run_with_step_delta(
+    model: nn.Module,
+    opt: Any,
+    loss_fn: "Callable[[], torch.Tensor]",
+    steps: int,
+    catch: "tuple[type[Exception], ...]" = (RuntimeError, FloatingPointError),
+) -> "tuple[list[tuple[int, float]], list[float]]":
+    """Training loop that also tracks the normalized per-step loss improvement.
+
+    Returns (hist, step_deltas) where step_deltas[t] = (L_before - L_after) / |L_before|.
+    Positive ≈ step improved the model; negative = step was harmful.
+    """
+    hist: list[tuple[int, float]] = []
+    step_deltas: list[float] = []
+    for t in range(steps + 1):
+        model.eval()
+        with torch.no_grad():
+            val = float(loss_fn().detach().cpu().item())
+        model.train()
+        hist.append((t, val))
+        if t == steps:
+            break
+        l_before = val  # eval loss == loss just before step (no dropout/BN here)
+        try:
+            opt.zero_grad(set_to_none=True)
+            loss = loss_fn()
+            loss.backward()
+            opt.step()
+        except catch:
+            break
+        model.eval()
+        with torch.no_grad():
+            l_after = float(loss_fn().detach().cpu().item())
+        model.train()
+        denom = max(abs(l_before), 1e-30)
+        step_deltas.append((l_before - l_after) / denom)
+    return hist, step_deltas
+
+
+def curves_dc_mlp(
+    *,
+    out_dir: Path,
+    device: torch.device,
+    steps: int,
+    batch: int,
+    seed: int,
+    plot_y_max: float,
+    sweep_depths: "list[int] | None" = None,
+    sweep_steps: int = 200,
+    sweep_hidden: int = 16,
+    sweep_d_in: int = 16,
+    sweep_d_out: int = 8,
+    sweep_batch: int = 32,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """D&C on MLP: shallow comparison + depth sweep showing residual growth (App. B.4b).
+
+    Part 1 — shallow MLP (ALS-MN vs D&C): both methods run on the fixed tiny MLP;
+    D&C is systematically slower due to gate heterogeneity.
+
+    Part 2 — depth sweep (depths [2, 4, 8] with relu=True): tracks the per-step
+    normalized loss improvement (L_before - L_after) / L_before as a proxy for the
+    ALS target residual.  ALS-MN stays positive at every depth; D&C improvement
+    degrades with depth and becomes negative (harmful steps) at depth 8, consistent
+    with the operator residual exceeding 1 when gate heterogeneity compounds.
+    """
+    if sweep_depths is None:
+        sweep_depths = [2, 4, 8]
+
+    # --- Part 1: existing shallow comparison on tiny MLP ---
+    part1_results, part1_cfg = _run_mlp_variants_focused(
+        ["mlp_als_mn", "mlp_dc_mlp"],
+        out_dir=out_dir,
+        device=device,
+        steps=steps,
+        batch=batch,
+        seed=seed,
+        plot_y_max=plot_y_max,
+        figure_name="dc_mlp_comparison",
+        title="D&C on MLP: per-sample ALS average fails (App. B.4b)",
+        kwarg_overrides=_NO_WARMSTART,
+    )
+
+    # --- Part 2: depth sweep ---
+    dtype = torch.float64
+    crit = nn.CrossEntropyLoss()
+    g = torch.Generator(device=device).manual_seed(seed)
+    x_sw = torch.randn(sweep_batch, sweep_d_in, device=device, dtype=dtype, generator=g)
+    y_sw = torch.randint(0, sweep_d_out, (sweep_batch,), device=device)
+
+    als_kw = _operator_level_mlp_kwargs(
+        lr=0.35, lam=1e-3, approximation="als",
+        als_layer_solve="mn", n_sweeps=3, als_reverse_sweep=True,
+        momentum=0.0, als_gateperm_warmstart=False, als_gateperm_warmstart_once=False,
+    )
+    dc_kw = _operator_level_mlp_kwargs(
+        lr=0.35, lam=1e-3, approximation="dc_mlp",
+        n_sweeps=3, momentum=0.0,
+    )
+    sweep_methods = [
+        ("als_mn", als_kw, "ALS-MN (batch)", "#1f77b4"),
+        ("dc_mlp", dc_kw, "D&C MLP (per-sample avg)", "#d62728"),
+    ]
+
+    n_depths = len(sweep_depths)
+    fig_sw, axes_sw = plt.subplots(2, n_depths, figsize=(5.0 * n_depths, 8.0))
+    if n_depths == 1:
+        axes_sw = axes_sw.reshape(2, 1)
+    sweep_bundle: dict[str, Any] = {}
+
+    for di, depth in enumerate(sweep_depths):
+        torch.manual_seed(seed)
+        init_model = make_mlp(depth, sweep_d_in, sweep_hidden, sweep_d_out, relu=True).to(device=device, dtype=dtype)
+        for m in init_model.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_in", nonlinearity="relu")
+        state0 = {k: v.clone() for k, v in init_model.state_dict().items()}
+        depth_bundle: dict[str, Any] = {}
+
+        for method_key, kw, label, color in sweep_methods:
+            model = make_mlp(depth, sweep_d_in, sweep_hidden, sweep_d_out, relu=True).to(device=device, dtype=dtype)
+            model.load_state_dict(state0)
+            opt = OperatorLevelMLP(list(model.parameters()), **kw)
+            opt.attach_hooks(model)
+
+            hist, step_deltas = _run_with_step_delta(
+                model, opt, lambda: crit(model(x_sw), y_sw), sweep_steps  # noqa: B023
+            )
+            depth_bundle[method_key] = {"history": hist, "step_deltas": step_deltas}
+
+            ax_loss = axes_sw[0, di]
+            xs = [h[0] for h in hist]
+            raw = [h[1] for h in hist]
+            ys, clipped = clip_for_plot(raw, plot_y_max)
+            ax_loss.plot(xs, ys, label=label, color=color, lw=2.0)
+            annotate_clip(ax_loss, clipped, plot_y_max)
+
+            ax_res = axes_sw[1, di]
+            xs_d = list(range(len(step_deltas)))
+            ax_res.plot(xs_d, step_deltas, label=label, color=color, lw=1.5, alpha=0.8)
+            ax_res.axhline(0, color="k", lw=0.8, ls="--")
+
+        for row, ax in enumerate([axes_sw[0, di], axes_sw[1, di]]):
+            ax.set_xlabel("Step")
+            ax.grid(True, alpha=0.25)
+            if di == 0:
+                ax.set_ylabel("Train CE loss" if row == 0 else "(L_before − L_after) / L_before")
+            if row == 0:
+                ax.set_yscale("log")
+                ax.set_title(f"depth={depth}", fontsize=10)
+                ax.legend(frameon=False, fontsize=8)
+            else:
+                ax.legend(frameon=False, fontsize=8)
+
+        sweep_bundle[f"depth_{depth}"] = depth_bundle
+
+    fig_sw.suptitle(
+        "D&C on MLP: loss and per-step improvement vs depth\n"
+        "Negative improvement = step is harmful (operator residual > 1)",
+        fontsize=10,
+    )
+    save_fig(fig_sw, out_dir / "dc_mlp_depth_sweep.png")
+
+    cfg: dict[str, Any] = {
+        **part1_cfg,
+        "dc_mlp_depth_sweep": {
+            "scenario": "dc_mlp_vs_als_mn_depth_sweep",
+            "depths": sweep_depths,
+            "architecture": {"d_in": sweep_d_in, "hidden": sweep_hidden, "d_out": sweep_d_out, "relu": True},
+            "training": {"steps": sweep_steps, "batch": sweep_batch, "seed": seed, "dtype": str(dtype)},
+            "methods": [{"key": m[0], "label": m[2]} for m in sweep_methods],
+        },
+    }
+    return {**part1_results, "dc_mlp_depth_sweep": sweep_bundle}, cfg
+
+
+def curves_secant_mlp(
+    *,
+    out_dir: Path,
+    device: torch.device,
+    steps: int,
+    batch: int,
+    seed: int,
+    plot_y_max: float,
+    depth: int = 8,
+    hidden: int = 16,
+    d_in: int = 16,
+    d_out: int = 8,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Secant gate linearization variants vs ALS-exact reference (App. B.5).
+
+    Uses a deep ReLU MLP (default depth=8) where gate heterogeneity is large enough
+    that the quality of the gradient/curvature approximation matters.  Each method has
+    its lr independently tuned:
+      - ALS-exact: larger operator lr (second-order per-layer exact solve converges fast)
+      - secant_grad_exact: smaller weight-space lr (rank-1 curvature, stable gradient)
+      - secant: same small lr (rank-1 for both gradient and curvature — most approximate)
+    als_mn is omitted; the reference is als_exact_layers.
+    """
+    dtype = torch.float64
+    crit = nn.CrossEntropyLoss()
+    g = torch.Generator(device=device).manual_seed(seed)
+    x = torch.randn(batch, d_in, device=device, dtype=dtype, generator=g)
+    y_cls = torch.randint(0, d_out, (batch,), device=device, dtype=torch.long)
+
+    torch.manual_seed(seed)
+    init_model = make_mlp(depth, d_in, hidden, d_out, relu=True).to(device=device, dtype=dtype)
+    for m in init_model.modules():
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, mode="fan_in", nonlinearity="relu")
+    state0 = {k: v.clone() for k, v in init_model.state_dict().items()}
+
+    # (key, kwargs, label, color) — lr tuned independently per method.
+    # At depth≥16 the rank-1 secant approximation quality degrades; secant methods
+    # need a very small weight-space lr to avoid divergence and converge slowly,
+    # while ALS-exact makes efficient large operator-space steps (lr=2.0).
+    methods = [
+        ("als_exact_layers", _operator_level_mlp_kwargs(
+            lr=2.0, lam=1e-3, approximation="als",
+            als_layer_solve="exact", n_sweeps=3, als_reverse_sweep=True,
+            momentum=0.0,
+            als_gateperm_warmstart=False, als_gateperm_warmstart_once=False,
+        ), "ALS-Exact (reference)", "#9467bd"),
+        ("secant_grad_exact", _operator_level_mlp_kwargs(
+            lr=0.0001, lam=1e-3, approximation="secant_grad_exact", momentum=0.0,
+        ), "Secant + exact gradient", "#2ca02c"),
+        ("secant", _operator_level_mlp_kwargs(
+            lr=0.0001, lam=1e-3, approximation="secant", momentum=0.0,
+        ), "Secant (rank-1 curvature & gradient)", "#ff7f0e"),
+    ]
+
+    bundle: list[dict[str, Any]] = []
+    fig, ax = plt.subplots(figsize=(8.0, 5.0))
+    clipped_any = False
+
+    for key, kwargs, label, color in methods:
+        model = make_mlp(depth, d_in, hidden, d_out, relu=True).to(device=device, dtype=dtype)
+        model.load_state_dict(state0)
+        opt = OperatorLevelMLP(list(model.parameters()), **kwargs)
+        opt.attach_hooks(model)
+
+        hist = run_mlp_loop(model, opt, lambda: crit(model(x), y_cls), steps)  # noqa: B023
+        losses = [v for _, v in hist]
+        bundle.append({"key": key, "losses": losses})
+        ts = [h[0] for h in hist]
+        y_plot, c_any = clip_for_plot(losses, plot_y_max)
+        clipped_any = clipped_any or c_any
+        ax.plot(ts, y_plot, label=label, color=color, linewidth=2.0)
+
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Cross-entropy loss")
+    ax.set_yscale("log")
+    ax.set_title(f"Secant vs ALS-Exact — depth={depth} ReLU MLP (App. B.5)", fontsize=10)
+    ax.grid(True, alpha=0.25)
+    ax.legend(frameon=False, fontsize=9)
+    annotate_clip(ax, clipped_any, plot_y_max)
+    save_fig(fig, out_dir / "secant_comparison.png")
+
+    cfg_section: dict[str, Any] = {
+        "secant_comparison": {
+            "scenario": "mlp_synthetic_cross_entropy_secant",
+            "architecture": {
+                "depth": depth, "hidden": hidden, "d_in": d_in, "d_out": d_out,
+                "type": "bias-free ReLU MLP",
+            },
+            "dtype": str(dtype),
+            "device": str(device),
+            "training": {
+                "batch": batch, "steps": steps, "seed": seed, "plot_y_max": plot_y_max,
+            },
+            "methods": [
+                {"key": m[0], "label": m[2], "operator_level_mlp_kwargs": jsonify(m[1])}
+                for m in methods
+            ],
+        }
+    }
+    return {"secant_comparison": bundle}, cfg_section
+
+
+def curves_adaptive_lam_mlp(
+    *,
+    out_dir: Path,
+    device: torch.device,
+    steps: int,
+    batch: int,
+    seed: int,
+    plot_y_max: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Adaptive λ vs fixed λ on MLP — adaptive λ degrades convergence (App. B.6a)."""
+    return _run_mlp_variants_focused(
+        ["mlp_als_mn", "mlp_als_adaptive_lam"],
+        out_dir=out_dir,
+        device=device,
+        steps=steps,
+        batch=batch,
+        seed=seed,
+        plot_y_max=plot_y_max,
+        figure_name="adaptive_lam_mlp",
+        title="Adaptive λ vs fixed λ — MLP (App. B.6a)",
+        kwarg_overrides=_NO_WARMSTART,
+    )
+
+
+def curves_adaptive_lam_depth_comparison(
+    *,
+    out_dir: Path,
+    device: torch.device,
+    steps: int,
+    batch: int,
+    seed: int,
+    plot_y_max: float,
+    shallow_depth: int = 2,
+    deep_depth: int = 8,
+    hidden: int = 16,
+    d_in: int = 16,
+    d_out: int = 8,
+    lam_alpha: float = 0.0001,
+    lr: float = 0.35,
+    lam: float = 1e-3,
+    n_sweeps: int = 3,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Shallow vs deep comparison for adaptive λ scaling (App. B.6a).
+
+    Verifies two things:
+    (1) A properly scaled α makes adaptive λ match fixed λ on shallow networks —
+        the failure at α=0.5 is over-regularisation, not a fundamental issue.
+    (2) That same α fails on deep networks where gate-heterogeneity noise
+        compounds across layers and sweeps, causing the adaptive λ to amplify
+        noisy update directions.
+    """
+    dtype = torch.float64
+    crit = nn.CrossEntropyLoss()
+
+    fixed_kwargs = _operator_level_mlp_kwargs(
+        lr=lr, lam=lam, approximation="als", als_layer_solve="mn",
+        n_sweeps=n_sweeps, als_reverse_sweep=True, momentum=0.0,
+        als_gateperm_warmstart=False, als_gateperm_warmstart_once=False,
+    )
+    adaptive_kwargs = _operator_level_mlp_kwargs(
+        lr=lr, lam=None, lam_alpha=lam_alpha, approximation="als",
+        als_layer_solve="mn", n_sweeps=n_sweeps, als_reverse_sweep=True,
+        momentum=0.0,
+        als_gateperm_warmstart=False, als_gateperm_warmstart_once=False,
+    )
+    methods = [
+        ("fixed_lam",    f"Fixed λ={lam:.0e}",           "#1f77b4", fixed_kwargs),
+        ("adaptive_lam", f"Adaptive λ (α={lam_alpha})", "#ff7f0e", adaptive_kwargs),
+    ]
+
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 5.0), sharey=False)
+    bundle_all: dict[str, list[dict[str, Any]]] = {}
+    clipped_any_all = False
+
+    for ax, depth, panel_title in [
+        (axes[0], shallow_depth, f"Shallow (L={shallow_depth})"),
+        (axes[1], deep_depth,    f"Deep (L={deep_depth})"),
+    ]:
+        g = torch.Generator(device=device).manual_seed(seed)
+        x_data = torch.randn(batch, d_in, device=device, dtype=dtype, generator=g)
+        y_data = torch.randint(0, d_out, (batch,), device=device, dtype=torch.long)
+
+        torch.manual_seed(seed)
+        init_model = make_mlp(depth, d_in, hidden, d_out, relu=True).to(device=device, dtype=dtype)
+        for m in init_model.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_in", nonlinearity="relu")
+        state0 = {k: v.clone() for k, v in init_model.state_dict().items()}
+
+        panel_bundle: list[dict[str, Any]] = []
+        clipped_panel = False
+
+        for key, label, color, kwargs in methods:
+            model = make_mlp(depth, d_in, hidden, d_out, relu=True).to(device=device, dtype=dtype)
+            model.load_state_dict(state0)
+            opt = OperatorLevelMLP(list(model.parameters()), **kwargs)
+            opt.attach_hooks(model)
+
+            hist = run_mlp_loop(model, opt, lambda: crit(model(x_data), y_data), steps)  # noqa: B023
+            losses = [v for _, v in hist]
+            panel_bundle.append({"key": key, "losses": losses})
+            ts = [h[0] for h in hist]
+            y_plot, c_any = clip_for_plot(losses, plot_y_max)
+            clipped_panel = clipped_panel or c_any
+            clipped_any_all = clipped_any_all or c_any
+            ax.plot(ts, y_plot, label=label, color=color, linewidth=2.0)
+
+        ax.set_xlabel("Step")
+        ax.set_ylabel("Cross-entropy loss")
+        ax.set_yscale("log")
+        ax.set_title(panel_title, fontsize=10)
+        ax.grid(True, alpha=0.25)
+        ax.legend(frameon=False, fontsize=9)
+        annotate_clip(ax, clipped_panel, plot_y_max)
+        bundle_all[f"depth_{depth}"] = panel_bundle
+
+    fig.suptitle(
+        f"Adaptive λ (α={lam_alpha}) — shallow overlap, deep failure (App. B.6a)",
+        fontsize=11,
+    )
+    fig.tight_layout()
+    save_fig(fig, out_dir / "adaptive_lam_depth_comparison.png")
+
+    cfg_section: dict[str, Any] = {
+        "adaptive_lam_depth_comparison": {
+            "scenario": "mlp_synthetic_cross_entropy_adaptive_lam_depth",
+            "architecture": {
+                "shallow_depth": shallow_depth, "deep_depth": deep_depth,
+                "hidden": hidden, "d_in": d_in, "d_out": d_out,
+                "type": "bias-free ReLU MLP", "init": "kaiming_normal",
+            },
+            "dtype": str(dtype),
+            "device": str(device),
+            "training": {
+                "batch": batch, "steps": steps, "seed": seed,
+                "lr": lr, "lam": lam, "lam_alpha": lam_alpha,
+                "n_sweeps": n_sweeps, "plot_y_max": plot_y_max,
+            },
+        }
+    }
+    return {"adaptive_lam_depth_comparison": bundle_all}, cfg_section
+
+
 def main() -> None:
+    _ALL_FIGURES = [
+        "deep_linear", "mlp_all", "fgln", "kfac_depth", "mean_field", "linobj",
+        "dc_mlp", "secant", "adaptive_lam", "adaptive_lam_depth",
+    ]
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out_dir", type=str, default="outputs/variant_curves/run")
     ap.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
+    ap.add_argument(
+        "--figures",
+        type=str,
+        default="all",
+        help=(
+            "Comma-separated subset of figures to generate, or 'all'. "
+            f"Valid keys: {', '.join(_ALL_FIGURES)}."
+        ),
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--steps_deeplinear", type=int, default=200)
     ap.add_argument("--steps_mlp", type=int, default=150)
@@ -1145,15 +1706,15 @@ def main() -> None:
     ap.add_argument("--fgln_depth", type=int, default=16)
     ap.add_argument("--fgln_n", type=int, default=32)
     ap.add_argument("--fgln_p", type=float, default=0.85)
-    ap.add_argument("--steps_kfac_depth", type=int, default=100)
-    ap.add_argument("--kfac_depths", type=str, default="2,4,8",
+    ap.add_argument("--steps_kfac_depth", type=int, default=300)
+    ap.add_argument("--kfac_depths", type=str, default="2,4,8,16",
                     help="Comma-separated list of depths for operator_kfac depth sweep.")
     ap.add_argument("--kfac_hidden", type=int, default=16)
     ap.add_argument("--kfac_d_in", type=int, default=16)
     ap.add_argument("--kfac_d_out", type=int, default=8)
     ap.add_argument("--kfac_batch", type=int, default=32)
     ap.add_argument("--steps_mean_field", type=int, default=300)
-    ap.add_argument("--mf_depth", type=int, default=4)
+    ap.add_argument("--mf_depth", type=int, default=8)
     ap.add_argument("--mf_hidden", type=int, default=32)
     ap.add_argument("--mf_d_in", type=int, default=32)
     ap.add_argument("--mf_d_out", type=int, default=8)
@@ -1161,6 +1722,18 @@ def main() -> None:
     ap.add_argument("--mf_lr", type=float, default=0.15)
     ap.add_argument("--mf_lam", type=float, default=1e-3)
     ap.add_argument("--mf_n_sweeps", type=int, default=3)
+    ap.add_argument("--secant_depth", type=int, default=16,
+                    help="Depth of the ReLU MLP used for the secant comparison (B.5).")
+    ap.add_argument("--secant_hidden", type=int, default=16)
+    ap.add_argument("--secant_d_in", type=int, default=16)
+    ap.add_argument("--secant_d_out", type=int, default=8)
+    ap.add_argument("--dc_sweep_depths", type=str, default="2,4,8",
+                    help="Comma-separated depths for D&C depth sweep (dc_mlp figure).")
+    ap.add_argument("--dc_sweep_steps", type=int, default=200)
+    ap.add_argument("--dc_sweep_hidden", type=int, default=16)
+    ap.add_argument("--dc_sweep_d_in", type=int, default=16)
+    ap.add_argument("--dc_sweep_d_out", type=int, default=8)
+    ap.add_argument("--dc_sweep_batch", type=int, default=32)
     ap.add_argument("--linobj_steps_small", type=int, default=200)
     ap.add_argument("--linobj_steps_large", type=int, default=60)
     ap.add_argument("--linobj_depth", type=int, default=16)
@@ -1172,6 +1745,16 @@ def main() -> None:
     ap.add_argument("--linobj_lr_large", type=float, default=2.0)
     ap.add_argument("--linobj_lam", type=float, default=1e-4)
     ap.add_argument("--linobj_n_sweeps", type=int, default=4)
+    ap.add_argument("--adaptive_lam_alpha", type=float, default=0.0001,
+                    help="α for adaptive λ depth comparison (B.6a): λ_l = α·(σ_max(M_l)+σ_max(N_l)).")
+    ap.add_argument("--adaptive_lam_shallow_depth", type=int, default=2)
+    ap.add_argument("--adaptive_lam_deep_depth", type=int, default=8)
+    ap.add_argument("--adaptive_lam_hidden", type=int, default=16)
+    ap.add_argument("--adaptive_lam_d_in", type=int, default=16)
+    ap.add_argument("--adaptive_lam_d_out", type=int, default=8)
+    ap.add_argument("--adaptive_lam_lr", type=float, default=0.35)
+    ap.add_argument("--adaptive_lam_lam", type=float, default=1e-3)
+    ap.add_argument("--adaptive_lam_n_sweeps", type=int, default=3)
     ap.add_argument(
         "--plot_y_max",
         type=float,
@@ -1185,6 +1768,17 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     device = get_device(args.device)
     plot_y_max = float(args.plot_y_max)
+
+    if args.figures.strip().lower() == "all":
+        selected_figs: set[str] = set(_ALL_FIGURES)
+    else:
+        selected_figs = {k.strip() for k in args.figures.split(",") if k.strip()}
+        unknown = selected_figs - set(_ALL_FIGURES)
+        if unknown:
+            ap.error(f"Unknown --figures keys: {', '.join(sorted(unknown))}. Valid: {', '.join(_ALL_FIGURES)}")
+
+    def _want(key: str) -> bool:
+        return key in selected_figs
 
     run_config: dict[str, Any] = {
         "script_module": "operator_level_optimization.scripts.train.variant_loss_curves",
@@ -1210,97 +1804,171 @@ def main() -> None:
 
     payload: dict[str, Any] = {}
 
-    p_dl, c_dl = curves_deep_linear(
-        out_dir=out_dir,
-        device=device,
-        steps=args.steps_deeplinear,
-        depth=args.deeplinear_depth,
-        d=args.deeplinear_d,
-        n=args.deeplinear_n,
-        seed=args.seed,
-        plot_y_max=plot_y_max,
-    )
-    payload.update(p_dl)
-    run_config.update(c_dl)
+    if _want("deep_linear"):
+        p_dl, c_dl = curves_deep_linear(
+            out_dir=out_dir,
+            device=device,
+            steps=args.steps_deeplinear,
+            depth=args.deeplinear_depth,
+            d=args.deeplinear_d,
+            n=args.deeplinear_n,
+            seed=args.seed,
+            plot_y_max=plot_y_max,
+        )
+        payload.update(p_dl)
+        run_config.update(c_dl)
 
-    p_mlp, c_mlp = curves_mlp(
-        out_dir=out_dir,
-        device=device,
-        steps=args.steps_mlp,
-        batch=args.mlp_batch,
-        seed=args.seed,
-        plot_y_max=plot_y_max,
-    )
-    payload.update(p_mlp)
-    run_config.update(c_mlp)
+    if _want("mlp_all"):
+        p_mlp, c_mlp = curves_mlp(
+            out_dir=out_dir,
+            device=device,
+            steps=args.steps_mlp,
+            batch=args.mlp_batch,
+            seed=args.seed,
+            plot_y_max=plot_y_max,
+        )
+        payload.update(p_mlp)
+        run_config.update(c_mlp)
 
-    p_fg, c_fg = curves_fgln(
-        out_dir=out_dir,
-        device=device,
-        steps=args.steps_fgln,
-        d=args.fgln_d,
-        depth=args.fgln_depth,
-        n=args.fgln_n,
-        p_gate=args.fgln_p,
-        seed=args.seed,
-        plot_y_max=plot_y_max,
-    )
-    payload.update(p_fg)
-    run_config.update(c_fg)
+    if _want("fgln"):
+        p_fg, c_fg = curves_fgln(
+            out_dir=out_dir,
+            device=device,
+            steps=args.steps_fgln,
+            d=args.fgln_d,
+            depth=args.fgln_depth,
+            n=args.fgln_n,
+            p_gate=args.fgln_p,
+            seed=args.seed,
+            plot_y_max=plot_y_max,
+        )
+        payload.update(p_fg)
+        run_config.update(c_fg)
 
-    kfac_depths = [int(d) for d in args.kfac_depths.split(",") if d.strip()]
-    p_kd, c_kd = curves_operator_kfac_depth_sweep(
-        out_dir=out_dir,
-        device=device,
-        steps=args.steps_kfac_depth,
-        depths=kfac_depths,
-        hidden=args.kfac_hidden,
-        d_in=args.kfac_d_in,
-        d_out=args.kfac_d_out,
-        batch=args.kfac_batch,
-        seed=args.seed,
-        plot_y_max=plot_y_max,
-    )
-    payload.update(p_kd)
-    run_config.update(c_kd)
+    if _want("kfac_depth"):
+        kfac_depths = [int(d) for d in args.kfac_depths.split(",") if d.strip()]
+        p_kd, c_kd = curves_operator_kfac_depth_sweep(
+            out_dir=out_dir,
+            device=device,
+            steps=args.steps_kfac_depth,
+            depths=kfac_depths,
+            hidden=args.kfac_hidden,
+            d_in=args.kfac_d_in,
+            d_out=args.kfac_d_out,
+            batch=args.kfac_batch,
+            seed=args.seed,
+            plot_y_max=plot_y_max,
+        )
+        payload.update(p_kd)
+        run_config.update(c_kd)
 
-    p_mf, c_mf = curves_mean_field_comparison(
-        out_dir=out_dir,
-        device=device,
-        steps=args.steps_mean_field,
-        depth=args.mf_depth,
-        hidden=args.mf_hidden,
-        d_in=args.mf_d_in,
-        d_out=args.mf_d_out,
-        batch=args.mf_batch,
-        lr=args.mf_lr,
-        lam=args.mf_lam,
-        n_sweeps=args.mf_n_sweeps,
-        seed=args.seed,
-        plot_y_max=plot_y_max,
-    )
-    payload.update(p_mf)
-    run_config.update(c_mf)
+    if _want("mean_field"):
+        p_mf, c_mf = curves_mean_field_comparison(
+            out_dir=out_dir,
+            device=device,
+            steps=args.steps_mean_field,
+            depth=args.mf_depth,
+            hidden=args.mf_hidden,
+            d_in=args.mf_d_in,
+            d_out=args.mf_d_out,
+            batch=args.mf_batch,
+            lr=args.mf_lr,
+            lam=args.mf_lam,
+            n_sweeps=args.mf_n_sweeps,
+            seed=args.seed,
+            plot_y_max=plot_y_max,
+        )
+        payload.update(p_mf)
+        run_config.update(c_mf)
 
-    p_lo, c_lo = curves_linearized_obj_comparison(
-        out_dir=out_dir,
-        device=device,
-        steps_small=args.linobj_steps_small,
-        steps_large=args.linobj_steps_large,
-        depth=args.linobj_depth,
-        hidden=args.linobj_hidden,
-        d_in=args.linobj_d_in,
-        d_out=args.linobj_d_out,
-        batch=args.linobj_batch,
-        lr_small=args.linobj_lr_small,
-        lr_large=args.linobj_lr_large,
-        lam=args.linobj_lam,
-        n_sweeps=args.linobj_n_sweeps,
-        seed=args.seed,
-        plot_y_max=plot_y_max,
-    )
-    payload.update(p_lo)
-    run_config.update(c_lo)
+    if _want("linobj"):
+        p_lo, c_lo = curves_linearized_obj_comparison(
+            out_dir=out_dir,
+            device=device,
+            steps_small=args.linobj_steps_small,
+            steps_large=args.linobj_steps_large,
+            depth=args.linobj_depth,
+            hidden=args.linobj_hidden,
+            d_in=args.linobj_d_in,
+            d_out=args.linobj_d_out,
+            batch=args.linobj_batch,
+            lr_small=args.linobj_lr_small,
+            lr_large=args.linobj_lr_large,
+            lam=args.linobj_lam,
+            n_sweeps=args.linobj_n_sweeps,
+            seed=args.seed,
+            plot_y_max=plot_y_max,
+        )
+        payload.update(p_lo)
+        run_config.update(c_lo)
+
+    if _want("dc_mlp"):
+        dc_sweep_depths = [int(d) for d in args.dc_sweep_depths.split(",") if d.strip()]
+        p_dc, c_dc = curves_dc_mlp(
+            out_dir=out_dir,
+            device=device,
+            steps=args.steps_mlp,
+            batch=args.mlp_batch,
+            seed=args.seed,
+            plot_y_max=plot_y_max,
+            sweep_depths=dc_sweep_depths,
+            sweep_steps=args.dc_sweep_steps,
+            sweep_hidden=args.dc_sweep_hidden,
+            sweep_d_in=args.dc_sweep_d_in,
+            sweep_d_out=args.dc_sweep_d_out,
+            sweep_batch=args.dc_sweep_batch,
+        )
+        payload.update(p_dc)
+        run_config.update(c_dc)
+
+    if _want("secant"):
+        p_sc, c_sc = curves_secant_mlp(
+            out_dir=out_dir,
+            device=device,
+            steps=args.steps_mlp,
+            batch=args.mlp_batch,
+            seed=args.seed,
+            plot_y_max=plot_y_max,
+            depth=args.secant_depth,
+            hidden=args.secant_hidden,
+            d_in=args.secant_d_in,
+            d_out=args.secant_d_out,
+        )
+        payload.update(p_sc)
+        run_config.update(c_sc)
+
+    if _want("adaptive_lam"):
+        p_al, c_al = curves_adaptive_lam_mlp(
+            out_dir=out_dir,
+            device=device,
+            steps=args.steps_mlp,
+            batch=args.mlp_batch,
+            seed=args.seed,
+            plot_y_max=plot_y_max,
+        )
+        payload.update(p_al)
+        run_config.update(c_al)
+
+    if _want("adaptive_lam_depth"):
+        p_ald, c_ald = curves_adaptive_lam_depth_comparison(
+            out_dir=out_dir,
+            device=device,
+            steps=args.steps_mlp,
+            batch=args.mlp_batch,
+            seed=args.seed,
+            plot_y_max=plot_y_max,
+            shallow_depth=args.adaptive_lam_shallow_depth,
+            deep_depth=args.adaptive_lam_deep_depth,
+            hidden=args.adaptive_lam_hidden,
+            d_in=args.adaptive_lam_d_in,
+            d_out=args.adaptive_lam_d_out,
+            lam_alpha=args.adaptive_lam_alpha,
+            lr=args.adaptive_lam_lr,
+            lam=args.adaptive_lam_lam,
+            n_sweeps=args.adaptive_lam_n_sweeps,
+        )
+        payload.update(p_ald)
+        run_config.update(c_ald)
 
     def _json_safe(obj: Any) -> Any:
         if isinstance(obj, dict):
