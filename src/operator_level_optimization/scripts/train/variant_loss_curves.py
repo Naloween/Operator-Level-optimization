@@ -1542,48 +1542,35 @@ def curves_adaptive_lam_mlp(
     batch: int,
     seed: int,
     plot_y_max: float,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Adaptive λ vs fixed λ on MLP — adaptive λ degrades convergence (App. B.6a)."""
-    return _run_mlp_variants_focused(
-        ["mlp_als_mn", "mlp_als_adaptive_lam"],
-        out_dir=out_dir,
-        device=device,
-        steps=steps,
-        batch=batch,
-        seed=seed,
-        plot_y_max=plot_y_max,
-        figure_name="adaptive_lam_mlp",
-        title="Adaptive λ vs fixed λ — MLP (App. B.6a)",
-        kwarg_overrides=_NO_WARMSTART,
-    )
-
-
-def curves_adaptive_lam_depth_comparison(
-    *,
-    out_dir: Path,
-    device: torch.device,
-    steps: int,
-    batch: int,
-    seed: int,
-    plot_y_max: float,
     shallow_depth: int = 2,
-    deep_depth: int = 8,
+    deep_depth: int = 16,
     hidden: int = 16,
     d_in: int = 16,
     d_out: int = 8,
-    lam_alpha: float = 0.0001,
+    init_std: float = 0.1,
+    lam_alpha: float = 5e-8,
     lr: float = 0.35,
-    lam: float = 1e-3,
+    lam: float = 1e-6,
     n_sweeps: int = 3,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Shallow vs deep comparison for adaptive λ scaling (App. B.6a).
+    """Adaptive λ vs fixed λ — shallow works, deep diverges (App. B.6a).
 
-    Verifies two things:
-    (1) A properly scaled α makes adaptive λ match fixed λ on shallow networks —
-        the failure at α=0.5 is over-regularisation, not a fundamental issue.
-    (2) That same α fails on deep networks where gate-heterogeneity noise
-        compounds across layers and sweeps, causing the adaptive λ to amplify
-        noisy update directions.
+    Two-panel figure on a bias-free ReLU MLP with small std initialisation.
+    With sub-Kaiming std, context singular values σ_max(M_l) decay with depth:
+    outer layers retain signal while inner layers at large L collapse to
+    σ_max ≈ 0.
+
+    Fixed λ suppresses updates at those collapsed layers (λ dominates the
+    denominator), limiting damage.  Adaptive λ_l = α·(σ_max(M_l)+σ_max(N_l))
+    collapses with the context: λ_l → 0 removes all regularisation at collapsed
+    layers and allows unbounded updates in numerically noisy directions —
+    training diverges.
+
+    Shallow panel (L=shallow_depth): both methods converge; α is calibrated so
+    adaptive λ ≈ fixed λ at the first layer.
+    Deep panel (L=deep_depth): inner-layer contexts collapse; adaptive λ diverges
+    while fixed λ stays stable (though unable to make progress either, it does
+    not destabilise training).
     """
     dtype = torch.float64
     crit = nn.CrossEntropyLoss()
@@ -1600,13 +1587,12 @@ def curves_adaptive_lam_depth_comparison(
         als_gateperm_warmstart=False, als_gateperm_warmstart_once=False,
     )
     methods = [
-        ("fixed_lam",    f"Fixed λ={lam:.0e}",           "#1f77b4", fixed_kwargs),
-        ("adaptive_lam", f"Adaptive λ (α={lam_alpha})", "#ff7f0e", adaptive_kwargs),
+        ("fixed_lam",    f"Fixed λ={lam:.0e}",            "#1f77b4", fixed_kwargs),
+        ("adaptive_lam", f"Adaptive λ (α={lam_alpha})",  "#ff7f0e", adaptive_kwargs),
     ]
 
     fig, axes = plt.subplots(1, 2, figsize=(12.0, 5.0), sharey=False)
     bundle_all: dict[str, list[dict[str, Any]]] = {}
-    clipped_any_all = False
 
     for ax, depth, panel_title in [
         (axes[0], shallow_depth, f"Shallow (L={shallow_depth})"),
@@ -1620,7 +1606,7 @@ def curves_adaptive_lam_depth_comparison(
         init_model = make_mlp(depth, d_in, hidden, d_out, relu=True).to(device=device, dtype=dtype)
         for m in init_model.modules():
             if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode="fan_in", nonlinearity="relu")
+                nn.init.normal_(m.weight, std=init_std)
         state0 = {k: v.clone() for k, v in init_model.state_dict().items()}
 
         panel_bundle: list[dict[str, Any]] = []
@@ -1638,9 +1624,12 @@ def curves_adaptive_lam_depth_comparison(
             ts = [h[0] for h in hist]
             y_plot, c_any = clip_for_plot(losses, plot_y_max)
             clipped_panel = clipped_panel or c_any
-            clipped_any_all = clipped_any_all or c_any
             ax.plot(ts, y_plot, label=label, color=color, linewidth=2.0)
 
+        import math
+        random_ce = math.log(d_out)
+        ax.axhline(random_ce, color="gray", linestyle="--", linewidth=1.0, alpha=0.7,
+                   label=f"Random init CE = log({d_out})")
         ax.set_xlabel("Step")
         ax.set_ylabel("Cross-entropy loss")
         ax.set_yscale("log")
@@ -1651,19 +1640,19 @@ def curves_adaptive_lam_depth_comparison(
         bundle_all[f"depth_{depth}"] = panel_bundle
 
     fig.suptitle(
-        f"Adaptive λ (α={lam_alpha}) — shallow overlap, deep failure (App. B.6a)",
+        f"Adaptive λ (α={lam_alpha}) vs Fixed λ — shallow overlap, deep failure (App. B.6a)",
         fontsize=11,
     )
     fig.tight_layout()
-    save_fig(fig, out_dir / "adaptive_lam_depth_comparison.png")
+    save_fig(fig, out_dir / "adaptive_lam_mlp.png")
 
     cfg_section: dict[str, Any] = {
-        "adaptive_lam_depth_comparison": {
+        "adaptive_lam_mlp": {
             "scenario": "mlp_synthetic_cross_entropy_adaptive_lam_depth",
             "architecture": {
                 "shallow_depth": shallow_depth, "deep_depth": deep_depth,
                 "hidden": hidden, "d_in": d_in, "d_out": d_out,
-                "type": "bias-free ReLU MLP", "init": "kaiming_normal",
+                "type": "bias-free ReLU MLP", "init": f"normal(std={init_std})",
             },
             "dtype": str(dtype),
             "device": str(device),
@@ -1674,13 +1663,13 @@ def curves_adaptive_lam_depth_comparison(
             },
         }
     }
-    return {"adaptive_lam_depth_comparison": bundle_all}, cfg_section
+    return {"adaptive_lam_mlp": bundle_all}, cfg_section
 
 
 def main() -> None:
     _ALL_FIGURES = [
         "deep_linear", "mlp_all", "fgln", "kfac_depth", "mean_field", "linobj",
-        "dc_mlp", "secant", "adaptive_lam", "adaptive_lam_depth",
+        "dc_mlp", "secant", "adaptive_lam",
     ]
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out_dir", type=str, default="outputs/variant_curves/run")
@@ -1745,15 +1734,18 @@ def main() -> None:
     ap.add_argument("--linobj_lr_large", type=float, default=2.0)
     ap.add_argument("--linobj_lam", type=float, default=1e-4)
     ap.add_argument("--linobj_n_sweeps", type=int, default=4)
-    ap.add_argument("--adaptive_lam_alpha", type=float, default=0.0001,
-                    help="α for adaptive λ depth comparison (B.6a): λ_l = α·(σ_max(M_l)+σ_max(N_l)).")
+    ap.add_argument("--adaptive_lam_alpha", type=float, default=5e-8,
+                    help="α for adaptive λ (B.6a): λ_l = α·(σ_max(M_l)+σ_max(N_l)).")
     ap.add_argument("--adaptive_lam_shallow_depth", type=int, default=2)
-    ap.add_argument("--adaptive_lam_deep_depth", type=int, default=8)
+    ap.add_argument("--adaptive_lam_deep_depth", type=int, default=16)
     ap.add_argument("--adaptive_lam_hidden", type=int, default=16)
     ap.add_argument("--adaptive_lam_d_in", type=int, default=16)
     ap.add_argument("--adaptive_lam_d_out", type=int, default=8)
+    ap.add_argument("--adaptive_lam_init_std", type=float, default=0.1,
+                    help="Weight init std for adaptive λ experiment. Sub-Kaiming so contexts "
+                         "decay with depth and expose the collapse failure at large L.")
     ap.add_argument("--adaptive_lam_lr", type=float, default=0.35)
-    ap.add_argument("--adaptive_lam_lam", type=float, default=1e-3)
+    ap.add_argument("--adaptive_lam_lam", type=float, default=1e-6)
     ap.add_argument("--adaptive_lam_n_sweeps", type=int, default=3)
     ap.add_argument(
         "--plot_y_max",
@@ -1945,30 +1937,19 @@ def main() -> None:
             batch=args.mlp_batch,
             seed=args.seed,
             plot_y_max=plot_y_max,
-        )
-        payload.update(p_al)
-        run_config.update(c_al)
-
-    if _want("adaptive_lam_depth"):
-        p_ald, c_ald = curves_adaptive_lam_depth_comparison(
-            out_dir=out_dir,
-            device=device,
-            steps=args.steps_mlp,
-            batch=args.mlp_batch,
-            seed=args.seed,
-            plot_y_max=plot_y_max,
             shallow_depth=args.adaptive_lam_shallow_depth,
             deep_depth=args.adaptive_lam_deep_depth,
             hidden=args.adaptive_lam_hidden,
             d_in=args.adaptive_lam_d_in,
             d_out=args.adaptive_lam_d_out,
+            init_std=args.adaptive_lam_init_std,
             lam_alpha=args.adaptive_lam_alpha,
             lr=args.adaptive_lam_lr,
             lam=args.adaptive_lam_lam,
             n_sweeps=args.adaptive_lam_n_sweeps,
         )
-        payload.update(p_ald)
-        run_config.update(c_ald)
+        payload.update(p_al)
+        run_config.update(c_al)
 
     def _json_safe(obj: Any) -> Any:
         if isinstance(obj, dict):

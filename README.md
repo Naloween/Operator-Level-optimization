@@ -149,7 +149,7 @@ python -m operator_level_optimization.scripts.train.variant_loss_curves \
 
 ## Variant Experiments — Evidence for Appendix Claims
 
-For every approximation and variant described in the paper's Appendix B, the sub-sections below specify the **claim** being evidenced, the **generate command**, and the **observed result**.
+For every approximation and variant described in the paper's Appendix B, the sub-sections below specify the **claim** being evidenced, the **generate command**, and the **observed result**. We note however that all of those are still early results and experiemnts, no extensive tuning of the hyperparameters have been made.
 
 ---
 
@@ -197,7 +197,7 @@ python -m operator_level_optimization.scripts.train.variant_loss_curves \
 # Output: outputs/linobj/linearized_obj_comparison.png
 ```
 
-**Result:** At small lr=0.05 both solvers converge similarly; the target residual for linearized-exact is small but non-zero. At large lr=2.0, ALS-exact converges rapidly while linearized-exact accumulates a target residual >500× (clipped for display), showing that the O(lr²) cross-layer error dominates. The ΔW_l norms are comparable between the two methods — confirming that the divergence in target residual is caused by the linearization approximation, not by larger weight updates.
+**Result:** At small lr=0.05 both solvers converge similarly; the target residual for linearized-exact is small but non-zero. At large lr=2.0, ALS-exact converges rapidly while linearized-exact accumulates a target residual >500× (clipped for display), showing that the O(lr²) cross-layer error dominates. The ΔW_l norms are comparable between the two methods — confirming that the divergence in target residual is caused by the linearization approximation, not by larger weight updates. The Linear approximation is as expected larger the larger the weight updates are however, which is expected when increasing the learning rate.
 
 ![Linearized objective: ALS-exact vs Linearized-exact](images/ablation_linobj.png)
 
@@ -205,7 +205,7 @@ python -m operator_level_optimization.scripts.train.variant_loss_curves \
 
 ### B.3 Operator-KFAC depth sweep (App. B.3)
 
-**Claim:** Standard K-FAC becomes unstable at large depth because its Kronecker factorisation is misaligned with the product structure. Operator-KFAC respects the operator structure and is more stable. ALS-exact (exact per-layer factorisation solves, no warmstart) converges fastest and to the lowest loss — it is the gold standard.
+**Claim:** Standard K-FAC becomes unstable at large depth because its Kronecker factorisation is misaligned with the product structure. Operator-KFAC respects the operator structure and is more stable. ALS-exact (exact per-layer factorisation solves, no warmstart) converges fastest and to the lowest loss.
 
 **Experiment:** Depth sweep comparing classic K-FAC, Operator-KFAC, and ALS-Exact across $L \in \{2, 4, 8, 16\}$ on a synthetic cross-entropy task with a purely linear MLP (no ReLU). Hyperparameters are independently tuned per method: K-FAC uses lr=0.001, damping=0.1 for stability; ALS-Exact uses lr=50 with `als_linear_target=True` (shared gradient target, exact factorisation per step).
 
@@ -222,7 +222,7 @@ python -m operator_level_optimization.scripts.train.variant_loss_curves \
 #          outputs/kfac_depth/operator_kfac_depth_{2,4,8,16}.png
 ```
 
-**Result:** ALS-exact converges to near-zero loss at every depth (≈1×10⁻⁴) within 300 steps, regardless of depth — the shared operator target makes it depth-invariant. K-FAC at depth=16 shows a large oscillation (loss spike at step ~100) before recovering to 0.072, illustrating instability from Kronecker misalignment at large depth. Operator-KFAC is more stable but converges an order of magnitude more slowly than ALS-exact.
+**Result:** ALS-exact converges to near-zero loss at every depth (≈1×10⁻⁴) within 300 steps, regardless of depth — the shared operator target makes it depth-invariant. K-FAC at depth=16 shows a large oscillation (loss spike at step ~100) before recovering to 0.072, illustrating instability from Kronecker misalignment at large depth. Operator-KFAC is more stable but converges an order of magnitude more slowly than ALS-exact, could be further finetune the hyperparameters to maybe close the gap.
 
 ![K-FAC vs Operator-KFAC vs ALS-Exact depth sweep](images/ablation_operator_kfac_depth.png)
 
@@ -303,20 +303,23 @@ python -m operator_level_optimization.scripts.train.variant_loss_curves \
 
 #### B.6a Adaptive $\lambda$ failure (MLP) (App. B.6)
 
-**Claim:** Setting $\lambda_k \propto \sigma_{\max}(M_k) + \sigma_{\max}(N_k)$ equalizes per-layer update magnitudes. For middle layers in deep networks, contexts are nearly random and carry no useful direction signal — amplifying those updates injects noise that compounds over depth and ALS sweeps, preventing convergence.
+**Claim:** Adaptive $\lambda_k = \alpha \cdot (\sigma_{\max}(M_k) + \sigma_{\max}(N_k))$ equalizes per-layer update magnitudes across depth. At large depth, inner-layer context singular values $\sigma_{\max}(M_k)$ collapse toward zero (multiplicative decay of a sub-Kaiming init). Fixed $\lambda$ bounds updates at those layers; adaptive $\lambda$ collapses with the context ($\lambda_k \to 0$), removing all regularization and allowing unbounded updates in numerically noisy directions — training diverges.
 
-**Experiment:** `mlp_als_mn` (fixed $\lambda$) vs `mlp_als_adaptive_lam` (adaptive $\lambda$) on a synthetic cross-entropy task. Architecture: 2-layer bias-free ReLU MLP ($d_\text{in}=24$, hidden=8, 5 classes), single fixed mini-batch of 64 samples, std=0.05 initialization.
+**Experiment:** Fixed $\lambda=10^{-6}$ vs adaptive $\lambda$ ($\alpha=5 \times 10^{-8}$, calibrated to match fixed $\lambda$ at the first layer of the shallow network) on a bias-free ReLU MLP ($d_\text{in}=16$, hidden=16, $d_\text{out}=8$, std=0.1 init, batch=64). Two-panel: $L=2$ (shallow) and $L=16$ (deep).
 
 **Generate:**
 ```bash
 python -m operator_level_optimization.scripts.train.variant_loss_curves \
   --out_dir outputs/adaptive_lam \
   --figures adaptive_lam \
-  --steps_mlp 400
+  --steps_mlp 300 \
+  --adaptive_lam_shallow_depth 2 --adaptive_lam_deep_depth 16 \
+  --adaptive_lam_init_std 0.1 --adaptive_lam_alpha 5e-8 --adaptive_lam_lam 1e-6 \
+  --adaptive_lam_hidden 16 --adaptive_lam_d_in 16 --adaptive_lam_d_out 8
 # Output: outputs/adaptive_lam/adaptive_lam_mlp.png
 ```
 
-**Result:** Fixed-λ ALS-MN converges reliably. Adaptive-λ ALS-MN stalls (flat at random-init loss throughout 400 steps) — amplifying directions with large singular values injects noise into the ALS sweep that compounds across layers and iterations.
+**Result:** Shallow ($L=2$): both methods converge to CE≈1.49, confirming that with a calibrated $\alpha$, adaptive $\lambda$ is working at least as well as fixed lambda in shallow settings. Deep ($L=16$): fixed $\lambda$ remains stable at the random-init loss (inner-layer updates suppressed, no destabilization); adaptive $\lambda$ diverges to CE≈$10^6$ — as inner-layer $\sigma_{\max} \to 0$, $\lambda_k \to 0$ removes regularization entirely, and numerically noisy updates compound across layers and sweeps.
 
 ![Adaptive lambda failure (MLP)](images/ablation_adaptive_lambda_mlp.png)
 
