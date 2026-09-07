@@ -55,8 +55,16 @@ def lr_grid(runs: list[Run], ax=None, metric: str = "eval_primary", title: str |
     if cap is None:
         cap = _divergence_cap(runs, metric, mode)
 
+    clipped = False
+    pick = min if mode == "min" else max
     for (method,), group in sorted(group_by(runs, "method").items()):
-        pts = sorted((r.lr, r.value(metric, mode)) for r in group)
+        # Aggregate per learning rate. A sweep that also varies depth (or seed) has
+        # several runs at each rate, and plotting them as separate points would draw the
+        # same x twice and let the line double back on itself.
+        by_lr: dict[float, list[float]] = {}
+        for r in group:
+            by_lr.setdefault(r.lr, []).append(r.value(metric, mode))
+        pts = sorted((lr, pick(v)) for lr, v in by_lr.items())
         lrs = np.array([p[0] for p in pts])
         raw = np.array([p[1] for p in pts])
         over = ~np.isfinite(raw) | ((raw > cap) if cap is not None else False)
@@ -64,6 +72,7 @@ def lr_grid(runs: list[Run], ax=None, metric: str = "eval_primary", title: str |
         ls, mk = S.style(method)
         ax.plot(lrs, vals, ls, color=S.color(method), marker=mk, label=S.label(method))
         if np.any(over):                     # diverged: shown, but not to scale
+            clipped = True
             ax.plot(lrs[over], vals[over], mk, color=S.color(method),
                     markerfacecolor="none", markersize=9, linestyle="none")
 
@@ -71,10 +80,7 @@ def lr_grid(runs: list[Run], ax=None, metric: str = "eval_primary", title: str |
     ax.set_yscale(yscale)
     ax.set_xlabel("learning rate")
     ax.set_ylabel(f"best {_metric_label(metric)}")
-    if cap is not None and np.isfinite(cap):
-        ax.axhline(cap, color="#8a8a85", lw=0.8, ls=":", zorder=0)
-        ax.annotate("diverged (clipped)", xy=(ax.get_xlim()[0], cap), fontsize=7,
-                    color="#8a8a85", va="bottom", ha="left")
+    _mark_cap(ax, cap, clipped)
     _finish(ax, title, n_series=len(set(r.method for r in runs)))
     return ax
 
@@ -112,6 +118,7 @@ def depth_wall(runs: list[Run], ax=None, metric: str = "eval_primary",
     if cap is None and yscale == "linear":
         cap = _divergence_cap(runs, metric, mode)
 
+    clipped = False
     for method in sorted({m for m, _ in best}):
         pts = sorted((d, best[(m, d)].value(metric, mode)) for m, d in best if m == method)
         xs = np.array([p[0] for p in pts], dtype=float)
@@ -121,6 +128,7 @@ def depth_wall(runs: list[Run], ax=None, metric: str = "eval_primary",
         ls, mk = S.style(method)
         ax.plot(xs, vals, ls, color=S.color(method), marker=mk, label=S.label(method))
         if np.any(over):
+            clipped = True
             ax.plot(xs[over], vals[over], mk, color=S.color(method),
                     markerfacecolor="none", markersize=9, linestyle="none")
 
@@ -128,8 +136,7 @@ def depth_wall(runs: list[Run], ax=None, metric: str = "eval_primary",
     ax.set_yscale(yscale)
     ax.set_xlabel("depth $L$")
     ax.set_ylabel(f"best {_metric_label(metric)}")
-    if cap is not None and np.isfinite(cap):
-        ax.axhline(cap, color="#8a8a85", lw=0.8, ls=":", zorder=0)
+    _mark_cap(ax, cap, clipped)
     _finish(ax, title, n_series=len({m for m, _ in best}))
     return ax
 
@@ -240,6 +247,20 @@ def _divergence_cap(runs: list[Run], metric: str, mode: str) -> float | None:
 
 def _is_bounded(metric: str) -> bool:
     return "accuracy" in metric or metric.endswith("_acc")
+
+
+def _mark_cap(ax, cap: float | None, clipped: bool) -> None:
+    """Draw the clipping line only when something was actually clipped.
+
+    Drawing it unconditionally forces the axis to include the cap, so a sweep where
+    nothing diverged got a y-range stretched to ten times its initialization value with no
+    data anywhere near the top -- the line itself became the outlier it was meant to
+    contain.
+    """
+    if clipped and cap is not None and np.isfinite(cap):
+        ax.axhline(cap, color="#8a8a85", lw=0.8, ls=":", zorder=0)
+        ax.annotate("diverged (clipped)", xy=(ax.get_xlim()[0], cap), fontsize=7,
+                    color="#8a8a85", va="bottom", ha="left")
 
 
 def _axes(ax):
