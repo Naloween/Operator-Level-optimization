@@ -61,17 +61,23 @@ def run(cfg: RunCfg, progress: bool = True) -> Path:
         x, y = task.train_batch(step, cfg.train.batch_size)
         want_diag = _due(step, cfg.diagnostics.every, cfg.train.steps)
 
-        pre = _pre_step_snapshot(net, x, y, task, cfg, want_diag)
+        # Diagnostics run on a subsample: the context stack they build is the largest
+        # allocation in the whole loop and grows with depth (see DiagnosticsCfg).
+        nd = min(cfg.diagnostics.batch_size, x.shape[0])
+        xd, yd = (x[:nd], y[:nd]) if want_diag else (x, y)
+
+        pre = _pre_step_snapshot(net, xd, yd, task, cfg, want_diag)
         with timer.time():
             metrics = opt.step(x, y, task)
 
         if want_diag or _due(step, cfg.train.eval_every, cfg.train.steps):
             row = {"step": step, **metrics}
             if want_diag:
-                scal, arr = _diagnostics(net, x, cfg, pre, opt, lam)
+                scal, arr = _diagnostics(net, xd, cfg, pre, opt, lam)
                 row.update(scal)
                 for k, v in arr.items():
                     arrays.setdefault(k, []).append((step, v))
+                pre.clear()                  # release the context stack before the next step
             if _due(step, cfg.train.eval_every, cfg.train.steps):
                 row.update({f"eval_{k}": v for k, v in task.evaluate(net).items()})
             if cfg.diagnostics.cost:

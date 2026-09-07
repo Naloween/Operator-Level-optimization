@@ -241,3 +241,31 @@ def test_evaluate_reproduces_the_runs_own_test_metrics(tmp_path):
     recomputed = evaluate_run(out)
 
     assert recomputed["test_test_loss"] == pytest.approx(written["test_loss"], rel=1e-9)
+
+
+def test_diagnostics_run_on_a_subsample_not_the_training_batch(tmp_path):
+    """The context stack is the loop's largest allocation and grows with depth.
+
+    At MNIST's batch of 128 it reaches 3.4 GB at depth 64 and ~14 GB at depth 256 -- enough
+    to take the machine down before it takes the run down, which is exactly what happened
+    to the first depth sweep. The diagnostics must see only `diagnostics.batch_size`
+    samples regardless of how large a batch training uses.
+    """
+    from olo.models.base import FactoredNet
+    from olo.runner import run
+
+    seen = []
+    original = FactoredNet.all_contexts
+    FactoredNet.all_contexts = lambda self, x, gates=None: (
+        seen.append(x.shape[0]), original(self, x, gates))[1]
+    try:
+        raw = _minimal(out_dir=str(tmp_path))
+        raw["task"] = {"type": "teacher_student", "d": 4, "n": 64}
+        raw["train"] = {"steps": 4, "eval_every": 1, "batch_size": 32}
+        raw["diagnostics"] = {"every": 1, "batch_size": 3}
+        run(RunCfg.from_dict(raw), progress=False)
+    finally:
+        FactoredNet.all_contexts = original
+
+    assert seen, "diagnostics never built contexts"
+    assert set(seen) == {3}, f"contexts built on {set(seen)} samples, expected 3"

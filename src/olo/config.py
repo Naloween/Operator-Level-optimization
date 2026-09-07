@@ -112,7 +112,18 @@ class TrainCfg:
 
 @dataclass
 class DiagnosticsCfg:
+    """What to measure, how often, and on how much data.
+
+    `batch_size` is the subsample the context-based diagnostics run on, and it is a memory
+    bound, not a nicety. A layer's right context has shape (B, width, d_in), so the full
+    stack costs B * d_in * width * L: on MNIST at batch 128 that is 3.4 GB at depth 64 and
+    7.3 GB at depth 256, which is enough to take down the machine before it takes down the
+    run. The quantities being measured are spectra and alignments of those contexts, which
+    a handful of samples characterizes as well as a hundred.
+    """
+
     every: int = 10                        # in steps; diagnostics are the expensive part
+    batch_size: int = 8                    # subsample for context-based diagnostics
     mismatch: bool = True                  # cos(realized dP, -eta G)
     conditioning: bool = True              # per-layer rho_k collapse monitor
     spectrum: bool = True                  # singular values of P / J(x)
