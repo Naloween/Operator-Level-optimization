@@ -1,65 +1,79 @@
-# The depth wall, and whether the right parameterization removes it.
+# The depth wall on real data: does the standard regime collapse where ALS still trains?
 #
-# Two nets that differ only in how the rectifier is written:
+# MNIST, bias-free MLPs 784 -> [width]^L -> 10. Two families differing only in how the
+# rectifier is written:
 #
-#   model.type=relu_mlp   init=xavier        the standard regime -- the operator spectrum
+#   model.type=relu_mlp   init=xavier        standard regime; the operator spectrum
 #                                            collapses exponentially with depth
-#   model.type=crelu_mlp  init=looks_linear  J(x) is exactly orthogonal at init, at every
-#                                            depth, for every input
+#   model.type=crelu_mlp  init=looks_linear  J(x) exactly orthogonal at init, every depth
 #
-# The question the previous round of this work could not answer: once conditioning is
-# fixed at the source, does a *tuned* parameter-space optimizer still fail at depth? If it
-# does, the remaining obstacle is update-direction mismatch. If it does not, then what the
-# earlier experiments measured was collapse, not mismatch.
+# Why this and not the synthetic teacher-student it replaced: there, P* is a 16x16
+# orthogonal matrix that a looks-linear net represents *exactly at every depth*, so the
+# achievable loss does not depend on depth at all. A rising curve in that setting measures
+# the step budget, not the architecture -- which is what the first attempt actually found
+# (most cells hit the 400-step cap still improving). A classification task has no such
+# degeneracy: accuracy at depth is a real question with a real answer.
+#
+# Reported metric is TEST accuracy. Model selection over the learning-rate grid, and early
+# stopping, both read the validation split only -- `primary` stays validation loss, which
+# is what `stop_patience` needs to be monotone in. The test split is touched once, after
+# training, by `runner`.
 #
 #   python -m olo.run configs/experiments/e02_depth_wall.yaml \
-#     --sweep model.depth=2,4,8,16,32,64,128,256 \
+#     --sweep model.depth=2,4,8,16,32 \
 #     --sweep optim.type=als,adam,heavyball,muon,kfac,shampoo,soap \
-#     --sweep optim.lr=0.3,0.1,0.03,0.01,0.003,0.001,0.0003 --seeds 0,1,2
+#     --sweep optim.lr=0.1,0.03,0.01,0.003,0.001
 #
-# Then flip the pair with:
-#     --set model.type=relu_mlp --set model.init=xavier
+#   python -m olo.run configs/experiments/e02_depth_wall.yaml \
+#     --set model.type=relu_mlp --set model.init=xavier --set name=e02_relu_xavier \
+#     ... same three sweeps
 name: e02_depth_wall
 seed: 0
 device: auto
-dtype: float64
+dtype: float32
 
 model:
   type: crelu_mlp
-  width: 16
-  depth: 32
+  width: 32
+  depth: 8
   init: looks_linear
 
 task:
-  type: teacher_student
-  d: 16
-  n: 256
-  target: orthogonal
+  type: mnist
+  batch_size: 128
+  n_train: 10000
+  n_val: 2000
 
+# ALS solves every square layer exactly and hands the 784-wide input layer to Adam; the
+# split is recorded in each run's meta.json. Per-method blocks hold defaults, and a
+# top-level `optim.lr` from --sweep overrides all of them.
 optim:
   type: als
-  als:       {lr: 1.0,    lam: 1.0e-4, n_sweeps: 1, target: gradient, layers: all}
+  als:
+    lr: 0.03
+    lam: 1.0e-3
+    n_sweeps: 1
+    target: gradient
+    layers: auto
+    outer: {type: adam, lr: 1.0e-3}
   adam:      {lr: 1.0e-3}
-  heavyball: {lr: 1.0e-3, momentum: 0.9}
+  heavyball: {lr: 1.0e-2, momentum: 0.9}
   muon:      {lr: 1.0e-3, momentum: 0.95}
   kfac:      {lr: 1.0e-3, damping: 1.0e-2}
   shampoo:   {lr: 1.0e-3, beta: 0.9, eps: 1.0e-4}
   soap:      {lr: 1.0e-3, shampoo_beta: 0.95}
 
 train:
-  steps: 400
-  eval_every: 20
-  # Three ways a cell stops being worth compute, kept distinct in the summary because
-  # they mean different things: converged, blew up, or never moved. The last is what
-  # ends the ReLU/Xavier runs at large depth, whose operator has already collapsed at
-  # initialization -- a real result, but one that does not need the full budget.
-  stop_below: 1.0e-12
-  stop_above: 1.0e8
-  stop_patience: 5
+  steps: 1500
+  eval_every: 100
+  # A collapsed deep network sits at chance forever; it is a result, not a reason to
+  # spend the budget. Divergence and stalling stay separately labelled.
+  stop_above: 1.0e4
+  stop_patience: 4
   stop_min_delta: 1.0e-3
 
 diagnostics:
-  every: 50
+  every: 500
   mismatch: true
   conditioning: true
   spectrum: true

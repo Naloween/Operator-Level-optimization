@@ -90,6 +90,26 @@ class Run:
             return np.array([]), np.array([])
         return self.arrays[f"{name}_steps"], self.arrays[name]
 
+    @property
+    def test_metrics(self) -> dict[str, float]:
+        """What `test.json` holds: the split scored once, after training."""
+        path = self.path / "test.json"
+        if not path.exists():
+            return {}
+        return json.loads(path.read_text())
+
+    def value(self, key: str, mode: str = "min") -> float:
+        """One number for this run, from wherever that metric lives.
+
+        A `test_*` key comes from `test.json` -- a single measurement of the final model,
+        with no best-over-training to take, because taking one would be selecting on test.
+        Everything else is a training-time series and reports its best.
+        """
+        if key.startswith("test_"):
+            v = self.test_metrics.get(key, float("nan"))
+            return float(v) if isinstance(v, (int, float)) else float("nan")
+        return self.best(key, mode)
+
 
 def load_run(path: str | Path) -> Run:
     path = Path(path)

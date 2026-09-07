@@ -56,14 +56,14 @@ def lr_grid(runs: list[Run], ax=None, metric: str = "eval_primary", title: str |
         cap = _divergence_cap(runs, metric, mode)
 
     for (method,), group in sorted(group_by(runs, "method").items()):
-        pts = sorted((r.lr, r.best(metric, mode)) for r in group)
+        pts = sorted((r.lr, r.value(metric, mode)) for r in group)
         lrs = np.array([p[0] for p in pts])
         raw = np.array([p[1] for p in pts])
-        over = ~np.isfinite(raw) | (raw > cap if mode == "min" else raw < cap)
-        vals = np.where(over, cap, raw)
+        over = ~np.isfinite(raw) | ((raw > cap) if cap is not None else False)
+        vals = np.where(over, cap, raw) if cap is not None else raw
         ls, mk = S.style(method)
         ax.plot(lrs, vals, ls, color=S.color(method), marker=mk, label=S.label(method))
-        if over.any():                       # diverged: shown, but not to scale
+        if np.any(over):                     # diverged: shown, but not to scale
             ax.plot(lrs[over], vals[over], mk, color=S.color(method),
                     markerfacecolor="none", markersize=9, linestyle="none")
 
@@ -71,7 +71,7 @@ def lr_grid(runs: list[Run], ax=None, metric: str = "eval_primary", title: str |
     ax.set_yscale(yscale)
     ax.set_xlabel("learning rate")
     ax.set_ylabel(f"best {_metric_label(metric)}")
-    if np.isfinite(cap):
+    if cap is not None and np.isfinite(cap):
         ax.axhline(cap, color="#8a8a85", lw=0.8, ls=":", zorder=0)
         ax.annotate("diverged (clipped)", xy=(ax.get_xlim()[0], cap), fontsize=7,
                     color="#8a8a85", va="bottom", ha="left")
@@ -81,11 +81,20 @@ def lr_grid(runs: list[Run], ax=None, metric: str = "eval_primary", title: str |
 
 def depth_wall(runs: list[Run], ax=None, metric: str = "eval_primary",
                title: str | None = None, mode: str | None = None,
-               yscale: str = "linear", cap: float | None = None):
+               yscale: str = "linear", cap: float | None = None,
+               select_metric: str | None = None):
     """Tuned performance against depth, one line per method.
 
     Every point is that method's best over the whole learning-rate grid at that depth, so
     a rise in the curve is a depth effect and not an untuned step size.
+
+    `select_metric` is what the learning rate is chosen by; `metric` is what gets plotted.
+    They differ whenever the reported number is a test metric: choosing the learning rate
+    on test and then plotting test would make every point the best of nine attempts at the
+    thing being reported. Pass `metric="test_accuracy"` with
+    `select_metric="eval_val_accuracy"` and the selection stays on validation, where it
+    belongs. Defaults to `metric`, which is correct as long as `metric` is a validation
+    quantity.
 
     `mode` says which direction is "best" and defaults to the metric's own: minimize a
     loss or an error, maximize an accuracy. Getting this wrong is silent and total -- a
@@ -98,12 +107,13 @@ def depth_wall(runs: list[Run], ax=None, metric: str = "eval_primary",
     """
     ax = _axes(ax)
     mode = _infer_mode(metric) if mode is None else mode
-    best = best_per(runs, "method", "depth", metric=metric, mode=mode)
+    select = metric if select_metric is None else select_metric
+    best = best_per(runs, "method", "depth", metric=select, mode=_infer_mode(select))
     if cap is None and yscale == "linear":
         cap = _divergence_cap(runs, metric, mode)
 
     for method in sorted({m for m, _ in best}):
-        pts = sorted((d, best[(m, d)].best(metric, mode)) for m, d in best if m == method)
+        pts = sorted((d, best[(m, d)].value(metric, mode)) for m, d in best if m == method)
         xs = np.array([p[0] for p in pts], dtype=float)
         raw = np.array([p[1] for p in pts], dtype=float)
         over = ~np.isfinite(raw) | ((raw > cap) if cap is not None else False)
@@ -209,19 +219,27 @@ def _infer_mode(metric: str) -> str:
     return "max" if "accuracy" in metric or metric.endswith("_acc") else "min"
 
 
-def _divergence_cap(runs: list[Run], metric: str, mode: str) -> float:
+def _divergence_cap(runs: list[Run], metric: str, mode: str) -> float | None:
     """Where to clip runs that blew up, so they do not set the axis scale.
 
-    An order of magnitude past the worst starting value in the sweep, on the bad side.
-    Runs share an initialization, so the *best* first-eval value is the initialization
-    level; anything an order of magnitude worse than that has already failed and its exact
-    magnitude carries no information worth an axis decade.
+    An order of magnitude past the initialization level. Runs in a sweep share an
+    initialization, so the *best* first-eval value is that level; anything an order of
+    magnitude worse has already failed, and its exact magnitude carries no information
+    worth an axis decade.
+
+    Returns None for a bounded metric -- an accuracy cannot run away, so clipping it would
+    only hide real differences at the chance-level end, which for a depth experiment is
+    the end that matters.
     """
+    if mode == "max" or _is_bounded(metric):
+        return None
     starts = [r.series(metric)[1][0] for r in runs if len(r.series(metric)[1])]
     finite = [s for s in starts if np.isfinite(s)]
-    if not finite:
-        return np.inf if mode == "min" else -np.inf
-    return 10 * min(finite) if mode == "min" else max(finite) / 10
+    return 10 * min(finite) if finite else None
+
+
+def _is_bounded(metric: str) -> bool:
+    return "accuracy" in metric or metric.endswith("_acc")
 
 
 def _axes(ax):
@@ -253,6 +271,9 @@ def _label(run: Run, key: str) -> str:
 def _metric_label(metric: str) -> str:
     return {
         "eval_primary": "primary metric",
+        "test_accuracy": "test accuracy",
+        "test_loss": "test loss",
+        "eval_val_accuracy": "validation accuracy",
         "eval_rel_operator_error": r"$\|P-P^\star\|_F/\|P^\star\|_F$",
         "eval_loss": "loss",
         "eval_val_loss": "validation loss",

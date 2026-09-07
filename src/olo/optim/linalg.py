@@ -94,18 +94,20 @@ def solve_kron_sum(
     factor as a single Kronecker product unless the per-sample Grams are proportional.
     Approximating it by one (the K-FAC / ALS-MN move) is exactly what this repo declines
     to do, so the system is formed and solved densely, in float64, at O((nm)^3).
+
+    The sum over samples is a single contraction, not a loop. Writing
+    `kron(B_s, A_s)[i*n+k, j*n+l] = B_s[i,j] A_s[k,l]`, the batch mean is an einsum whose
+    `s` index is contracted away, so the whole system is formed in one call. At a batch of
+    128 that replaces 128 Python-level `kron` calls per layer per sweep, which at depth is
+    the difference between an experiment and an overnight job.
     """
     S = A.shape[0]
     n, m = C.shape
-    flat = n * m
-    dev = A.device
     A64, B64 = A.to(torch.float64), B.to(torch.float64)
 
-    H = torch.zeros(flat, flat, device=dev, dtype=torch.float64)
-    for s in range(S):
-        ATA = A64[s].T @ A64[s]                    # (n, n)
-        BBT = B64[s] @ B64[s].T                    # (m, m)
-        H.add_(torch.kron(BBT, ATA), alpha=1.0 / S)
+    ATA = A64.transpose(1, 2) @ A64                # (S, n, n)
+    BBT = B64 @ B64.transpose(1, 2)                # (S, m, m)
+    H = torch.einsum("sij,skl->ikjl", BBT, ATA).reshape(n * m, n * m) / S
 
     H.diagonal().add_(max(lam, 0.0) + _jitter_scale(H))
     rhs = C.T.reshape(-1).to(torch.float64).unsqueeze(1)
