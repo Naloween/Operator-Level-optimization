@@ -52,6 +52,7 @@ def run(cfg: RunCfg, progress: bool = True) -> Path:
 
     timer = StepTimer(device)
     timer.reset_peak_memory()
+    stopper = _Stopper(cfg)
     rows: list[dict] = []
     arrays: dict[str, list] = {}
     lam = float(getattr(opt, "lam", 0.0))       # the rho_k monitor is relative to it
@@ -79,9 +80,11 @@ def run(cfg: RunCfg, progress: bool = True) -> Path:
             if progress:
                 _print(row)
 
-            stop = _stop_reason(row.get("eval_primary"), cfg)
+            stop = stopper(row.get("eval_primary"))
             if stop:
                 rows[-1]["stopped"] = stop
+                if progress:
+                    print(f"  stopped at step {step}: {stop}", flush=True)
                 break
 
         if cfg.train.ckpt_every and _due(step, cfg.train.ckpt_every, cfg.train.steps):
@@ -89,6 +92,19 @@ def run(cfg: RunCfg, progress: bool = True) -> Path:
 
     torch.save(net.state_dict(), out / "ckpt_final.pt")
     _write_metrics(out, rows, arrays)
+
+    # Test metrics, computed once, after training, and written to their own file. Nothing
+    # in the loop above has seen this split, so it is a measurement rather than a
+    # selection. `olo.evaluate` recomputes it from any checkpoint.
+    test = task.test(net)
+    if test:
+        (out / "test.json").write_text(json.dumps(
+            {"step": rows[-1]["step"] if rows else 0,
+             "stopped": rows[-1].get("stopped") if rows else None,
+             **{k: _jsonable(v) for k, v in test.items()}}, indent=2))
+        if progress:
+            print("  test: " + "  ".join(f"{k}={v:.4g}" for k, v in test.items()
+                                          if isinstance(v, float)), flush=True)
     return out
 
 
@@ -270,16 +286,40 @@ def _due(step: int, every: int, total: int) -> bool:
     return bool(every) and (step % every == 0 or step == total - 1)
 
 
-def _stop_reason(primary, cfg: RunCfg) -> str | None:
-    if primary is None:
+class _Stopper:
+    """Decides when a run has stopped being worth compute, and says why.
+
+    Three exits, each meaning something different in a sweep summary: `converged`,
+    `diverged`, and `stalled`. Keeping them distinct matters -- a cell that stalled at its
+    initialization loss and a cell that blew up are both "bad", but only the second is a
+    step-size artifact, and collapsing them into one label would hide exactly the
+    distinction the depth experiments are about.
+    """
+
+    def __init__(self, cfg: RunCfg) -> None:
+        self.cfg = cfg.train
+        self.best = np.inf
+        self.since_improved = 0
+
+    def __call__(self, primary) -> str | None:
+        if primary is None:
+            return None
+        if not np.isfinite(primary):
+            return "diverged"
+        if self.cfg.stop_below is not None and primary < self.cfg.stop_below:
+            return "converged"
+        if self.cfg.stop_above is not None and primary > self.cfg.stop_above:
+            return "diverged"
+
+        if primary < self.best * (1.0 - self.cfg.stop_min_delta):
+            self.best, self.since_improved = primary, 0
+        else:
+            self.best = min(self.best, primary)
+            self.since_improved += 1
+            if (self.cfg.stop_patience is not None
+                    and self.since_improved >= self.cfg.stop_patience):
+                return "stalled"
         return None
-    if not np.isfinite(primary):
-        return "diverged"
-    if cfg.train.stop_below is not None and primary < cfg.train.stop_below:
-        return "converged"
-    if cfg.train.stop_above is not None and primary > cfg.train.stop_above:
-        return "diverged"
-    return None
 
 
 def _device(name: str) -> torch.device:

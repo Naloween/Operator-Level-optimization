@@ -29,7 +29,20 @@ class Task(ABC):
 
     @abstractmethod
     def evaluate(self, net) -> dict[str, float]:
-        """Task-level metrics. Must include 'primary': the number experiments are read on."""
+        """Validation metrics. Must include 'primary': what training is steered by.
+
+        Called during training, so it decides early stopping and model selection. It must
+        therefore never touch the test split -- selecting on test and then reporting test
+        is how a comparison quietly becomes meaningless.
+        """
+
+    def test(self, net) -> dict[str, float]:
+        """Test metrics, for after training only.
+
+        Kept separate from `evaluate` on purpose: nothing in the training loop calls this,
+        so no run can tune against it. `olo.evaluate` runs it on saved checkpoints.
+        """
+        return {}
 
     #: target operator when the task defines one (teacher-student, matrix sensing)
     P_star: torch.Tensor | None = None

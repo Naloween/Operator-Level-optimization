@@ -47,11 +47,13 @@ class MatrixSensing(Task):
 
         self.M = torch.randn(self.m, d, d, generator=gen) / d**0.5
         self.y = torch.einsum("sij,ij->s", self.M, self.P_star)
+        self.M_val = torch.randn(n_test, d, d, generator=gen) / d**0.5
+        self.y_val = torch.einsum("sij,ij->s", self.M_val, self.P_star)
         self.M_test = torch.randn(n_test, d, d, generator=gen) / d**0.5
         self.y_test = torch.einsum("sij,ij->s", self.M_test, self.P_star)
 
     def to(self, device, dtype):
-        for name in ("P_star", "M", "y", "M_test", "y_test"):
+        for name in ("P_star", "M", "y", "M_val", "y_val", "M_test", "y_test"):
             setattr(self, name, getattr(self, name).to(device=device, dtype=dtype))
         return self
 
@@ -87,18 +89,25 @@ class MatrixSensing(Task):
         return 0.5 * ((yhat - y) ** 2).mean()
 
     def evaluate(self, net) -> dict[str, float]:
+        return self._metrics(net, self.M_val, self.y_val, "val")
+
+    def test(self, net) -> dict[str, float]:
+        return self._metrics(net, self.M_test, self.y_test, "test")
+
+    def _metrics(self, net, M, y, split: str) -> dict[str, float]:
         with torch.no_grad():
             P = _operator_of(net)
             train = float(0.5 * ((torch.einsum("sij,ij->s", self.M, P) - self.y) ** 2).mean())
-            test = float(0.5 * ((torch.einsum("sij,ij->s", self.M_test, P) - self.y_test) ** 2).mean())
+            held = float(0.5 * ((torch.einsum("sij,ij->s", M, P) - y) ** 2).mean())
             sv = torch.linalg.svdvals(P.to(torch.float64))
             p = sv / sv.sum().clamp(min=1e-300)
             eff_rank = float((-(p * p.clamp(min=1e-300).log()).sum()).exp())
             rel = float((P - self.P_star).norm() / self.P_star.norm())
         return {
-            "primary": test,
+            "primary": held,
             "train_mse": train,
-            "held_out_mse": test,
+            "held_out_mse": held,
+            f"{split}_mse": held,
             "effective_rank": eff_rank,
             "rel_recovery_error": rel,
         }

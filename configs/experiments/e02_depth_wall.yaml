@@ -49,8 +49,14 @@ optim:
 train:
   steps: 400
   eval_every: 20
+  # Three ways a cell stops being worth compute, kept distinct in the summary because
+  # they mean different things: converged, blew up, or never moved. The last is what
+  # ends the ReLU/Xavier runs at large depth, whose operator has already collapsed at
+  # initialization -- a real result, but one that does not need the full budget.
   stop_below: 1.0e-12
-  stop_above: 1.0e8        # a diverged cell is a result; it should not burn the budget
+  stop_above: 1.0e8
+  stop_patience: 5
+  stop_min_delta: 1.0e-3
 
 diagnostics:
   every: 50

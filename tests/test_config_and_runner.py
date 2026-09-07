@@ -170,3 +170,74 @@ def test_unknown_component_names_list_the_alternatives():
 
     with pytest.raises(KeyError, match="Available"):
         resolve("optim", "adamw")
+
+
+# -- splits, stopping, and post-hoc evaluation ------------------------------
+
+
+def test_validation_and_test_splits_are_disjoint():
+    """Early stopping reads validation; if test leaked into it, test would be selected on."""
+    from olo.tasks.teacher_student import TeacherStudent
+
+    task = TeacherStudent(d=4, n=16, n_val=8, n_test=8, seed=0)
+    for a, b in ((task.X, task.X_val), (task.X, task.X_test), (task.X_val, task.X_test)):
+        for i in range(b.shape[0]):
+            assert not (a == b[i]).all(dim=1).any(), "splits share a sample"
+
+
+def test_task_test_metrics_are_not_logged_during_training(tmp_path):
+    """Nothing in the loop may call `test()`; it is written once, afterwards."""
+    from olo.runner import run
+
+    seen = []
+    from olo.tasks.teacher_student import TeacherStudent
+
+    original = TeacherStudent.test
+    TeacherStudent.test = lambda self, net: (seen.append(1), original(self, net))[1]
+    try:
+        cfg = RunCfg.from_dict(_minimal(out_dir=str(tmp_path), train={"steps": 6, "eval_every": 1}))
+        out = run(cfg, progress=False)
+    finally:
+        TeacherStudent.test = original
+
+    assert len(seen) == 1, f"test() called {len(seen)} times; it must be called once, at the end"
+    assert (out / "test.json").exists()
+    payload = json.loads((out / "test.json").read_text())
+    assert "test_loss" in payload
+
+
+def test_stall_detection_stops_a_run_that_is_not_improving(tmp_path):
+    """A collapsed network sitting at its initialization loss should not burn the budget."""
+    from olo.runner import run
+
+    raw = _minimal(out_dir=str(tmp_path))
+    raw["optim"] = {"type": "adam", "lr": 0.0}          # cannot improve, by construction
+    raw["train"] = {"steps": 200, "eval_every": 1, "stop_patience": 3, "stop_min_delta": 1e-3}
+    out = run(RunCfg.from_dict(raw), progress=False)
+
+    rows = [json.loads(l) for l in (out / "metrics.jsonl").open()]
+    assert rows[-1].get("stopped") == "stalled", rows[-1]
+    assert rows[-1]["step"] < 20, "stall should be caught within a few evaluations"
+
+
+def test_divergence_and_convergence_are_labelled_differently(tmp_path):
+    from olo.runner import run
+
+    raw = _minimal(out_dir=str(tmp_path))
+    raw["train"] = {"steps": 50, "eval_every": 1, "stop_below": 1e6}   # trivially satisfied
+    out = run(RunCfg.from_dict(raw), progress=False)
+    rows = [json.loads(l) for l in (out / "metrics.jsonl").open()]
+    assert rows[-1].get("stopped") == "converged"
+
+
+def test_evaluate_reproduces_the_runs_own_test_metrics(tmp_path):
+    """Rebuilding from config.yaml must give back exactly what the run wrote."""
+    from olo.evaluate import evaluate_run
+    from olo.runner import run
+
+    cfg = RunCfg.from_dict(_minimal(out_dir=str(tmp_path)))
+    out = run(cfg, progress=False)
+    written = json.loads((out / "test.json").read_text())
+    recomputed = evaluate_run(out)
+
+    assert recomputed["test_test_loss"] == pytest.approx(written["test_loss"], rel=1e-9)

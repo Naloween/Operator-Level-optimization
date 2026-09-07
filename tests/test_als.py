@@ -137,10 +137,12 @@ def test_crelu_looks_linear_trains_at_large_depth():
     task = TeacherStudent(d=d, n=16, seed=0).to(torch.device("cpu"), torch.float64)
 
     opt = OperatorALS(net, lr=0.1, lam=1e-4, n_sweeps=1, layers="all")
-    before = task.evaluate(net)["loss"]
+    # Training loss: the claim under test is that the optimization still works at depth,
+    # which is separate from whether 16 samples generalize.
+    before = task.evaluate(net)["train_loss"]
     for step in range(50):
         opt.step(*task.train_batch(step), task)
-    after = task.evaluate(net)["loss"]
+    after = task.evaluate(net)["train_loss"]
     assert after < before * 1e-3, (before, after)
 
 
@@ -160,13 +162,13 @@ def test_solving_the_projection_does_not_imply_reducing_the_loss():
     task = TeacherStudent(d=d, n=16, seed=0).to(torch.device("cpu"), torch.float64)
 
     opt = OperatorALS(net, lr=0.5, lam=1e-6, n_sweeps=1, layers="all")
-    before = task.evaluate(net)["loss"]
+    before = task.evaluate(net)["train_loss"]
     residuals = [opt.step(*task.train_batch(s), task)["als_residual"] for s in range(10)]
 
     # The projection residual falls by four orders of magnitude...
     assert min(residuals) < 1e-3 * residuals[0], residuals
     # ...while the network it was meant to improve is destroyed.
-    assert task.evaluate(net)["loss"] > 1e3 * before
+    assert task.evaluate(net)["train_loss"] > 1e3 * before
 
 
 # -- layer assignment ------------------------------------------------------

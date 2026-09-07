@@ -31,7 +31,8 @@ class _ImageClassification(Task):
         root: str = DEFAULT_ROOT,
         batch_size: int = 128,
         n_train: int | None = None,
-        n_eval: int = 2000,
+        n_val: int = 2000,
+        n_test: int | None = None,
         seed: int = 0,
         download: bool = True,
     ) -> None:
@@ -43,26 +44,40 @@ class _ImageClassification(Task):
         train = ctor(root=root, train=True, download=download, transform=tf)
         test = ctor(root=root, train=False, download=download, transform=tf)
 
-        self.Xtr, self.ytr = _stack(train, n_train)
-        self.Xte, self.yte = _stack(test, n_eval)
+        # Validation is carved out of the official *train* split; the official test split
+        # is touched only by `test()`. Early stopping and lr selection both read
+        # validation, so letting them see test would silently turn every reported test
+        # number into a selected one.
+        want = None if n_train is None else n_train + n_val
+        X, y = _stack(train, want)
+        g = torch.Generator().manual_seed(seed)
+        perm = torch.randperm(X.shape[0], generator=g)
+        val_idx, tr_idx = perm[:n_val], perm[n_val:]
+        self.Xtr, self.ytr = X[tr_idx], y[tr_idx]
+        self.Xva, self.yva = X[val_idx], y[val_idx]
+        self.Xte, self.yte = _stack(test, n_test)
+
         self.d_in = self.Xtr.shape[1]
         self.d_out = self.n_classes
         self.batch_size = int(batch_size)
 
-        # Normalize to zero mean / unit variance per feature. Depth experiments are
-        # sensitive to input scale, and an unnormalized input would confound "this depth
-        # is untrainable" with "this input distribution is badly scaled".
-        mu, sd = self.Xtr.mean(0, keepdim=True), self.Xtr.std(0, keepdim=True).clamp(min=1e-6)
+        # Normalize to zero mean / unit variance per feature, with statistics from the
+        # training split only. Depth experiments are sensitive to input scale, and an
+        # unnormalized input would confound "this depth is untrainable" with "this input
+        # distribution is badly scaled".
+        mu = self.Xtr.mean(0, keepdim=True)
+        sd = self.Xtr.std(0, keepdim=True).clamp(min=1e-6)
         self.Xtr = (self.Xtr - mu) / sd
+        self.Xva = (self.Xva - mu) / sd
         self.Xte = (self.Xte - mu) / sd
 
-        self._perm = torch.randperm(self.Xtr.shape[0], generator=torch.Generator().manual_seed(seed))
+        self._perm = torch.randperm(self.Xtr.shape[0], generator=g)
 
     def to(self, device, dtype):
-        self.Xtr = self.Xtr.to(device=device, dtype=dtype)
-        self.Xte = self.Xte.to(device=device, dtype=dtype)
-        self.ytr = self.ytr.to(device=device)
-        self.yte = self.yte.to(device=device)
+        for name in ("Xtr", "Xva", "Xte"):
+            setattr(self, name, getattr(self, name).to(device=device, dtype=dtype))
+        for name in ("ytr", "yva", "yte"):
+            setattr(self, name, getattr(self, name).to(device=device))
         return self
 
     def train_batch(self, step, batch_size=None):
@@ -76,15 +91,30 @@ class _ImageClassification(Task):
         return F.cross_entropy(yhat, y)
 
     def evaluate(self, net) -> dict[str, float]:
-        with torch.no_grad():
-            logits = net(self.Xte)
-            loss = float(F.cross_entropy(logits, self.yte))
-            acc = float((logits.argmax(-1) == self.yte).to(torch.float64).mean())
+        loss, acc = self._score(net, self.Xva, self.yva)
         return {"primary": loss, "val_loss": loss, "val_accuracy": acc}
+
+    def test(self, net) -> dict[str, float]:
+        loss, acc = self._score(net, self.Xte, self.yte)
+        tr_loss, tr_acc = self._score(net, self.Xtr, self.ytr)
+        return {"primary": loss, "test_loss": loss, "test_accuracy": acc,
+                "train_loss": tr_loss, "train_accuracy": tr_acc}
+
+    @torch.no_grad()
+    def _score(self, net, X, y, chunk: int = 4096) -> tuple[float, float]:
+        """Chunked so a full test split does not have to fit in memory at once."""
+        total_loss, correct, n = 0.0, 0, X.shape[0]
+        for i in range(0, n, chunk):
+            logits = net(X[i : i + chunk])
+            yb = y[i : i + chunk]
+            total_loss += float(F.cross_entropy(logits, yb, reduction="sum"))
+            correct += int((logits.argmax(-1) == yb).sum())
+        return total_loss / n, correct / n
 
     def describe(self):
         return {**super().describe(), "dataset": self.dataset_name,
-                "n_train": int(self.Xtr.shape[0]), "batch_size": self.batch_size}
+                "n_train": int(self.Xtr.shape[0]), "n_val": int(self.Xva.shape[0]),
+                "n_test": int(self.Xte.shape[0]), "batch_size": self.batch_size}
 
 
 class MNIST(_ImageClassification):

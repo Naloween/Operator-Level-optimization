@@ -90,12 +90,24 @@ class Spec:
 
 @dataclass
 class TrainCfg:
+    """Budget and stopping rules -- shared by every method, which is the point.
+
+    The three stopping rules cover the three ways a cell in a sweep stops being worth
+    compute: it has converged (`stop_below`), it has blown up (`stop_above`, plus a
+    non-finite check that is always on), or it has stalled (`stop_patience` evaluations
+    without a relative improvement of `stop_min_delta`). The last one is what catches a
+    collapsed network sitting at its initialization loss for the whole budget -- a real
+    result, but one that does not need 400 steps to establish.
+    """
+
     steps: int = 1000
     batch_size: int | None = None          # None = full batch
     eval_every: int = 10
     ckpt_every: int = 0                    # 0 = only final
-    stop_below: float | None = None        # early stop when the primary metric drops below
-    stop_above: float | None = None        # early stop when it exceeds (divergence guard)
+    stop_below: float | None = None        # converged
+    stop_above: float | None = None        # diverged
+    stop_patience: int | None = None       # evaluations without improvement before stopping
+    stop_min_delta: float = 1e-3           # relative improvement that counts as progress
 
 
 @dataclass
