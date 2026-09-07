@@ -32,7 +32,7 @@ def convergence(runs: list[Run], ax=None, metric: str = "eval_primary",
 
 
 def lr_grid(runs: list[Run], ax=None, metric: str = "eval_primary", title: str | None = None,
-            cap: float | None = None):
+            cap: float | None = None, mode: str | None = None, yscale: str = "log"):
     """Best metric against learning rate, one line per method.
 
     The figure that answers "is this a real difference between methods, or a difference in
@@ -51,16 +51,15 @@ def lr_grid(runs: list[Run], ax=None, metric: str = "eval_primary", title: str |
     by.
     """
     ax = _axes(ax)
+    mode = _infer_mode(metric) if mode is None else mode
     if cap is None:
-        starts = [r.series(metric)[1][0] for r in runs if len(r.series(metric)[1])]
-        finite = [s for s in starts if np.isfinite(s)]
-        cap = 10 * min(finite) if finite else np.inf
+        cap = _divergence_cap(runs, metric, mode)
 
     for (method,), group in sorted(group_by(runs, "method").items()):
-        pts = sorted((r.lr, r.best(metric)) for r in group)
+        pts = sorted((r.lr, r.best(metric, mode)) for r in group)
         lrs = np.array([p[0] for p in pts])
         raw = np.array([p[1] for p in pts])
-        over = ~np.isfinite(raw) | (raw > cap)
+        over = ~np.isfinite(raw) | (raw > cap if mode == "min" else raw < cap)
         vals = np.where(over, cap, raw)
         ls, mk = S.style(method)
         ax.plot(lrs, vals, ls, color=S.color(method), marker=mk, label=S.label(method))
@@ -69,7 +68,7 @@ def lr_grid(runs: list[Run], ax=None, metric: str = "eval_primary", title: str |
                     markerfacecolor="none", markersize=9, linestyle="none")
 
     ax.set_xscale("log")
-    ax.set_yscale("log")
+    ax.set_yscale(yscale)
     ax.set_xlabel("learning rate")
     ax.set_ylabel(f"best {_metric_label(metric)}")
     if np.isfinite(cap):
@@ -81,23 +80,46 @@ def lr_grid(runs: list[Run], ax=None, metric: str = "eval_primary", title: str |
 
 
 def depth_wall(runs: list[Run], ax=None, metric: str = "eval_primary",
-               title: str | None = None):
+               title: str | None = None, mode: str | None = None,
+               yscale: str = "linear", cap: float | None = None):
     """Tuned performance against depth, one line per method.
 
     Every point is that method's best over the whole learning-rate grid at that depth, so
     a rise in the curve is a depth effect and not an untuned step size.
+
+    `mode` says which direction is "best" and defaults to the metric's own: minimize a
+    loss or an error, maximize an accuracy. Getting this wrong is silent and total -- a
+    grid read with the wrong sense reports each cell's *worst* learning rate as its
+    result -- so it is inferred rather than left to the caller to remember.
+
+    On a linear `yscale` a single diverged cell (values of 1e100 are routine in a
+    learning-rate sweep) flattens every real difference to the axis. Values beyond `cap`
+    are clipped and drawn hollow, as in `lr_grid`.
     """
     ax = _axes(ax)
-    best = best_per(runs, "method", "depth", metric=metric)
+    mode = _infer_mode(metric) if mode is None else mode
+    best = best_per(runs, "method", "depth", metric=metric, mode=mode)
+    if cap is None and yscale == "linear":
+        cap = _divergence_cap(runs, metric, mode)
+
     for method in sorted({m for m, _ in best}):
-        pts = sorted((d, best[(m, d)].best(metric)) for m, d in best if m == method)
+        pts = sorted((d, best[(m, d)].best(metric, mode)) for m, d in best if m == method)
+        xs = np.array([p[0] for p in pts], dtype=float)
+        raw = np.array([p[1] for p in pts], dtype=float)
+        over = ~np.isfinite(raw) | ((raw > cap) if cap is not None else False)
+        vals = np.where(over, cap, raw) if cap is not None else raw
         ls, mk = S.style(method)
-        ax.plot([p[0] for p in pts], [p[1] for p in pts], ls, color=S.color(method),
-                marker=mk, label=S.label(method))
+        ax.plot(xs, vals, ls, color=S.color(method), marker=mk, label=S.label(method))
+        if np.any(over):
+            ax.plot(xs[over], vals[over], mk, color=S.color(method),
+                    markerfacecolor="none", markersize=9, linestyle="none")
+
     ax.set_xscale("log", base=2)
-    ax.set_yscale("log")
+    ax.set_yscale(yscale)
     ax.set_xlabel("depth $L$")
     ax.set_ylabel(f"best {_metric_label(metric)}")
+    if cap is not None and np.isfinite(cap):
+        ax.axhline(cap, color="#8a8a85", lw=0.8, ls=":", zorder=0)
     _finish(ax, title, n_series=len({m for m, _ in best}))
     return ax
 
@@ -176,6 +198,30 @@ def cost(runs: list[Run], ax=None, title: str | None = None):
 
 
 # ---------------------------------------------------------------------------
+
+
+def _infer_mode(metric: str) -> str:
+    """Which direction is "best" for this metric.
+
+    Everything logged here is minimized -- losses, errors, residuals -- except accuracy.
+    Inferring it keeps a caller from silently reading a grid backwards.
+    """
+    return "max" if "accuracy" in metric or metric.endswith("_acc") else "min"
+
+
+def _divergence_cap(runs: list[Run], metric: str, mode: str) -> float:
+    """Where to clip runs that blew up, so they do not set the axis scale.
+
+    An order of magnitude past the worst starting value in the sweep, on the bad side.
+    Runs share an initialization, so the *best* first-eval value is the initialization
+    level; anything an order of magnitude worse than that has already failed and its exact
+    magnitude carries no information worth an axis decade.
+    """
+    starts = [r.series(metric)[1][0] for r in runs if len(r.series(metric)[1])]
+    finite = [s for s in starts if np.isfinite(s)]
+    if not finite:
+        return np.inf if mode == "min" else -np.inf
+    return 10 * min(finite) if mode == "min" else max(finite) / 10
 
 
 def _axes(ax):
