@@ -1,0 +1,334 @@
+% ---------------------------------------------------------------
+% Deep linear networks, dynamics, spectral collapse
+% ---------------------------------------------------------------
+
+@inproceedings{saxe2014exact,
+  title     = {Exact Solutions to the Nonlinear Dynamics of Learning in Deep Linear Neural Networks},
+  author    = {Saxe, Andrew M. and McClelland, James L. and Ganguli, Surya},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2014}
+}
+
+@inproceedings{arora2018optimization,
+  title     = {On the Optimization of Deep Networks: Implicit Acceleration by Overparameterization},
+  author    = {Arora, Sanjeev and Cohen, Nadav and Golowich, Noah and Rakhlin, Alexander},
+  booktitle = {International Conference on Machine Learning},
+  pages     = {244--253},
+  year      = {2018}
+}
+
+@inproceedings{du2018algorithmic,
+  title     = {Algorithmic Regularization in Learning Deep Homogeneous Models: Layers Are Automatically Balanced},
+  author    = {Du, Simon S. and Hu, Wei and Lee, Jason D.},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {31},
+  year      = {2018}
+}
+
+@inproceedings{gunasekar2017implicit,
+  title     = {Implicit Regularization in Matrix Factorization},
+  author    = {Gunasekar, Suriya and Lee, Jason and Soudry, Daniel and Srebro, Nathan},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {30},
+  year      = {2017}
+}
+
+@inproceedings{arora2019implicit,
+  title     = {Implicit Regularization in Deep Matrix Factorization},
+  author    = {Arora, Sanjeev and Cohen, Nadav and Hu, Wei and Luo, Yuping},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {32},
+  year      = {2019}
+}
+
+@article{haas2026jacobian,
+  title   = {Why Deep {Jacobian} Spectra Separate: Depth-Induced Scaling and Singular-Vector Alignment},
+  author  = {Haas, Nathana{\"e}l and Gatine, Fran{\c{c}}ois and Cosse, Augustin M. and Bouraoui, Zied},
+  journal = {arXiv preprint arXiv:2602.12384 (ICML26-To Appear)},
+  year    = {2026 }
+}
+
+% ---------------------------------------------------------------
+% Natural gradient and Fisher-metric methods
+% ---------------------------------------------------------------
+
+@article{amari1998natural,
+  title   = {Natural Gradient Works Efficiently in Learning},
+  author  = {Amari, Shun-ichi},
+  journal = {Neural Computation},
+  volume  = {10},
+  number  = {2},
+  pages   = {251--276},
+  year    = {1998}
+}
+
+@article{martens2020new,
+  title   = {New Insights and Perspectives on the Natural Gradient Method},
+  author  = {Martens, James},
+  journal = {Journal of Machine Learning Research},
+  volume  = {21},
+  number  = {146},
+  pages   = {1--76},
+  year    = {2020}
+}
+
+@inproceedings{bernacchia2018exact,
+  title     = {Exact Natural Gradient in Deep Linear Networks and Its Application to the Nonlinear Case},
+  author    = {Bernacchia, Alberto and Lengyel, M{\'a}t{\'e} and Hennequin, Guillaume},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {31},
+  year      = {2018}
+}
+
+% ---------------------------------------------------------------
+% Kronecker-factored and tensor preconditioners
+% ---------------------------------------------------------------
+
+@inproceedings{martens2015optimizing,
+  title     = {Optimizing Neural Networks with {Kronecker}-factored Approximate Curvature},
+  author    = {Martens, James and Grosse, Roger},
+  booktitle = {International Conference on Machine Learning},
+  pages     = {2408--2417},
+  year      = {2015}
+}
+
+@inproceedings{grosse2016kronecker,
+  title     = {A {Kronecker}-factored Approximate {Fisher} Matrix for Convolution Layers},
+  author    = {Grosse, Roger and Martens, James},
+  booktitle = {International Conference on Machine Learning},
+  pages     = {573--582},
+  year      = {2016}
+}
+
+@inproceedings{george2018ekfac,
+  title     = {Fast Approximate Natural Gradient Descent in a {Kronecker}-factored Eigenbasis},
+  author    = {George, Thomas and Laurent, C{\'e}sar and Bouthillier, Xavier and Ballas, Nicolas and Vincent, Pascal},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {31},
+  year      = {2018}
+}
+
+@inproceedings{eschenhagen2023kfac,
+  title     = {{Kronecker}-factored Approximate Curvature for Modern Neural Network Architectures},
+  author    = {Eschenhagen, Runa and Immer, Alexander and Turner, Richard E. and Schneider, Frank and Hennig, Philipp},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {36},
+  year      = {2023}
+}
+
+@inproceedings{gupta2018shampoo,
+  title     = {Shampoo: Preconditioned Stochastic Tensor Optimization},
+  author    = {Gupta, Vineet and Koren, Tomer and Singer, Yoram},
+  booktitle = {International Conference on Machine Learning},
+  pages     = {1842--1851},
+  year      = {2018}
+}
+
+@article{vyas2024soap,
+  title   = {{SOAP}: Improving and Stabilizing {Shampoo} using {Adam}},
+  author  = {Vyas, Nikhil and Morwani, Depen and Zhao, Rosie and Shapira, Itai and Brandfonbrener, David and Janson, Lucas and Kakade, Sham},
+  journal = {arXiv preprint arXiv:2409.11321},
+  year    = {2024}
+}
+
+@article{anil2021scalable,
+  title   = {Scalable Second Order Optimization for Deep Learning},
+  author  = {Anil, Rohan and Gupta, Vineet and Koren, Tomer and Regan, Kevin and Singer, Yoram},
+  journal = {arXiv preprint arXiv:2002.09018},
+  year    = {2021}
+}
+
+@article{morwani2024shampoo,
+  title   = {A New Perspective on {Shampoo}'s Preconditioner},
+  author  = {Morwani, Depen and Vyas, Nikhil and Shapira, Itai and Kakade, Sham and Brandfonbrener, David},
+  journal = {arXiv preprint arXiv:2406.17748},
+  year    = {2024}
+}
+
+% ---------------------------------------------------------------
+% Spectral and adaptive first-order methods
+% ---------------------------------------------------------------
+
+@inproceedings{kingma2015adam,
+  title     = {Adam: A Method for Stochastic Optimization},
+  author    = {Kingma, Diederik P. and Ba, Jimmy},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2015}
+}
+
+@inproceedings{loshchilov2019decoupled,
+  title     = {Decoupled Weight Decay Regularization},
+  author    = {Loshchilov, Ilya and Hutter, Frank},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2019}
+}
+
+@misc{jordan2024muon,
+  title        = {{Muon}: An Optimizer for Hidden Layers in Neural Networks},
+  author       = {Jordan, Keller},
+  year         = {2024},
+  howpublished = {Blog post and code release},
+  url          = {https://kellerjordan.github.io/posts/muon/}
+}
+
+@article{bernstein2024modular,
+  title   = {Modular Duality in Deep Learning},
+  author  = {Bernstein, Jeremy and Newhouse, Laker},
+  journal = {arXiv preprint arXiv:2410.21265},
+  year    = {2024}
+}
+
+@article{kosson2024spectral,
+  title   = {Spectral Preconditioning for Gradient Methods on Graded Non-convex Functions},
+  author  = {Kosson, Atli and Vogels, Thijs and Jaggi, Martin},
+  journal = {arXiv preprint arXiv:2408.05044},
+  year    = {2024}
+}
+
+@inproceedings{kim2026muon,
+  title     = {Convergence of Muon with Newton--Schulz},
+  author    = {Kim, Joonwon and Oh, Sangmin},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2026}
+}
+
+@article{newtonmuon2026,
+  title   = {The Newton--Muon Optimizer},
+  author  = {Agarwal, Naman and Cesista, Franz Louis and others},
+  journal = {arXiv preprint arXiv:2604.01472},
+  year    = {2026}
+}
+
+@article{liu2025muon,
+  title   = {Muon Is Scalable for {LLM} Training},
+  author  = {Liu, Jingyuan and Su, Jianlin and others},
+  journal = {arXiv preprint arXiv:2502.16982},
+  year    = {2025}
+}
+
+% ---------------------------------------------------------------
+% Initialization and spectral geometry
+% ---------------------------------------------------------------
+
+@inproceedings{schoenholz2017deep,
+  title     = {Deep Information Propagation},
+  author    = {Schoenholz, Samuel S. and Gilmer, Justin and Ganguli, Surya and Sohl-Dickstein, Jascha},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2017}
+}
+
+@inproceedings{pennington2017resurrecting,
+  title     = {Resurrecting the Sigmoid in Deep Learning through Dynamical Isometry: Theory and Practice},
+  author    = {Pennington, Jeffrey and Schoenholz, Samuel S. and Ganguli, Surya},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {30},
+  year      = {2017}
+}
+
+@inproceedings{pennington2018emergence,
+  title     = {The Emergence of Spectral Universality in Deep Networks},
+  author    = {Pennington, Jeffrey and Schoenholz, Samuel S. and Ganguli, Surya},
+  booktitle = {International Conference on Artificial Intelligence and Statistics},
+  year      = {2018}
+}
+
+% ---------------------------------------------------------------
+% Factorization and low-rank adaptation
+% ---------------------------------------------------------------
+
+@article{burer2003nonlinear,
+  title   = {A Nonlinear Programming Algorithm for Solving Semidefinite Programs via Low-Rank Factorization},
+  author  = {Burer, Samuel and Monteiro, Renato D. C.},
+  journal = {Mathematical Programming},
+  volume  = {95},
+  number  = {2},
+  pages   = {329--357},
+  year    = {2003}
+}
+
+@inproceedings{hu2022lora,
+  title     = {{LoRA}: Low-Rank Adaptation of Large Language Models},
+  author    = {Hu, Edward J. and Shen, Yelong and Wallis, Phillip and Allen-Zhu, Zeyuan and Li, Yuanzhi and Wang, Shean and Wang, Lu and Chen, Weizhu},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2022}
+}
+
+@inproceedings{zhao2024galore,
+  title     = {{GaLore}: Memory-Efficient {LLM} Training by Gradient Low-Rank Projection},
+  author    = {Zhao, Jiawei and Zhang, Zhenyu and Chen, Beidi and Wang, Zhangyang and Anandkumar, Anima and Tian, Yuandong},
+  booktitle = {International Conference on Machine Learning},
+  year      = {2024}
+}
+
+@article{hayou2024lora,
+  title   = {{LoRA+}: Efficient Low-Rank Adaptation of Large Models},
+  author  = {Hayou, Soufiane and Ghosh, Nikhil and Yu, Bin},
+  journal = {arXiv preprint arXiv:2402.12354},
+  year    = {2024}
+}
+
+@inproceedings{khodak2021factorized,
+  title     = {Initialization and Regularization of Factorized Neural Layers},
+  author    = {Khodak, Mikhail and Tenenholtz, Neil A. and Mackey, Lester and Fusi, Nicolo},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2021}
+}
+
+% ---------------------------------------------------------------
+% Potentially cited elsewhere in the paper (kept but not used in related work)
+% ---------------------------------------------------------------
+
+@article{ollivier2015riemannian,
+  title   = {Riemannian Metrics for Neural Networks {I}: Feedforward Networks},
+  author  = {Ollivier, Yann},
+  journal = {Information and Inference: A Journal of the IMA},
+  volume  = {4},
+  number  = {2},
+  pages   = {108--153},
+  year    = {2015}
+}
+
+@inproceedings{shazeer2018adafactor,
+  title     = {{Adafactor}: Adaptive Learning Rates with Sublinear Memory Cost},
+  author    = {Shazeer, Noam and Stern, Mitchell},
+  booktitle = {International Conference on Machine Learning},
+  pages     = {4596--4604},
+  year      = {2018}
+}
+
+@article{bartels1972solution,
+  title   = {Solution of the Matrix Equation {AX} + {XB} = {C}},
+  author  = {Bartels, Richard H. and Stewart, George W.},
+  journal = {Communications of the ACM},
+  volume  = {15},
+  number  = {9},
+  pages   = {820--826},
+  year    = {1972}
+}
+
+@book{absil2008optimization,
+  title     = {Optimization Algorithms on Matrix Manifolds},
+  author    = {Absil, P.-A. and Mahony, Robert and Sepulchre, Rodolphe},
+  publisher = {Princeton University Press},
+  year      = {2008}
+}
+
+@article{bah2022riemannian,
+  title   = {Learning Deep Linear Neural Networks: {Riemannian} Gradient Flows and Convergence to Global Minimizers},
+  author  = {Bah, Bubacarr and Rauhut, Holger and Terstiege, Ulrich and Westdickenberg, Michael},
+  journal = {Information and Inference: A Journal of the IMA},
+  volume  = {11},
+  number  = {1},
+  pages   = {307--353},
+  year    = {2022}
+}
+
+@article{soudry2018implicit,
+  title   = {The Implicit Bias of Gradient Descent on Separable Data},
+  author  = {Soudry, Daniel and Hoffer, Elad and Nacson, Mor Shpigel and Gunasekar, Suriya and Srebro, Nathan},
+  journal = {Journal of Machine Learning Research},
+  volume  = {19},
+  number  = {70},
+  pages   = {1--57},
+  year    = {2018}
+}
