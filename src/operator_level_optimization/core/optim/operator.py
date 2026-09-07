@@ -1424,6 +1424,32 @@ class OperatorLevelMLP(Optimizer):
                     C.shape[0], device=C.device, dtype=C.dtype
                 )
 
+            # Collapse monitor (Sec. 4): the modewise filter loses its
+            # operator-correcting structure when min sigma_A^2 * min sigma_B^2
+            # << lam (update degenerates to G / lam). Measured on the raw,
+            # unconditioned contexts; latest value kept per layer.
+            _mon = 1.0
+            for _C in (M_k, N_k):
+                if _C is not None:
+                    if not bool(torch.isfinite(_C).all()):
+                        _mon = 0.0
+                        break
+                    _mon *= float(torch.linalg.eigvalsh(_C)[0].clamp(min=0.0).item())
+            if not hasattr(self, "als_collapse_last"):
+                self.als_collapse_last: Dict[int, float] = {}
+                self._als_collapse_warned: set[int] = set()
+            self.als_collapse_last[k] = _mon
+            if _mon < 10.0 * lam and lam > 0.0 and k not in self._als_collapse_warned:
+                self._als_collapse_warned.add(k)
+                warnings.warn(
+                    f"ALS collapse monitor: layer {k} has min-eig(M)*min-eig(N)"
+                    f" = {_mon:.3e} < 10*lam = {10.0 * lam:.3e}; the modewise"
+                    f" solve degenerates to G/lam and carries no"
+                    f" operator-correcting structure.",
+                    UserWarning,
+                    stacklevel=1,
+                )
+
             M_k = _condition_cov(M_k, cond_scale)
             N_k = _condition_cov(N_k, cond_scale)
 

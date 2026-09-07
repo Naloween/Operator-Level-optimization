@@ -68,6 +68,22 @@ def _solve_delta_exact(M: torch.Tensor, N: torch.Tensor, G: torch.Tensor, lam: f
     return U_m @ X_t @ U_n.T
 
 
+def als_collapse_metric(M: torch.Tensor | None, N: torch.Tensor | None) -> float:
+    """Degeneracy monitor for the modewise solve: min-eig(M) * min-eig(N).
+
+    The filter (6) loses its operator-correcting structure exactly when
+    min_i sigma_A,i^2 * min_j sigma_B,j^2 << lam, where the update degenerates
+    to G / lam. A None context is an identity (edge layer), contributing 1.
+    """
+    out = 1.0
+    for C in (M, N):
+        if C is not None:
+            if not bool(torch.isfinite(C).all()):
+                return 0.0
+            out *= float(torch.linalg.eigvalsh(C)[0].clamp(min=0.0).item())
+    return out
+
+
 def als_exact_shared_target_step(
     weights: list[torch.Tensor],
     p_tgt: torch.Tensor,
@@ -75,8 +91,13 @@ def als_exact_shared_target_step(
     n_sweeps: int,
     reverse: bool = True,
     warmstart_identity: bool = True,
+    collapse_monitor: list | None = None,
 ) -> list[torch.Tensor]:
-    """Deep-linear ALS step for a single shared operator target."""
+    """Deep-linear ALS step for a single shared operator target.
+
+    If collapse_monitor is a list, one dict per layer solve is appended with
+    the per-layer degeneracy metric min-eig(M_k) * min-eig(N_k) vs lam.
+    """
     w_work = [w.clone() for w in weights]
     if warmstart_identity:
         for k in range(len(w_work)):
@@ -95,6 +116,12 @@ def als_exact_shared_target_step(
             M_k = A_k.T @ A_k
             N_k = B_k @ B_k.T
             G_k = A_k.T @ R_k @ B_k.T
+            if collapse_monitor is not None:
+                m_min = als_collapse_metric(M_k, N_k)
+                collapse_monitor.append(
+                    {"layer": k, "min_gram_product": m_min, "lam": float(lam),
+                     "degenerate": bool(m_min < 10.0 * lam)}
+                )
             dW = _solve_delta_exact(M_k, N_k, G_k, lam)
             w_work[k] = w_work[k] + dW
     return w_work
@@ -213,6 +240,8 @@ def run_method(
     early_stop_rel_tol: float = 1e-4,
     early_stop_abs_tol: float = 1e-10,
     early_stop_min_steps: int = 200,
+    target_scale: float = 1.0,
+    init_diag_scale: float = 1.0,
 ) -> dict:
     g = torch.Generator(device=device).manual_seed(seed)
     x = torch.randn(n, d, device=device, dtype=dtype, generator=g)
@@ -222,13 +251,16 @@ def run_method(
         p_star = q1 @ q2.T
     else:
         p_star = ginibre_sn1((d, d), device=device, dtype=dtype, g=g)
+    p_star = p_star * target_scale
     y = x @ p_star.T
 
     model = DeepLinearModel(depth=depth, d=d).to(device=device, dtype=dtype)
     with torch.no_grad():
         if init_mode == "identity":
             for layer in model.layers:
-                layer.weight.copy_(torch.eye(d, device=device, dtype=dtype))
+                layer.weight.copy_(
+                    init_diag_scale * torch.eye(d, device=device, dtype=dtype)
+                )
         else:
             init_fn = ginibre_sn1 if init_mode == "ginibre_sn1" else xavier_gaussian
             for layer in model.layers:
@@ -279,7 +311,7 @@ def run_method(
             capture = (t % spec_every == 0 or t == steps)
             if spec_steps is not None and len(spec_steps) > 0:
                 capture = capture or (t in spec_steps)
-            if capture:
+            if capture and bool(torch.isfinite(p).all()):
                 spectra[int(t)] = torch.linalg.svdvals(p).detach().cpu().numpy()
 
         mse = float(loss.item())
@@ -369,7 +401,8 @@ def run_method(
     with torch.no_grad():
         p_final = compose_operator([layer.weight.data for layer in model.layers])
         final_t = int(hist[-1][0])
-        spectra[final_t] = torch.linalg.svdvals(p_final).detach().cpu().numpy()
+        if bool(torch.isfinite(p_final).all()):
+            spectra[final_t] = torch.linalg.svdvals(p_final).detach().cpu().numpy()
 
     out = {
         "method": method,

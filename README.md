@@ -13,6 +13,7 @@ Weight-space optimizers update parameters `W`, but the map depends on the end-to
 - `src/operator_level_optimization/scripts/train/` — `deep_linear_compare.py`, `fgln_compare.py`, `mnist_smoke.py`, `variant_loss_curves.py`
 - `src/operator_level_optimization/scripts/figures/` — plotting helpers for deep linear / FGLN
 - `src/operator_level_optimization/scripts/toy2d.py` — 2D toy trajectories and one-step figures
+- `src/operator_level_optimization/scripts/rebuttal/` — extended dimension/depth/initialization robustness experiments (see [`results/rebuttal_extension/`](results/rebuttal_extension/README.md))
 
 ## Setup
 
@@ -347,6 +348,30 @@ python -m operator_level_optimization.scripts.train.variant_loss_curves \
 ![Adaptive lambda vs fixed (FGLN)](images/ablation_adaptive_lambda_fgln.png)
 
 ---
+
+## Extended experiments: dimension, depth, and initialization robustness
+
+Follow-up experiments extending the identity-init results (Sec. 5.2, Figs.
+4-5) along three axes — operator dimension, network depth, and the exactness
+of the target/initialization — to more precisely characterize when the
+factorization-mismatch effect is a controllable rate versus a genuine wall.
+Scripts live in `src/operator_level_optimization/scripts/rebuttal/` (runnable
+standalone, `python -m operator_level_optimization.scripts.rebuttal.<name>`);
+figures, tables, and a full write-up per experiment are in
+[`results/rebuttal_extension/`](results/rebuttal_extension/README.md).
+
+Headline findings: escape from a collapsed operator spectrum is governed by
+a rate, not a wall, that scales with dimension and (once the learning rate
+is retuned) is roughly depth-invariant up to `L=2048` and to `2×` target
+expansion — but only if the initialization sits *exactly* on the
+identity/orthogonal manifold. A 1% per-layer initialization defect,
+harmless at shallow-to-moderate depth, produces a permanent,
+learning-rate-independent stall past a sharp depth threshold (`L=256` safe,
+`L=512` not), confirmed with a 13-point learning-rate sweep. ALS-exact is
+unaffected by the same defect, identically so whether its warm-start is
+enabled or disabled — dissociating its robustness from the warm-start
+heuristic and attributing it instead to solving for the operator target
+directly at every step.
 
 ## Notes
 
