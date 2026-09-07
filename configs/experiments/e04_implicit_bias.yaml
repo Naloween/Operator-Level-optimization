@@ -1,0 +1,52 @@
+# Is correcting the factorization bias even desirable?
+#
+# Underdetermined matrix sensing (m = 160 < d^2 = 400), so many operators interpolate the
+# data and which one a method reaches is entirely a property of its trajectory. Three arms,
+# identical parameterization and initialization:
+#
+#   a. factored Adam    --set optim.type=adam
+#   b. direct-P Adam    the shadow target alone, i.e. what Adam does with no factorization
+#   c. projection       optim.type=als with target {type: shadow, inner: adam}: arm (a)'s
+#                       parameterization realizing arm (b)'s trajectory
+#
+# Because (a) and (c) share representation and initialization, their difference is the
+# factorization bias itself rather than a difference in capacity. In the run below the bias
+# turns out to *help*: factored Adam recovers a lower-rank operator that generalizes better,
+# and projection -- by removing the bias -- tracks the worse-generalizing direct trajectory.
+# That is a result about when the correction is worth applying, which is the question
+# reviewer U6A5 asked and the submitted paper assumed away.
+name: e04_implicit_bias
+seed: 0
+device: auto
+dtype: float64
+
+model:
+  type: deep_linear
+  width: 20
+  depth: 3
+  init: identity          # balanced small start; scale via the task's conditioning below
+
+task:
+  type: matrix_sensing
+  d: 20
+  m: 160
+  rank: 2
+
+optim:
+  type: als
+  lr: 3.0e-3
+  als:
+    lam: 1.0e-10
+    n_sweeps: 3
+    target: {type: shadow, inner: adam}
+
+train:
+  steps: 800
+  eval_every: 25
+
+diagnostics:
+  every: 100
+  mismatch: true
+  conditioning: false     # one shared operator, no per-layer collapse to track here
+  spectrum: true
+  cost: true

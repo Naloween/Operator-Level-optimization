@@ -4,20 +4,30 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "operator-level-optimization"
-version = "0.1.0"
-description = "Reproducible labs for operator-level optimization (ALS-exact, deep linear, FGLN, toy-2d)."
+version = "0.2.0"
+description = "Operator-level optimization in factored networks: exact ALS operator projection, depth diagnostics."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=2.0",
   "torch>=2.0",
-  "matplotlib>=3.8",
-  "pandas>=2.0",
   "torchvision>=0.16",
+  "matplotlib>=3.8",
+  "pyyaml>=6.0",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "jupyter>=1.0"]
+
+[project.scripts]
+olo = "olo.run:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

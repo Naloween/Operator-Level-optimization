@@ -1,0 +1,50 @@
+# Mismatch as a function of depth, with conditioning held fixed.
+#
+# The measurement the paper argued for but never isolated. Under `haar` init every layer
+# has unit singular values, so there is no spectral collapse -- but the random orientations
+# leave the context Grams anisotropic, and Proposition 3.1 says that alone is enough to
+# bend the operator step away from -eta G.
+#
+# `cos_gd_first_order` is computed from the contexts before any step is taken, so this is a
+# property of the geometry rather than of a particular optimizer's trajectory. Contrast
+# with `init: identity`, where all contexts are exactly I and the predicted cosine is
+# exactly 1 (the induced step is L times too long, but points the right way) -- the
+# cleanest possible demonstration that conditioning and direction are separate axes.
+#
+#   python -m olo.run configs/experiments/e03_mismatch_vs_depth.yaml \
+#     --sweep model.depth=1,2,4,8,16,32,64,128,256 \
+#     --sweep model.init=haar,identity,xavier --seeds 0,1,2
+#
+# A handful of steps is enough: the quantity of interest is measured at initialization.
+name: e03_mismatch_vs_depth
+seed: 0
+device: auto
+dtype: float64
+
+model:
+  type: deep_linear
+  width: 16
+  depth: 32
+  init: haar
+
+task:
+  type: teacher_student
+  d: 16
+  n: 256
+  target: orthogonal
+
+optim:
+  type: heavyball          # the method Proposition 3.1 describes exactly
+  lr: 1.0e-3
+  heavyball: {momentum: 0.0}
+
+train:
+  steps: 20
+  eval_every: 5
+
+diagnostics:
+  every: 1
+  mismatch: true
+  conditioning: true
+  spectrum: true
+  cost: false

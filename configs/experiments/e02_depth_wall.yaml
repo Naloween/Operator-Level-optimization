@@ -1,0 +1,60 @@
+# The depth wall, and whether the right parameterization removes it.
+#
+# Two nets that differ only in how the rectifier is written:
+#
+#   model.type=relu_mlp   init=xavier        the standard regime -- the operator spectrum
+#                                            collapses exponentially with depth
+#   model.type=crelu_mlp  init=looks_linear  J(x) is exactly orthogonal at init, at every
+#                                            depth, for every input
+#
+# The question the previous round of this work could not answer: once conditioning is
+# fixed at the source, does a *tuned* parameter-space optimizer still fail at depth? If it
+# does, the remaining obstacle is update-direction mismatch. If it does not, then what the
+# earlier experiments measured was collapse, not mismatch.
+#
+#   python -m olo.run configs/experiments/e02_depth_wall.yaml \
+#     --sweep model.depth=2,4,8,16,32,64,128,256 \
+#     --sweep optim.type=als,adam,heavyball,muon,kfac,shampoo,soap \
+#     --sweep optim.lr=0.3,0.1,0.03,0.01,0.003,0.001,0.0003 --seeds 0,1,2
+#
+# Then flip the pair with:
+#     --set model.type=relu_mlp --set model.init=xavier
+name: e02_depth_wall
+seed: 0
+device: auto
+dtype: float64
+
+model:
+  type: crelu_mlp
+  width: 16
+  depth: 32
+  init: looks_linear
+
+task:
+  type: teacher_student
+  d: 16
+  n: 256
+  target: orthogonal
+
+optim:
+  type: als
+  als:       {lr: 1.0,    lam: 1.0e-4, n_sweeps: 1, target: gradient, layers: all}
+  adam:      {lr: 1.0e-3}
+  heavyball: {lr: 1.0e-3, momentum: 0.9}
+  muon:      {lr: 1.0e-3, momentum: 0.95}
+  kfac:      {lr: 1.0e-3, damping: 1.0e-2}
+  shampoo:   {lr: 1.0e-3, beta: 0.9, eps: 1.0e-4}
+  soap:      {lr: 1.0e-3, shampoo_beta: 0.95}
+
+train:
+  steps: 400
+  eval_every: 20
+  stop_below: 1.0e-12
+  stop_above: 1.0e8        # a diverged cell is a result; it should not burn the budget
+
+diagnostics:
+  every: 50
+  mismatch: true
+  conditioning: true
+  spectrum: true
+  cost: true

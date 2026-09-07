@@ -1,0 +1,63 @@
+# Direction mismatch, isolated from conditioning.
+#
+# Identity init makes every context singular value exactly 1, so spectral collapse is
+# absent by construction and the only thing left to explain a failure to reach P* is that
+# the update does not move the operator where it was asked to. Sweep `optim.type` to
+# compare methods; sweep `model.depth` to see the mismatch grow with depth.
+name: e01_deep_linear_identity
+seed: 0
+device: auto
+dtype: float64
+
+model:
+  type: deep_linear
+  width: 16
+  depth: 128
+  init: identity
+
+task:
+  type: teacher_student
+  d: 16
+  n: 256
+  target: orthogonal
+
+# A single shared learning rate is NOT a fair comparison -- at lr=0.3 Adam blows up in one
+# step here while ALS converges, which measures step-size scaling, not the methods. Fair
+# means every method gets the same *grid* and is read at its own best:
+#
+#   python -m olo.run configs/experiments/e01_deep_linear_identity.yaml \
+#     --sweep optim.type=als,adam,heavyball,muon,kfac,shampoo,soap \
+#     --sweep optim.lr=1.0,0.3,0.1,0.03,0.01,0.003,0.001,0.0003,0.0001 --seeds 0,1,2
+#
+# On the step sizes. ALS's `lr` scales the operator target P - lr*G, so it is a step in
+# operator space: depth-independent by construction, and lr = 1 is its natural value. With
+# the population covariance Sigma_x = I, lr = 1 gives P_tgt = P* exactly -- one step to the
+# solution. The parameter-space methods' rates are not comparable to it and shrink with
+# depth (see olo/theory/deep_linear.py), hence the separate per-method defaults below.
+#
+# `n` matters for that claim. lr = 1 is stable only while lambda_max(Sigma_x) < 2, and the
+# empirical covariance of n samples in d dimensions has lambda_max ~ (1 + sqrt(d/n))^2:
+# 2.74 at n = 64 (unstable, the run diverges), 1.51 at n = 256, 1.21 at n = 1024. So n is
+# set well above d here. The submitted paper's d = 16, n = 64 is inside the unstable
+# region, which is why lr = 1 appeared to need lowering there.
+optim:
+  type: als
+  als:       {lr: 1.0,    lam: 1.0e-4, n_sweeps: 1, target: gradient}
+  adam:      {lr: 1.0e-3}
+  heavyball: {lr: 1.0e-3, momentum: 0.9}
+  muon:      {lr: 1.0e-3, momentum: 0.95}
+  kfac:      {lr: 1.0e-3, damping: 1.0e-2}
+  shampoo:   {lr: 1.0e-3, beta: 0.9, eps: 1.0e-4}
+  soap:      {lr: 1.0e-3, shampoo_beta: 0.95}
+
+train:
+  steps: 500
+  eval_every: 10
+  stop_below: 1.0e-10
+
+diagnostics:
+  every: 25
+  mismatch: true
+  conditioning: true
+  spectrum: true
+  cost: true
