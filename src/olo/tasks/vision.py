@@ -61,12 +61,14 @@ class _ImageClassification(Task):
         self.d_out = self.n_classes
         self.batch_size = int(batch_size)
 
-        # Normalize to zero mean / unit variance per feature, with statistics from the
-        # training split only. Depth experiments are sensitive to input scale, and an
-        # unnormalized input would confound "this depth is untrainable" with "this input
-        # distribution is badly scaled".
-        mu = self.Xtr.mean(0, keepdim=True)
-        sd = self.Xtr.std(0, keepdim=True).clamp(min=1e-6)
+        # Normalize with a single scalar mean and std over the training split -- not
+        # per-feature. MNIST's border pixels are constant zero, so their per-feature std is
+        # zero; dividing by a floored std turns any nonzero test pixel there into a value
+        # of ~100 and hands the network a few enormous inputs. That is exactly the kind of
+        # input pathology a depth experiment must not have, since it would be
+        # indistinguishable from depth itself failing.
+        mu = self.Xtr.mean()
+        sd = self.Xtr.std().clamp(min=1e-6)
         self.Xtr = (self.Xtr - mu) / sd
         self.Xva = (self.Xva - mu) / sd
         self.Xte = (self.Xte - mu) / sd
@@ -126,7 +128,23 @@ class CIFAR10(_ImageClassification):
 
 
 def _stack(ds, limit: int | None) -> tuple[torch.Tensor, torch.Tensor]:
+    """Flattened images and labels, read straight off the dataset's backing array.
+
+    Indexing a torchvision dataset item by item runs the transform pipeline per image and
+    costs seconds for a split this size -- which, multiplied across the hundreds of runs
+    in a sweep, exceeds the compute the sweep is actually for. `.data` holds the same
+    pixels; the only work needed is the uint8 -> [0,1] scaling `ToTensor` would do.
+    """
     n = len(ds) if limit is None else min(limit, len(ds))
-    X = torch.stack([ds[i][0].reshape(-1) for i in range(n)])
-    y = torch.tensor([ds[i][1] for i in range(n)], dtype=torch.long)
+    data = ds.data[:n]
+
+    if not isinstance(data, torch.Tensor):          # CIFAR keeps a numpy array (N,H,W,C)
+        data = torch.from_numpy(data)
+    if data.dim() == 4:                             # to CHW, matching ToTensor's layout
+        data = data.permute(0, 3, 1, 2)
+
+    X = data.reshape(n, -1).to(torch.float32) / 255.0
+    targets = ds.targets[:n]
+    y = (targets.clone().detach() if isinstance(targets, torch.Tensor)
+         else torch.tensor(targets)).to(torch.long)
     return X, y
