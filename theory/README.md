@@ -46,7 +46,9 @@ rather than hypothetical.
 | sign of the effect | Cor. 13.2 | 9/9 correct, including `psi = 0` |
 | CReLU seed, symmetric data | `B^{-1/2}` | slope −0.51 (seed), −0.48 (realized separation) |
 | CReLU seed, MNIST | systematic | slope −0.011, ratio 0.94 at `B = 2048` |
-| symmetrized batch | `Delta = 0` exactly | `1.1e-16` after 2000 steps |
+| symmetrized batch | `Delta = 0` exactly | `2.2e-16` at every depth, both input laws |
+| direction of every separation change | Lemma 12: `sign(dr) = sign(b)` | 100% where the form fits (`R^2 >= 0.9`), 89% overall |
+| Xavier vs looks-linear, all else equal | seed decides | eff. rank 1.50 vs 7.04 at `L = 16` |
 
 ## Tests and studies
 
@@ -61,4 +63,5 @@ pytest tests/test_theory_balanced.py     # closed-form mode gains (deep linear r
 python studies/forcing.py       # the rate law, with the operator force prescribed
 python studies/seed_source.py   # fluctuation vs systematic seed, across tasks
 python studies/symmetrize.py    # switching the nonlinearity off exactly
+python studies/report.py        # regenerates every table in file 04 section 5
 ```

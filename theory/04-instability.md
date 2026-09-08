@@ -528,6 +528,46 @@ Two consequences that look like contradictions and are not:
   applies, and it is *low* exactly in the raw `mu = 1` deep runs (0.03–0.18), where the
   network is most nonlinear.
 
+### 5.6 Xavier against looks-linear, with everything else held fixed
+
+The same CReLU network, task, optimizer, batch and symmetrization; only the initial
+spectrum differs. `r(0)` is not a knob here -- it is whatever the initialization gives.
+
+| init | L | `r(0)` | final `sbar` | final `r` | final eff. rank | final `max_l ‖Δ_l‖` |
+|---|---|---|---|---|---|---|
+| looks-linear | 2 | 1.1e-15 | 1.909 | 0.132 | **7.990** | 5.6e-17 |
+| looks-linear | 4 | 8.9e-16 | 1.923 | 0.312 | **7.964** | 1.1e-16 |
+| looks-linear | 8 | 1.8e-15 | 1.813 | 0.412 | **7.901** | 2.2e-16 |
+| looks-linear | 16 | 3.1e-15 | 1.076 | 4.961 | 7.042 | 1.7e-16 |
+| Xavier | 2 | 3.48 | 1.915 | 0.477 | 7.928 | 1.3e-1 |
+| Xavier | 4 | 8.18 | 0.300 | 11.48 | 6.037 | 6.3e-1 |
+| Xavier | 8 | 15.1 | 0.005 | 14.88 | 2.206 | 6.4e-1 |
+| Xavier | 16 | 32.2 | 0.000 | 32.46 | **1.496** | 6.1e-1 |
+
+(width 8, so the effective rank runs from 8 down to 1.)
+
+Three readings, and the third is not what I expected.
+
+1. **The depth wall is in the initialization, not the architecture.** Xavier falls from
+   effective rank 7.9 to **1.5** over depths 2–16 while its operator norm collapses to zero;
+   looks-linear stays above 7.0 throughout. Nothing else differs between the two columns.
+2. **Theorem 17 needs the looks-linear starting point, as stated.** Symmetrizing the batch
+   holds `Delta` at `1e-16` in the looks-linear rows and does nothing at all in the Xavier
+   rows (`Delta ≈ 0.6`), because the hypothesis "at a looks-linear configuration" fails at
+   step 0 there. The intervention is not a general-purpose fix.
+3. **Xavier's separation is *conserved*, not amplified.** Final `r` over `r(0)` is 0.14,
+   1.40, 0.99, 1.01 at depths 2, 4, 8, 16 -- essentially 1 once `L >= 8`. Training neither
+   grows the anisotropy nor removes it; the network simply cannot escape the spectrum it was
+   handed, while its scale dies. And `r(0)` itself grows roughly linearly in `L`
+   (3.5, 8.2, 15.1, 32.2), which is the Lyapunov spread of a product of `L` random matrices.
+   **So the depth dependence of the collapse enters through `r(0)`, not through the
+   feedback exponent** -- `phi` saturates, but the seed a random initialization supplies does
+   not.
+
+That last point is the sharpest available answer to "does the low-rank bias come from an
+already low-rank profile?". For Xavier, yes, essentially entirely: the profile is created at
+initialization, it grows linearly in depth, and training conserves it.
+
 ---
 
 ## 6. What this does and does not establish
