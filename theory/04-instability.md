@@ -25,9 +25,11 @@ one:
 
 So the bias is universal in neither direction. Under an isotropic force it is purely the
 feedback, an exact isometry is a fixed point at every depth, and the seed multiplies through
-unchanged over five decades (measured). Under a real task the drive dominates and an
-isometry is *not* a fixed point -- separation grows from `1e-15` to `0.47` even at `L = 2`.
-Depth sets the amplification, the task sets what is amplified.
+unchanged over five decades (measured). Under a real task neither holds automatically: the drive makes an isometry *not* a fixed
+point, and the measured task exponent can be strongly negative (`p` between `-1` and `-3` on
+the teacher-student task below), which puts it in the regime where operator growth
+**un**-separates the spectrum and the effective rank recovers. Depth sets the amplification;
+the task decides its sign and what there is to amplify.
 
 For CReLU specifically, Theorem 16 identifies the only thing that can move a looks-linear
 network off the linear manifold: the correlation between the operator residual and the gate
@@ -341,17 +343,17 @@ $$\sum_b R_b E_b = 0 \quad\Longrightarrow\quad \Delta\Delta_l = 0$$
 by Theorem 16. The configuration is unchanged in its `Delta` coordinate, hence still
 looks-linear, and the argument repeats. ∎
 
-Measured: `max_l ||Delta_l||_\infty` stays at `1.1e-16` -- machine zero -- across 2000 steps
-at `L = 12` with a strongly sign-asymmetric input law (`x ~ N(1, I)`), against `6.6e-2` for
-the same run on the un-symmetrized batch.
+Measured across depths 2–32 and both input laws: `max_l ||Delta_l||_\infty` stays at
+`2.2e-16`–`2.8e-16` -- machine zero -- against `2.5e-3` (symmetric inputs) and `3.5e-1`
+(asymmetric) for the same runs on un-symmetrized batches. Details in §5.5.
 
 **What this does and does not buy.** It removes the *entire* nonlinear contribution, exactly
 and permanently: under it every result for deep linear networks -- Theorem 13, Theorem 14,
 and Theorems 5.3 and 6.1 of Haas et al. (ICML 2026) -- applies to the CReLU network with
 zero error rather than under a hypothesis. It does **not** remove the low-rank bias, because
-the drive (2.3) lives in the linear network too: in the run above the separation grew to
-`1.92` symmetrized against `1.98` raw. Symmetrizing changes *which theory applies*, not
-*what the spectrum does*.
+the drive (2.3) lives in the linear network too: with sign-symmetric inputs the symmetrized
+and raw spectra agree to four digits at every depth (§5.5). Symmetrizing changes *which
+theory applies*, not *what the spectrum does*.
 
 That is the honest summary of where the seed comes from. In a network that starts at the
 isometric fixed point, the CReLU-specific contribution is supplied by the data's sign
@@ -405,14 +407,17 @@ All four cells of Corollary 13.2 are realized. Final `r(t)/r(0)`, `r(0) = 10^-4`
 |---|---|---|---|---|
 | 4 | −1 | −0.500 | 0.135 (shrinks) | 7.39 (grows) |
 | 4 | −0.5 | **0.000** | 1.000 | 1.000 |
-| 4 | +0.5 | 1.000 | 53.8 (grows) | 0.018 (shrinks) |
+| 4 | 0 | 0.500 | 7.35 (grows) | 0.135 (shrinks) |
+| 4 | +1 | 1.500 | 392 (grows) | 0.0024 (shrinks) |
 | 32 | −1 | −0.062 | 0.779 (shrinks) | 1.28 (grows) |
-| 32 | +0.5 | 1.438 | 308 (grows) | 0.0031 (shrinks) |
+| 32 | 0 | 0.938 | 42.1 (grows) | 0.023 (shrinks) |
 | 256 | −1 | −0.008 | 0.969 (shrinks) | 1.03 (grows) |
-| 256 | +0.5 | 1.492 | 382 (grows) | 0.0025 (shrinks) |
+| 256 | +1 | 1.992 | 2830 (grows) | 3.3e-4 (shrinks) |
 
-Nine of nine sign predictions correct, including the `psi = 0` row where neither direction
-of growth changes the spectrum's shape.
+**Forty of forty sign predictions correct** across the whole grid, including the `psi = 0`
+row where neither direction of growth changes the spectrum's shape. Note the two `psi < 0`
+rows: the operator *growing* makes the spectrum *more* isotropic there. Nothing about
+depth alone decides the direction.
 
 ### 5.2b The seed multiplies through
 
@@ -443,24 +448,85 @@ the entire low-rank bias of this network is a finite-batch effect.
 
 ### 5.4 Fluctuation or systematic: the dichotomy, and where MNIST sits
 
-Slope of `log(‖ΔΔ‖/‖ΔS‖)` against `log B`, over `B = 8..2048`, three seeds:
+Slope of `log(‖ΔΔ‖/‖ΔS‖)` against `log B` over `B = 8..2048`, nine runs per row
+(depths 4, 16, 64 × three seeds):
 
-| source | slope | ratio at `B = 2048` |
+| source | slope (mean ± sd) | ratio at `B = 2048` |
 |---|---|---|
-| prescribed force, `mu = 0` (symmetric) | **−0.51** | 0.023 |
-| prescribed, `mu = 0.03` | −0.45 | 0.033 |
-| prescribed, `mu = 0.1` | −0.28 | 0.084 |
-| prescribed, `mu = 0.3` | −0.11 | 0.231 |
-| prescribed, `mu = 1.0` | −0.02 | 0.584 |
-| prescribed, `mu = 3.0` | −0.007 | 0.853 |
-| teacher–student (Gaussian inputs) | −0.41 | 0.11 |
-| **MNIST** (non-negative pixels) | **−0.011** | **0.94** |
+| prescribed force, `mu = 0` (sign-symmetric) | **−0.507 ± 0.010** | 0.023 |
+| prescribed, `mu = 0.01` | −0.495 ± 0.016 | 0.025 |
+| prescribed, `mu = 0.03` | −0.444 ± 0.018 | 0.034 |
+| prescribed, `mu = 0.1` | −0.283 ± 0.012 | 0.084 |
+| prescribed, `mu = 0.3` | −0.115 ± 0.016 | 0.232 |
+| prescribed, `mu = 1.0` | −0.020 ± 0.006 | 0.591 |
+| prescribed, `mu = 3.0` | −0.005 ± 0.002 | 0.863 |
+| teacher–student (Gaussian inputs) | −0.423 ± 0.015 | 0.094 |
+| **MNIST** (non-negative pixels) | **−0.032 ± 0.036** | **0.832** |
 
-Both ends of Corollaries 16.1–16.2 are realized, with a continuous dose–response between
-them controlled by a single input-asymmetry parameter, and MNIST sits at the saturated end:
-its seed is as large as the linear part of the gradient and is unaffected by batch size.
-That is what one expects from non-negative pixels, and it is checkable on any dataset in a
-few seconds.
+Both ends of Corollaries 16.1–16.2 are realized: `-0.507 ± 0.010` against a predicted
+`-1/2`, and `-0.032 ± 0.036` -- indistinguishable from zero -- for MNIST, whose seed is
+therefore as large as the linear part of the gradient and unaffected by batch size. Between
+them lies a monotone dose–response in a single input-asymmetry parameter, matching the
+Gaussian-CDF form of Corollary 16.3.
+
+Two further readings. Gaussian teacher-student sits at `-0.423`, not `-0.5`: its inputs are
+sign-symmetric *in law*, but the residual is correlated with `x` through the empirical
+covariance, which leaves a small systematic component. And every row pools depths 4, 16 and
+64 with a standard deviation no larger than the seed-to-seed scatter -- **the slope does not
+depend on depth**, which is what Theorem 16 predicts, since the mechanism is per layer and
+contains no `L`.
+
+### 5.5 On a real task the sign is right, but the task exponent is strongly negative
+
+`studies/symmetrize.py`, CReLU/looks-linear on a linear teacher `P* = 2Q`, `Q` orthogonal,
+depths 2–32, `mu` in {0, 1}, batches closed under negation or not.
+
+**Theorem 17 holds exactly.** `max_l ||Delta_l||_inf` after the full run:
+
+| | `mu = 0` | `mu = 1` |
+|---|---|---|
+| raw batch | 2.5e-3 | 3.5e-1 |
+| symmetrized | **2.2e-16** | **2.8e-16** |
+
+**And with sign-symmetric inputs the nonlinearity was doing nothing anyway.** At `mu = 0`
+the raw and symmetrized spectra agree to four digits at every depth (`L = 2`: 0.1311 vs
+0.1321; `L = 8`: 0.4189 vs 0.4115; `L = 16`: 4.9614 vs 4.9610; `L = 32`: 4.6672 vs 4.6668).
+At `mu = 1` they differ substantially, but not in a consistent direction across depth, and
+most deep cells did not reach the matched growth target within the step budget -- so no
+claim about the *magnitude* of the difference is warranted from this grid. What is
+warranted: **symmetrizing does not remove the low-rank bias.** Large separation appears in
+the exactly-linear symmetrized runs too, because the drive (2.3) lives in the linear network.
+
+**The task exponent is negative, and that is what the trajectories look like.** Measuring
+`p` per snapshot by Proposition 15 gives a median of `-1.0` to `-3.0` across the grid, with
+65–95% of snapshots negative -- far below `-phi`. This task *opposes* the depth bias: the
+target is isotropic, the transient is not, so the gradient pushes hardest on the largest
+modes. By Corollary 14.3 that is the `psi < 0` regime, in which operator growth
+**un**-separates the spectrum.
+
+Two consequences that look like contradictions and are not:
+
+* **Separation is strongly non-monotone**, in 12 of 20 runs, and by large factors -- peak
+  6.61 falling to 0.163 (`raw, mu=1, L=4`), peak 7.62 to 0.132 (`symmetrized, mu=1, L=2`).
+  This is Corollary 13.2 with `psi < 0`, and it happens in the exactly-linear symmetrized
+  runs too, so it is not an artefact of the nonlinearity.
+* **Separation anti-correlates with growth.** Testing `sign(dr) == sign(d sbar)` gives 15%,
+  which reads as a falsification until one notices it is Corollary 14.2 applied outside its
+  hypothesis: that reading needs `psi > 0`, and here `psi < 0`. The assumption-free
+  statement is Lemma 12, `d(log r)/dt = b` with `b` the measured slope, and it holds:
+
+  | `R^2` of the rich-get-richer fit | intervals | `sign(dr) == sign(b)` |
+  |---|---|---|
+  | 0.00–0.25 | 172 | 77.9% |
+  | 0.25–0.50 | 90 | 90.0% |
+  | 0.50–0.75 | 63 | 88.9% |
+  | 0.75–0.90 | 46 | 97.8% |
+  | **0.90–1.00** | **148** | **100.0%** |
+
+  89.4% over all 519 intervals, rising monotonically with how well the form fits and
+  reaching 100% where it fits well. `R^2` is the honest gate: it says when the framework
+  applies, and it is *low* exactly in the raw `mu = 1` deep runs (0.03–0.18), where the
+  network is most nonlinear.
 
 ---
 
@@ -483,14 +549,23 @@ residual is reported rather than assumed small.
 
 **Not established.**
 
-* **That the CReLU nonlinear dynamics obey §2–§3 once `Delta != 0`.** They demonstrably do
-  not obey the *multiplicative-seed* prediction, and Theorem 16 explains why: the seed is
-  regenerated at every step rather than only at `t = 0`, so the trajectory is a stochastic
-  drive plus the feedback rather than pure amplification of `r(0)`. The measured `B^{-1/2}`
-  scaling is a consequence of that regeneration, not of the seed at initialization. What is
-  *not* proved is a closed form for the resulting separation.
-* **That `E[RE] != 0` on a given real dataset implies collapse rather than merely a seed.**
-  §5.4 measures the seed's size, not what training does with it over 10⁴ steps.
+* **That the feedback governs a real task.** It does not, on the one tested here. The rate
+  law is exact when it is the *only* mechanism (40/40 cells under a prescribed force), and on
+  teacher-student the measured task exponent is `p ≈ -1` to `-3`, so the drive dominates and
+  the spectrum is pulled toward the target's shape rather than toward low rank. What survives
+  on the real task is the assumption-free part -- Lemma 12's rate `b` predicts the *direction*
+  of every separation change with 100% accuracy where the rich-get-richer form fits
+  (`R^2 >= 0.9`) and 89% overall. The magnitude is not predicted by (2.2) there, and `R^2` is
+  the diagnostic that says so.
+* **A closed form for the CReLU trajectory once `Delta != 0`.** The multiplicative-seed
+  prediction demonstrably fails there, and Theorem 16 says why: the seed is regenerated at
+  every step, so the trajectory is a stochastic drive plus feedback rather than pure
+  amplification of `r(0)`. The measured `B^{-1/2}` scaling is a consequence of that
+  regeneration. No closed form for the resulting separation is proved.
+* **That a systematic seed implies collapse.** §5.4 measures the seed's size on MNIST, not
+  what 10^4 steps of training do with it.
+* **Anything about a nonlinear target.** Theorem 17 needs `y = P^* x`; whether an approximate
+  version survives an approximately-linear teacher is untested.
 * **The remaining hypotheses of [`03-dynamics.md`](03-dynamics.md) §4**, `(H-mode)` and
   `(H-primitive)`, are untouched here.
 

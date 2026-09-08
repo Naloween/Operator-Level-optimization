@@ -12,6 +12,12 @@ Two things follow, and they point in opposite directions, which is the point of 
 * the bias does **not** go away, because the drive `D = -L s^phi (g_j - g_k)` lives in the
   linear network too. Symmetrizing changes which theory applies, not what the spectrum does.
 
+The `--inits` knob answers the companion question. `looks_linear` starts the operator at an
+exact isometry -- the feedback's fixed point, `r(0) = 0` -- while `xavier` starts with a
+large seed already in place. Corollary 14.2 says the seed multiplies through, so at matched
+operator growth the two should differ by roughly the ratio of their initial separations, and
+the looks-linear arm should not "catch up".
+
 The `mu` knob makes the input law sign-asymmetric (`x ~ N(mu*1, I)`), which is what a real
 dataset of non-negative pixels looks like and what makes the raw arm's seed systematic
 rather than a `B^{-1/2}` fluctuation.
@@ -65,14 +71,15 @@ def operator_gradient(net, X, Y):
 
 
 def run(arm: str, depth: int, width: int, mu: float, batch: int, lr_c: float,
-        target_growth: float, max_steps: int, eval_every: int, seed: int) -> dict:
+        target_growth: float, max_steps: int, eval_every: int, seed: int,
+        init: str = "looks_linear") -> dict:
     torch.manual_seed(seed)
     g = torch.Generator().manual_seed(seed)
     P_star = torch.linalg.qr(
         torch.randn(width, width, generator=g, dtype=torch.float64))[0] * 2.0
 
     net = CReLUMLP(d_in=width, d_out=width, width=width, depth=depth).double()
-    net.initialize("looks_linear", seed=seed)
+    net.initialize(init, seed=seed)
     opt = torch.optim.SGD(net.parameters(), lr=lr_c / depth)
     gg = torch.Generator().manual_seed(seed + 7)
 
@@ -113,7 +120,7 @@ def run(arm: str, depth: int, width: int, mu: float, batch: int, lr_c: float,
     fb = [abs(r["rate"]) * r["sep"] for r in rec if np.isfinite(r.get("rate", np.nan))]
     dr = [r["spread"] for r in rec if np.isfinite(r.get("spread", np.nan))]
     return {
-        "arm": arm, "depth": depth, "width": width, "mu": mu, "batch": batch,
+        "arm": arm, "init": init, "depth": depth, "width": width, "mu": mu, "batch": batch,
         "lr": lr_c / depth, "seed": seed, "phi": log_velocity_exponent(depth),
         "steps_to_growth": last["step"], "sbar_final": last["sbar"],
         "sep_initial": rec[0]["sep"], "sep_final": last["sep"],
@@ -130,6 +137,9 @@ def run(arm: str, depth: int, width: int, mu: float, batch: int, lr_c: float,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--arms", nargs="+", default=["raw", "symmetrized"])
+    ap.add_argument("--inits", nargs="+", default=["looks_linear"],
+                    help="looks_linear starts at the isometric fixed point (r0 = 0); "
+                         "xavier starts with a large seed already in place")
     ap.add_argument("--depths", type=int, nargs="+", default=[2, 4, 8, 16, 32, 64])
     ap.add_argument("--mu", type=float, nargs="+", default=[0.0, 1.0])
     ap.add_argument("--width", type=int, default=8)
@@ -143,14 +153,15 @@ def main() -> None:
     a = ap.parse_args()
 
     out, t0 = [], time.time()
-    for arm in a.arms:
+    for init in a.inits:
+      for arm in a.arms:
         for mu in a.mu:
             for depth in a.depths:
                 for seed in a.seeds:
                     r = run(arm, depth, a.width, mu, a.batch, a.lr_c, a.target_growth,
-                            a.max_steps, a.eval_every, seed)
+                            a.max_steps, a.eval_every, seed, init)
                     out.append(r)
-                    print(f"{arm:<12} L={depth:<4} mu={mu:<4g} "
+                    print(f"{init:<13}{arm:<12} L={depth:<4} mu={mu:<4g} "
                           f"steps={r['steps_to_growth']:<7} sbar={r['sbar_final']:.3f} "
                           f"sep={r['sep_final']:.4f} eff_rank={r['eff_rank_final']:.3f} "
                           f"delta={r['delta_final']:.2e} "
