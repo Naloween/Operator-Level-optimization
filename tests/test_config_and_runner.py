@@ -300,3 +300,61 @@ def test_identical_reruns_are_still_skipped_quietly(tmp_path, capsys):
     assert main([str(cfg_path), "--quiet"]) == 0
     assert main([str(cfg_path), "--quiet"]) == 0
     assert "skip" in capsys.readouterr().out
+
+
+def test_a_numerical_breakdown_is_recorded_not_raised(tmp_path):
+    """A preconditioner going singular is an outcome; it must leave a run, not a hole.
+
+    If it propagated, the run directory would have no metrics and the cell would be
+    missing from the sweep -- indistinguishable from a configuration never requested, so
+    the comparison would quietly drop whichever method broke down.
+    """
+    import torch
+
+    from olo.optim.baselines.torch_optims import Adam
+    from olo.runner import run
+
+    original = Adam.step
+
+    def explode(self, x, y, task):
+        if getattr(self, "_n", 0) >= 2:
+            raise torch._C._LinAlgError("linalg.solve: input matrix is singular")
+        self._n = getattr(self, "_n", 0) + 1
+        return original(self, x, y, task)
+
+    Adam.step = explode
+    try:
+        raw = _minimal(out_dir=str(tmp_path))
+        raw["optim"] = {"type": "adam", "lr": 1e-3}
+        raw["train"] = {"steps": 50, "eval_every": 1}
+        out = run(RunCfg.from_dict(raw), progress=False)
+    finally:
+        Adam.step = original
+
+    rows = [json.loads(l) for l in (out / "metrics.jsonl").open()]
+    assert rows[-1]["stopped"] == "numerical_failure"
+    assert "_LinAlgError" in rows[-1]["error"]
+    assert (out / "test.json").exists(), "a failed run must still be scored, not skipped"
+
+
+def test_an_interrupted_run_is_re_run_not_treated_as_done(tmp_path, capsys):
+    """config.yaml is written before training, so its presence cannot mean 'finished'.
+
+    A run killed partway leaves the directory behind; resuming skipped it forever and the
+    cell stayed missing from the sweep. Completion is marked by metrics.jsonl, written
+    only once the training loop returns.
+    """
+    from olo.run import main
+
+    cfg_path = tmp_path / "c.yaml"
+    runs_dir = tmp_path / "runs"
+    cfg = RunCfg.from_dict(_minimal(out_dir=str(runs_dir)))
+    cfg.save(cfg_path)
+
+    partial = cfg.run_dir
+    partial.mkdir(parents=True)
+    cfg.save(partial / "config.yaml")            # started, then killed
+
+    assert main([str(cfg_path), "--quiet"]) == 0
+    assert (partial / "metrics.jsonl").exists(), "the interrupted run was not redone"
+    assert "skip" not in capsys.readouterr().out

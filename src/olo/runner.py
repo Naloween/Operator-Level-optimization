@@ -35,6 +35,11 @@ from olo.registry import build
 
 DTYPES = {"float32": torch.float32, "float64": torch.float64}
 
+#: Breakdowns that are results, not defects: a Kronecker factor going singular, a
+#: covariance filling with non-finite values after the weights have already diverged.
+#: Caught per step so the cell is recorded as failed instead of disappearing.
+NUMERICAL_FAILURES = (torch._C._LinAlgError,)
+
 
 def run(cfg: RunCfg, progress: bool = True) -> Path:
     torch.manual_seed(cfg.seed)
@@ -67,8 +72,20 @@ def run(cfg: RunCfg, progress: bool = True) -> Path:
         xd, yd = (x[:nd], y[:nd]) if want_diag else (x, y)
 
         pre = _pre_step_snapshot(net, xd, yd, task, cfg, want_diag)
-        with timer.time():
-            metrics = opt.step(x, y, task)
+        try:
+            with timer.time():
+                metrics = opt.step(x, y, task)
+        except NUMERICAL_FAILURES as exc:
+            # A preconditioner whose factors have gone singular or non-finite has broken
+            # down, which at depth is an experimental outcome rather than a bug. Letting
+            # it propagate would abort the run and leave no directory at all, and a cell
+            # missing from a sweep is indistinguishable from one never requested -- so the
+            # comparison would quietly drop whichever method failed. Record and stop.
+            rows.append({"step": step, "loss": float("nan"),
+                         "stopped": "numerical_failure", "error": f"{type(exc).__name__}: {exc}"})
+            if progress:
+                print(f"  numerical failure at step {step}: {type(exc).__name__}", flush=True)
+            break
 
         if want_diag or _due(step, cfg.train.eval_every, cfg.train.steps):
             row = {"step": step, **metrics}

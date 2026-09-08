@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
 
     failures = []
     for i, cfg in enumerate(configs, 1):
-        if cfg.run_dir.exists() and not args.overwrite:
+        if _is_complete(cfg.run_dir) and not args.overwrite:
             clash = _config_clash(cfg)
             if clash:
                 # Two different configurations mapping to one directory means the run name
@@ -81,6 +81,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {name}: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def _is_complete(run_dir: Path) -> bool:
+    """Whether a run finished, rather than merely having been started.
+
+    `config.yaml` is written before training, so a run interrupted partway leaves a
+    directory that looks done. Resuming would then skip it forever and the cell would be
+    missing from the sweep -- indistinguishable, in any later analysis, from a
+    configuration that was never requested. `metrics.jsonl` is written only after the
+    training loop returns, so it is the marker of a finished run.
+    """
+    return (run_dir / "metrics.jsonl").exists()
 
 
 def _config_clash(cfg: RunCfg) -> str | None:
