@@ -358,3 +358,39 @@ def test_an_interrupted_run_is_re_run_not_treated_as_done(tmp_path, capsys):
     assert main([str(cfg_path), "--quiet"]) == 0
     assert (partial / "metrics.jsonl").exists(), "the interrupted run was not redone"
     assert "skip" not in capsys.readouterr().out
+
+
+def test_stalling_follows_the_task_s_own_metric_and_direction(tmp_path):
+    """Plateau must be judged on what the task is actually being read on.
+
+    In the first MNIST depth sweep, stalling on validation *loss* cut 48% of stalled runs
+    while their accuracy was still climbing, at a median of step 700 of 1500 -- and the
+    cuts correlated with method and depth, so the resulting comparison was biased, not
+    merely noisy.
+    """
+    from olo.config import RunCfg
+    from olo.runner import _Stopper
+
+    cfg = RunCfg.from_dict(_minimal(train={"steps": 100, "eval_every": 1,
+                                           "stop_patience": 3, "stop_min_delta": 1e-3}))
+
+    # accuracy climbing while the loss it would otherwise watch gets worse
+    rising = _Stopper(cfg, ("val_accuracy", "max"))
+    for loss, acc in ((1.0, 0.50), (1.1, 0.60), (1.2, 0.70), (1.3, 0.80), (1.4, 0.90)):
+        assert rising(loss, acc) is None, "a run still gaining accuracy was cut"
+
+    flat = _Stopper(cfg, ("val_accuracy", "max"))
+    assert flat(1.0, 0.10) is None
+    reasons = [flat(1.0, 0.10) for _ in range(4)]
+    assert "stalled" in reasons, "a run pinned at chance accuracy was not stopped"
+
+
+def test_divergence_is_still_judged_on_the_loss(tmp_path):
+    """Whatever the stall metric, a blown-up run must still be caught as diverged."""
+    from olo.config import RunCfg
+    from olo.runner import _Stopper
+
+    cfg = RunCfg.from_dict(_minimal(train={"steps": 10, "eval_every": 1, "stop_above": 1e3}))
+    s = _Stopper(cfg, ("val_accuracy", "max"))
+    assert s(1e6, 0.5) == "diverged"
+    assert _Stopper(cfg, ("val_accuracy", "max"))(float("nan"), 0.5) == "diverged"

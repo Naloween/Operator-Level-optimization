@@ -57,7 +57,7 @@ def run(cfg: RunCfg, progress: bool = True) -> Path:
 
     timer = StepTimer(device)
     timer.reset_peak_memory()
-    stopper = _Stopper(cfg)
+    stopper = _Stopper(cfg, getattr(task, "stall_metric", ("primary", "min")))
     rows: list[dict] = []
     arrays: dict[str, list] = {}
     lam = float(getattr(opt, "lam", 0.0))       # the rho_k monitor is relative to it
@@ -103,7 +103,8 @@ def run(cfg: RunCfg, progress: bool = True) -> Path:
             if progress:
                 _print(row)
 
-            stop = stopper(row.get("eval_primary"))
+            stop = stopper(row.get("eval_primary"),
+                           row.get(f"eval_{stopper.stall_key}"))
             if stop:
                 rows[-1]["stopped"] = stop
                 if progress:
@@ -319,30 +320,42 @@ class _Stopper:
     distinction the depth experiments are about.
     """
 
-    def __init__(self, cfg: RunCfg) -> None:
+    def __init__(self, cfg: RunCfg, stall_metric: tuple[str, str] = ("primary", "min")) -> None:
         self.cfg = cfg.train
-        self.best = np.inf
+        self.stall_key, self.stall_mode = stall_metric
+        self.best = -np.inf if self.stall_mode == "max" else np.inf
         self.since_improved = 0
 
-    def __call__(self, primary) -> str | None:
-        if primary is None:
-            return None
-        if not np.isfinite(primary):
-            return "diverged"
-        if self.cfg.stop_below is not None and primary < self.cfg.stop_below:
-            return "converged"
-        if self.cfg.stop_above is not None and primary > self.cfg.stop_above:
-            return "diverged"
+    def __call__(self, primary, stall_value=None) -> str | None:
+        """Divergence and convergence are judged on `primary`; plateau on the stall metric.
 
-        if primary < self.best * (1.0 - self.cfg.stop_min_delta):
-            self.best, self.since_improved = primary, 0
-        else:
-            self.best = min(self.best, primary)
-            self.since_improved += 1
-            if (self.cfg.stop_patience is not None
-                    and self.since_improved >= self.cfg.stop_patience):
-                return "stalled"
-        return None
+        They are separate because they answer separate questions. `primary` is a loss, so
+        "has it blown up" is well posed on it. Plateau is about whether the run is still
+        learning, and on classification that is a question about accuracy: validation loss
+        flattens or climbs from growing confidence long before accuracy stops improving.
+        """
+        if primary is not None:
+            if not np.isfinite(primary):
+                return "diverged"
+            if self.cfg.stop_below is not None and primary < self.cfg.stop_below:
+                return "converged"
+            if self.cfg.stop_above is not None and primary > self.cfg.stop_above:
+                return "diverged"
+
+        v = primary if stall_value is None else stall_value
+        if v is None or self.cfg.stop_patience is None or not np.isfinite(v):
+            return None
+
+        delta = self.cfg.stop_min_delta
+        improved = (v > self.best + abs(self.best) * delta if self.stall_mode == "max"
+                    else v < self.best * (1.0 - delta))
+        if improved or not np.isfinite(self.best):
+            self.best, self.since_improved = v, 0
+            return None
+
+        self.best = max(self.best, v) if self.stall_mode == "max" else min(self.best, v)
+        self.since_improved += 1
+        return "stalled" if self.since_improved >= self.cfg.stop_patience else None
 
 
 def _device(name: str) -> torch.device:

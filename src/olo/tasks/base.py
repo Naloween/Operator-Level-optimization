@@ -16,6 +16,13 @@ class Task(ABC):
     #: loss() averages over the batch (so per-sample gradients need rescaling by B)
     batch_mean: bool = True
 
+    #: (metric, direction) that early stopping watches for a plateau. Not necessarily
+    #: `primary`: on classification, validation loss plateaus or even rises from growing
+    #: confidence while accuracy is still climbing, so stalling on it cuts runs that are
+    #: still learning -- measured at 48% of stalled runs in the first MNIST depth sweep,
+    #: at a median of step 700 of 1500, and correlated with method and depth.
+    stall_metric: tuple[str, str] = ("primary", "min")
+
     d_in: int
     d_out: int
 

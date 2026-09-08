@@ -25,6 +25,7 @@ DEFAULT_ROOT = "data"
 class _ImageClassification(Task):
     dataset_name: str
     n_classes = 10
+    stall_metric = ("val_accuracy", "max")
 
     def __init__(
         self,
