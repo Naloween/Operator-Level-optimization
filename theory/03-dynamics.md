@@ -7,6 +7,10 @@ argument, each with the number that would confirm or refute it. **The low-rank b
 proved here**; what is proved is an exact reduction of the problem to a single object, and a
 record of which candidate hypotheses about that object have already been ruled out.
 
+> Continued in [`04-instability.md`](04-instability.md), which separates the bias into a
+> drive and a feedback, gives the feedback's exact rate, and identifies the seed exactly.
+> `(H-fluct)` below is resolved there.
+
 ---
 
 ## 1. The master equation
@@ -157,9 +161,10 @@ dominates in probability once $N$ is large.~~
 > $B^{-1/2}$ (measured slope $-0.48$ over $B = 32$–$8192$).
 >
 > Under sign-asymmetric data the cancellation fails and the terms are systematic: on MNIST,
-> whose pixels are non-negative, the log-log batch slope is $-0.011$ and the ratio is
-> $0.94$ at $B = 2048$. That is the regime the measurements in §3(b) above were taken in,
-> which is why $|\mathrm{cross}|/|\mathrm{self}|$ came out non-negligible there.
+> whose pixels are non-negative, the log-log batch slope is $-0.032 \pm 0.036$ over nine
+> runs -- indistinguishable from zero -- and the ratio is $0.83$ at $B = 2048$. That is the
+> regime the measurements in §3(b) above were taken in, which is why
+> $|\mathrm{cross}|/|\mathrm{self}|$ came out non-negligible there.
 >
 > Note also that §3(b) asked the wrong question of the right object. By Lemma 12 of file 04
 > the bias depends only on the *spread* of the log-velocity, so the quantity to compare is

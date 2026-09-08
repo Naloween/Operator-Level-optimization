@@ -43,9 +43,9 @@ rather than hypothetical.
 | amplification exponent | `psi = (1-2/L) + p` | 40/40 cells, `L = 2..256`, `p = -1..1`, worst error 0.0087 |
 | whole spectrum from one scalar | Cor. 14.1 | max log error `1.4e-11` to `7.9e-3` |
 | seed is multiplicative | `r(t) ∝ r(0)` | ratio constant to 3 digits over 5 decades of `r(0)` |
-| sign of the effect | Cor. 13.2 | 9/9 correct, including `psi = 0` |
-| CReLU seed, symmetric data | `B^{-1/2}` | slope −0.51 (seed), −0.48 (realized separation) |
-| CReLU seed, MNIST | systematic | slope −0.011, ratio 0.94 at `B = 2048` |
+| sign of the effect | Cor. 13.2 | 40/40 correct, including `psi = 0` |
+| CReLU seed, symmetric data | `B^{-1/2}` | slope −0.507 ± 0.010 (seed), −0.48 (realized separation) |
+| CReLU seed, MNIST | systematic | slope −0.032 ± 0.036, ratio 0.83 at `B = 2048` |
 | symmetrized batch | `Delta = 0` exactly | `2.2e-16` at every depth, both input laws |
 | direction of every separation change | Lemma 12: `sign(dr) = sign(b)` | 100% where the form fits (`R^2 >= 0.9`), 89% overall |
 | Xavier vs looks-linear, all else equal | seed decides | eff. rank 1.50 vs 7.04 at `L = 16` |

@@ -36,8 +36,9 @@ network off the linear manifold: the correlation between the operator residual a
 sign pattern, `mean_b[R_b E_b]`. Under a sign-symmetric input distribution it is a mean-zero
 average decaying as `B^{-1/2}`; under a sign-asymmetric one -- MNIST, whose pixels are
 non-negative -- it is systematic and no batch size removes it (measured log-log slopes:
-**-0.51 vs -0.01**, with a continuous dose-response between). And a batch closed under
-negation makes it *exactly* zero, so the looks-linear manifold is invariant and a CReLU
+**−0.507 ± 0.010 vs −0.032 ± 0.036**, nine runs each, with a continuous dose-response
+between). And a batch closed under negation makes it *exactly* zero, so the looks-linear
+manifold is invariant and a CReLU
 network trained that way stays a deep linear network forever, to machine precision
 (Theorem 17).
 
