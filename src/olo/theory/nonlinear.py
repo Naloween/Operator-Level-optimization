@@ -149,12 +149,13 @@ def decompose(net, X: torch.Tensor, G: torch.Tensor, sample: int = 0) -> Velocit
         for l in range(net.depth):
             A, Bc = ctx[l]
             A_x, B_x = pick(A, sample).double(), pick(Bc, sample).double()
-            own = A_x.T @ G[sample].double() @ B_x.T
+            own = A_x.T @ pick(G, sample).double() @ B_x.T
             other = torch.zeros_like(own)
             for bp in range(B):
                 if bp == sample:
                     continue
-                other += pick(A, bp).double().T @ G[bp].double() @ pick(Bc, bp).double().T
+                other += (pick(A, bp).double().T @ pick(G, bp).double()
+                          @ pick(Bc, bp).double().T)
 
             for k in range(n_modes):
                 u, v = U[:, k].double(), Vh[k, :].double()

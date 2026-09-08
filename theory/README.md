@@ -9,27 +9,56 @@ with the measurement that would confirm or refute it.
 |---|---|---|
 | [`01-crelu-structure.md`](01-crelu-structure.md) | gate isometry, exact sign decomposition, uniform per-layer bound, modes | all unconditional |
 | [`02-mode-ensemble.md`](02-mode-ensemble.md) | exact transfer operator for mode averages, positivity, stabilization | unconditional except Thm 9 (primitivity) |
-| [`03-dynamics.md`](03-dynamics.md) | master equation for singular-value dynamics, self/cross split, what is ruled out, open hypotheses | reduction is unconditional; the bias is **not** proved |
+| [`03-dynamics.md`](03-dynamics.md) | master equation for singular-value dynamics, self/cross split, four hypotheses ruled out | reduction is unconditional |
+| [`04-instability.md`](04-instability.md) | drive vs feedback, the rate `psi = (1-2/L)+p`, growth as the clock, where the CReLU seed comes from, exact invariance under symmetrized batches | unconditional; `(H-fluct)` resolved |
 
 ## Reading order
 
-Start with 01 (structure), then 02 (statics at frozen weights), then 03 (dynamics, and the
-open problem). §3 of 03 lists four candidate hypotheses that were checked and failed; §4
-lists the three that remain, each with the experiment that would settle it.
-
-## Tests
-
-```
-pytest tests/test_theory_crelu.py      # file 01
-pytest tests/test_theory_modes.py      # file 01 §4
-pytest tests/test_theory_transfer.py   # file 02
-pytest tests/test_theory_nonlinear.py  # file 03
-pytest tests/test_theory_balanced.py   # closed-form mode gains (deep linear reference)
-```
+01 (structure) → 02 (statics at frozen weights) → 03 (dynamics, and what failed) →
+04 (the mechanism). A reader who wants only the answer can start at 04: it is
+self-contained apart from Corollary 2.1 and Lemma 2 of file 01.
 
 ## The one-line summary
 
-At fixed input, or at fixed mode, a CReLU network *is* a fixed-gates linear network, so the
-existing analysis applies unchanged. Everything genuinely new sits in the cross-input
-coupling of the weight gradient — one measurable object. That is a reduction, not a proof of
-the bias.
+The low-rank bias is two mechanisms, not one. A **drive** — gradient anisotropy across modes
+— manufactures separation out of an exact isometry and is present even at depth 2, where the
+feedback is identically zero. A **feedback** of rate `psi = (1 - 2/L) + p` multiplies
+whatever separation exists, with operator *growth* as its clock rather than training steps,
+and with depth's share saturating at 1. Neither is universal: an isotropic force at an
+isometry produces no bias at any depth, and a task with `p = -(1 - 2/L)` cancels the depth
+bias exactly.
+
+For CReLU specifically, a looks-linear network starts on the linear manifold and the only
+thing that can move it off is the correlation between the operator residual and the gate
+sign pattern (Theorem 16). That correlation is a `B^{-1/2}` fluctuation under sign-symmetric
+data, is systematic under asymmetric data such as MNIST's non-negative pixels, and is
+**exactly zero** when the batch is closed under negation — in which case the network remains
+a deep linear network for all time (Theorem 17), so the reduction of file 03 becomes exact
+rather than hypothetical.
+
+## Measured, in one table
+
+| claim | prediction | measured |
+|---|---|---|
+| amplification exponent | `psi = (1-2/L) + p` | 40/40 cells, `L = 2..256`, `p = -1..1`, worst error 0.0087 |
+| whole spectrum from one scalar | Cor. 14.1 | max log error `1.4e-11` to `7.9e-3` |
+| seed is multiplicative | `r(t) ∝ r(0)` | ratio constant to 3 digits over 5 decades of `r(0)` |
+| sign of the effect | Cor. 13.2 | 9/9 correct, including `psi = 0` |
+| CReLU seed, symmetric data | `B^{-1/2}` | slope −0.51 (seed), −0.48 (realized separation) |
+| CReLU seed, MNIST | systematic | slope −0.011, ratio 0.94 at `B = 2048` |
+| symmetrized batch | `Delta = 0` exactly | `1.1e-16` after 2000 steps |
+
+## Tests and studies
+
+```
+pytest tests/test_theory_crelu.py        # file 01
+pytest tests/test_theory_modes.py        # file 01 §4
+pytest tests/test_theory_transfer.py     # file 02
+pytest tests/test_theory_nonlinear.py    # file 03
+pytest tests/test_theory_instability.py  # file 04
+pytest tests/test_theory_balanced.py     # closed-form mode gains (deep linear reference)
+
+python studies/forcing.py       # the rate law, with the operator force prescribed
+python studies/seed_source.py   # fluctuation vs systematic seed, across tasks
+python studies/symmetrize.py    # switching the nonlinearity off exactly
+```

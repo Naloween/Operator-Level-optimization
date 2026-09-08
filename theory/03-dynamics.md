@@ -134,18 +134,37 @@ $$\operatorname{sep}(J_{\varepsilon(x)}) \;\ge\; \mathbb{E}_\varepsilon[\operato
 *Falsified by:* finding a task/architecture where realized separation falls below the
 ensemble mean. Computed by `olo.theory.modes.compare`.
 
-**(H-fluct) The cross terms are mean-zero fluctuations across inputs.** If
+**(H-fluct) The cross terms are mean-zero fluctuations across inputs.** ~~If
 $\mathrm{cross}_k = \sum_{x\ne x_0} c_k(x)$ with the $c_k(x)$ having mean zero and weak
 dependence, then $\mathrm{cross}_k = O_P(\sqrt{N})$ rather than $O(N)$, and the self term
-dominates in probability once $N$ is large — giving the bias with high probability rather
-than deterministically.
-*Status:* untested here, and the sign of the evidence is mixed — the observed mean
-$\cos(\mathrm{self},\mathrm{cross}) \approx -0.02$ is consistent with mean-zero behaviour, but
-per-input magnitude $0.07$–$0.7$ is large enough that a $\sqrt{N}$ cancellation needs to be
-demonstrated, not assumed.
-*Falsified by:* measuring $\|\mathrm{cross}\|$ as $N$ grows and finding growth linear rather
-than $\sqrt{\cdot}$. This is the cheapest next experiment: `decompose` already returns the
-pieces; sweep $N$.
+dominates in probability once $N$ is large.~~
+
+> **RESOLVED — see [`04-instability.md`](04-instability.md) §4.** The hypothesis is
+> **true for sign-symmetric data and false for asymmetric data**, and the true case does not
+> do what was hoped.
+>
+> At a looks-linear configuration $\Delta = 0$ makes the operator input-independent, so
+> $\Delta$ *is* the entire cross-input structure. Theorem 16 gives its increment exactly:
+> $\Delta\Delta_\ell = -\tfrac{\eta}{2}\,\mathbb{E}_b[R_b E_b]$, the correlation between the
+> operator residual and the gate sign pattern. Under a sign-symmetric input law this is a
+> mean-zero average of $B$ terms, so it is $\Theta_P(B^{-1/2})$ exactly as the hypothesis
+> supposed — measured slope $-0.51$, against $-1/2$.
+>
+> But the conclusion runs the other way. The $\sqrt{\cdot}$ cancellation does not rescue a
+> bias that would otherwise be swamped; **it is the bias**, and its smallness at large batch
+> is what makes a symmetric-data CReLU network resist low-rank collapse. Starting from an
+> exact isometry, the separation reached after equal operator growth itself scales as
+> $B^{-1/2}$ (measured slope $-0.48$ over $B = 32$–$8192$).
+>
+> Under sign-asymmetric data the cancellation fails and the terms are systematic: on MNIST,
+> whose pixels are non-negative, the log-log batch slope is $-0.011$ and the ratio is
+> $0.94$ at $B = 2048$. That is the regime the measurements in §3(b) above were taken in,
+> which is why $|\mathrm{cross}|/|\mathrm{self}|$ came out non-negligible there.
+>
+> Note also that §3(b) asked the wrong question of the right object. By Lemma 12 of file 04
+> the bias depends only on the *spread* of the log-velocity, so the quantity to compare is
+> the regression slope of $\mathrm{cross}_k/s_k$ on $\log s_k$, not $\|\mathrm{cross}\|$: a
+> large cross term that is uniform across modes rescales the operator and biases nothing.
 
 **(H-primitive) The layerwise transfer operators are primitive.** Needed for Theorem 9.
 *Status:* holds in the instances tested, with exponent $n = 2$. It is a property of
