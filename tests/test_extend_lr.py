@@ -97,3 +97,35 @@ def test_single_rate_cells_are_ignored(tmp_path):
     """One point is not a grid; there is no edge to be at."""
     _run(tmp_path, "g_adam_only", 32, "adam", 0.01, 0.9)
     assert edge_cells(load_runs(tmp_path, "g_*"), "eval_val_accuracy", "max") == []
+
+
+def test_generated_names_stay_distinct_across_cells(tmp_path):
+    """Two cells extended in the same round must not be handed the same run name.
+
+    Rebuilding the name from the sweep's base drops every axis but the learning rate, so
+    depth 8 and depth 32 both became "<base>__typeadam_lr1em05" -- one silently standing
+    in for the other, or refused as a clash. The template's own name already encodes the
+    axes; only its lr suffix should change.
+    """
+    from olo.extend_lr import edge_cells, launch
+
+    for depth in (8, 32):
+        for lr, acc in ((0.01, 0.2), (0.001, 0.5), (0.0001, 0.9)):
+            _run(tmp_path, f"e_depth{depth}_lr{lr}", depth, "adam", lr, acc)
+
+    cells = edge_cells(load_runs(tmp_path, "e_*"), "eval_val_accuracy", "max")
+    assert len(cells) == 2
+
+    names = []
+    import olo.extend_lr as m
+    original = m.subprocess.run
+    m.subprocess.run = lambda cmd, **kw: names.append(
+        cmd[cmd.index("--set") + 1]) or type("R", (), {"returncode": 0})()
+    try:
+        for c in cells:
+            launch(c, 1e-5, str(tmp_path), dry_run=False)
+    finally:
+        m.subprocess.run = original
+
+    assert len(set(names)) == 2, f"names collided: {names}"
+    assert any("8" in n for n in names) and any("32" in n for n in names)

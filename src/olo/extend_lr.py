@@ -22,6 +22,7 @@ only the learning rate differs.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -76,8 +77,14 @@ def next_lr(cell: dict) -> float | None:
 def launch(cell: dict, lr: float, out_dir: str, dry_run: bool) -> bool:
     """Re-run one cell at `lr`, reusing its own config so only the rate changes."""
     template: Run = cell["template"]
-    base = template.config["name"].split("__")[0]
-    name = f"{base}__type{cell['method']}_lr{_slug(lr)}"
+    # Derive the name from the template's own, replacing only its learning-rate suffix.
+    # Rebuilding it from the base instead would drop every other axis the sweep varied --
+    # depth above all -- so two different cells would be handed the same name and the
+    # second would be refused as a config clash.
+    stem = re.sub(r"_lr[^_/]*$", "", template.config["name"])
+    if stem == template.config["name"]:                  # no lr in the name to replace
+        stem = f"{stem}__depth{cell['depth']}_type{cell['method']}"
+    name = f"{stem}_lr{_slug(lr)}"
     cmd = [
         sys.executable, "-m", "olo.run", str(template.path / "config.yaml"), "--quiet",
         "--set", f"name={name}",

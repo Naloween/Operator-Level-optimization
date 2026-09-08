@@ -1,0 +1,66 @@
+# Does the factorization's low-rank bias become binding at depth?
+#
+# The MNIST depth probe found no wall for CReLU/looks-linear even at L=1024, but the
+# diagnostics showed the bias was there all along and strengthening with depth: the
+# operator's entropy effective rank fell from 9.98 to 7.51 at L=256, and from 9.56 to 3.17
+# at L=1024, with the condition number rising from 1.3 to 10 and from 2.8 to 525. Training
+# concentrates the spectrum, from an exactly isometric start, and depth sharpens it.
+#
+# It did not hurt there because ten classes through a width-32 stack is a rank-<=10
+# problem: the bias was aligned with the task rather than opposed to it.
+#
+# This task removes that escape. The target is a full-rank 16x16 orthogonal operator, so
+# all 16 directions are needed, and a looks-linear CReLU network represents it exactly at
+# every depth -- the network is linear at initialization and the target is linear. Any
+# depth-dependent failure is therefore the implicit bias of optimizing through factors,
+# not a limit of capacity or conditioning.
+#
+#   python -m olo.run configs/experiments/e06_low_rank_bias.yaml \
+#     --sweep model.depth=2,8,32,128,256 \
+#     --sweep optim.lr=0.01,0.003,0.001,0.0003,0.0001
+#
+# Read `eval_val_loss` against depth, and `effective_rank` against depth: the prediction
+# under a depth-amplified low-rank bias is that deep networks plateau at a higher loss
+# while their operator spectrum concentrates, even though they could represent the target
+# exactly.
+#
+# Early stopping is off. The first version of this experiment was read on a fixed 400-step
+# budget and most cells were still improving when it ended, which made an unfinished run
+# look like a depth effect.
+name: e06_low_rank_bias
+seed: 0
+device: auto
+dtype: float32
+
+model:
+  type: crelu_mlp
+  width: 16
+  depth: 32
+  init: looks_linear
+
+task:
+  type: teacher_student
+  d: 16
+  n: 256
+  target: orthogonal
+
+optim:
+  type: adam
+  adam:      {lr: 1.0e-3}
+  heavyball: {lr: 1.0e-2, momentum: 0.9}
+  als:       {lr: 0.1, lam: 1.0e-4, n_sweeps: 1, target: gradient, layers: all}
+
+train:
+  steps: 4000
+  batch_size: 64
+  eval_every: 250
+  stop_patience: null
+  stop_above: 1.0e6
+
+diagnostics:
+  every: 1000
+  batch_size: 8
+  mismatch: true
+  conditioning: true
+  spectrum: true
+  cost: true
