@@ -48,6 +48,20 @@ def main(argv: list[str] | None = None) -> int:
     failures = []
     for i, cfg in enumerate(configs, 1):
         if cfg.run_dir.exists() and not args.overwrite:
+            clash = _config_clash(cfg)
+            if clash:
+                # Two different configurations mapping to one directory means the run name
+                # does not capture everything being varied -- typically a value set with
+                # --set (which does not enter the name) inside a loop. Skipping silently
+                # would fill the sweep with whichever configuration ran first while
+                # reporting success, so refuse instead.
+                print(
+                    f"[{i}/{len(configs)}] REFUSED {cfg.name}: an existing run at "
+                    f"{cfg.run_dir} has a different config ({clash}). Give the runs "
+                    f"distinct names (--set name=...), or pass --overwrite.",
+                    file=sys.stderr)
+                failures.append((cfg.name, ValueError(f"config clash: {clash}")))
+                continue
             print(f"[{i}/{len(configs)}] skip {cfg.name} (exists; --overwrite to redo)")
             continue
         print(f"[{i}/{len(configs)}] {cfg.name} seed={cfg.seed}")
@@ -67,6 +81,30 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {name}: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def _config_clash(cfg: RunCfg) -> str | None:
+    """Describe how an existing run at this path differs from `cfg`, or None if it matches.
+
+    Only the fields that define the experiment are compared; `out_dir` and free-text notes
+    are not part of a run's identity.
+    """
+    path = cfg.run_dir / "config.yaml"
+    if not path.exists():
+        return None
+    try:
+        old = RunCfg.load(path).to_dict()
+    except Exception:
+        return None                          # unreadable: let the normal skip apply
+    new = cfg.to_dict()
+    ignore = {"out_dir", "notes"}
+    diffs = [k for k in set(old) | set(new)
+             if k not in ignore and old.get(k) != new.get(k)]
+    if not diffs:
+        return None
+    return ", ".join(
+        f"{k}: {old.get(k)!r} != {new.get(k)!r}" for k in sorted(diffs)[:3]
+    )
 
 
 def _parser() -> argparse.ArgumentParser:

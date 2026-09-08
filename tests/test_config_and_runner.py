@@ -269,3 +269,34 @@ def test_diagnostics_run_on_a_subsample_not_the_training_batch(tmp_path):
 
     assert seen, "diagnostics never built contexts"
     assert set(seen) == {3}, f"contexts built on {set(seen)} samples, expected 3"
+
+
+def test_reusing_a_run_directory_for_a_different_config_is_refused(tmp_path, capsys):
+    """Silently skipping a name collision fills a sweep with the wrong runs.
+
+    A value set with --set does not enter the run name, so a shell loop over depths that
+    uses --set writes every depth to one directory. The first depth wins, every later one
+    is skipped as "already exists", and the sweep reports success while containing a
+    single depth repeated. That happened; this makes it loud.
+    """
+    from olo.run import main
+
+    cfg_path = tmp_path / "c.yaml"
+    RunCfg.from_dict(_minimal(out_dir=str(tmp_path / "runs"))).save(cfg_path)
+
+    assert main([str(cfg_path), "--quiet"]) == 0                      # first depth
+    rc = main([str(cfg_path), "--quiet", "--set", "model.depth=7"])    # second, same name
+
+    assert rc == 1, "a config clash must fail, not be skipped"
+    assert "REFUSED" in capsys.readouterr().err
+
+
+def test_identical_reruns_are_still_skipped_quietly(tmp_path, capsys):
+    """Resuming an interrupted sweep must stay cheap: same config, same name, no work."""
+    from olo.run import main
+
+    cfg_path = tmp_path / "c.yaml"
+    RunCfg.from_dict(_minimal(out_dir=str(tmp_path / "runs"))).save(cfg_path)
+    assert main([str(cfg_path), "--quiet"]) == 0
+    assert main([str(cfg_path), "--quiet"]) == 0
+    assert "skip" in capsys.readouterr().out
