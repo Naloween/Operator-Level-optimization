@@ -394,3 +394,41 @@ def test_divergence_is_still_judged_on_the_loss(tmp_path):
     s = _Stopper(cfg, ("val_accuracy", "max"))
     assert s(1e6, 0.5) == "diverged"
     assert _Stopper(cfg, ("val_accuracy", "max"))(float("nan"), 0.5) == "diverged"
+
+
+def test_resume_matches_on_config_not_on_directory_name(tmp_path, capsys):
+    """A finished run must be recognised wherever it was written.
+
+    Directory names are labels chosen by whoever launched the sweep. Identifying runs by
+    name meant a loop that forgot to vary the name mapped eight configurations onto one
+    directory, and it meant the same configuration re-run under a new name was recomputed
+    from scratch. Identity is the config itself, minus name and output location.
+    """
+    from olo.run import completed_index, identity, main
+
+    cfg_path = tmp_path / "c.yaml"
+    runs_dir = tmp_path / "runs"
+    RunCfg.from_dict(_minimal(out_dir=str(runs_dir))).save(cfg_path)
+    assert main([str(cfg_path), "--quiet"]) == 0
+
+    # same experiment, different label -> recognised, not recomputed
+    assert main([str(cfg_path), "--quiet", "--set", "name=some_other_label"]) == 0
+    out = capsys.readouterr().out
+    assert "identical config already run" in out
+    assert not (runs_dir / "some_other_label").exists()
+
+    # a genuinely different experiment under a new label -> actually runs
+    assert main([str(cfg_path), "--quiet", "--set", "name=deeper",
+                 "--set", "model.depth=5"]) == 0
+    assert (runs_dir / "deeper" / "seed0" / "metrics.jsonl").exists()
+
+
+def test_identity_ignores_only_labels_and_paths():
+    from olo.run import identity
+
+    base = _minimal()
+    assert identity(RunCfg.from_dict(base).to_dict()) == \
+           identity(RunCfg.from_dict(_minimal(name="other", out_dir="/tmp/x",
+                                              notes="hi")).to_dict())
+    assert identity(RunCfg.from_dict(base).to_dict()) != \
+           identity(RunCfg.from_dict(_minimal(seed=1)).to_dict())

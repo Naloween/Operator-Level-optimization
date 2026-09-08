@@ -13,6 +13,7 @@ protocol anyone has to remember.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import traceback
 from pathlib import Path
@@ -46,7 +47,16 @@ def main(argv: list[str] | None = None) -> int:
     from olo.runner import run                       # deferred: pulls in torch
 
     failures = []
+    # Index what has already been run by config identity, not by directory name: resume
+    # must recognise a finished run wherever it was written.
+    done = {} if args.overwrite else completed_index(Path(configs[0].out_dir))
+
     for i, cfg in enumerate(configs, 1):
+        elsewhere = done.get(identity(cfg.to_dict()))
+        if elsewhere is not None and elsewhere != cfg.run_dir:
+            print(f"[{i}/{len(configs)}] skip {cfg.name} (identical config already run at "
+                  f"{elsewhere})")
+            continue
         if _is_complete(cfg.run_dir) and not args.overwrite:
             clash = _config_clash(cfg)
             if clash:
@@ -81,6 +91,32 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {name}: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def identity(cfg_dict: dict) -> str:
+    """What makes two runs the same experiment, independent of where they were written.
+
+    Everything except the run's name and its output location: same model, init, task,
+    optimizer, learning rate, budget, seed and diagnostics means the same run, whatever
+    directory it happens to sit in. Matching on this rather than on a directory name is
+    what makes resume correct -- a name is a label chosen by whoever launched the sweep,
+    and when a loop forgets to vary it, eight different configurations share one.
+    """
+    d = {k: v for k, v in cfg_dict.items() if k not in ("name", "out_dir", "notes")}
+    return json.dumps(d, sort_keys=True, default=str)
+
+
+def completed_index(out_dir: Path) -> dict[str, Path]:
+    """Identity -> directory, over every finished run under `out_dir`."""
+    index: dict[str, Path] = {}
+    for cfg_path in sorted(Path(out_dir).glob("*/*/config.yaml")):
+        if not _is_complete(cfg_path.parent):
+            continue
+        try:
+            index.setdefault(identity(RunCfg.load(cfg_path).to_dict()), cfg_path.parent)
+        except Exception:
+            continue
+    return index
 
 
 def _is_complete(run_dir: Path) -> bool:
