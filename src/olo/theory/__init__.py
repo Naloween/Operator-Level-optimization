@@ -1,4 +1,4 @@
-from olo.theory import balanced
+from olo.theory import balanced, crelu, deep_linear, modes, nonlinear
 from olo.theory.balanced import (
     alignment as balanced_alignment,
     bias_exponent,
@@ -16,4 +16,5 @@ from olo.theory.deep_linear import (
 
 __all__ = ["alignment", "alignment_curve", "gd_operator_step", "max_stable_lr",
            "mismatch_parameter", "balanced", "balanced_alignment", "bias_exponent",
-           "condition_amplification", "gain_matrix", "mode_gain"]
+           "condition_amplification", "gain_matrix", "mode_gain",
+           "crelu", "deep_linear", "modes", "nonlinear"]
