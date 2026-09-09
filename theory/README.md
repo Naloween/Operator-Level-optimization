@@ -10,7 +10,8 @@ with the measurement that would confirm or refute it.
 | [`01-crelu-structure.md`](01-crelu-structure.md) | gate isometry, exact sign decomposition, uniform per-layer bound, modes | all unconditional |
 | [`02-mode-ensemble.md`](02-mode-ensemble.md) | exact transfer operator for mode averages, positivity, stabilization | unconditional except Thm 9 (primitivity) |
 | [`03-dynamics.md`](03-dynamics.md) | master equation for singular-value dynamics, self/cross split, four hypotheses ruled out | reduction is unconditional |
-| [`04-instability.md`](04-instability.md) | drive vs feedback, the rate `psi = (1-2/L)+p`, growth as the clock, where the CReLU seed comes from, exact invariance under symmetrized batches | unconditional; `(H-fluct)` resolved |
+| [`04-instability.md`](04-instability.md) | drive vs feedback, the rate `psi = (1-2/L)+p`, growth as the clock, where the CReLU seed comes from, exact invariance under symmetrized batches | §1 and §4 unconditional; §2–§3 need (2.1)–(2.2) |
+| [`05-imbalance.md`](05-imbalance.md) | balancedness weakened to mode-independence; `K >= L`; what random init actually does to the exponent | unconditional; the modal reduction still assumed |
 
 ## Reading order
 
@@ -49,6 +50,8 @@ rather than hypothetical.
 | symmetrized batch | `Delta = 0` exactly | `2.2e-16` at every depth, both input laws |
 | direction of every separation change | Lemma 12: `sign(dr) = sign(b)` | 100% where the form fits (`R^2 >= 0.9`), 89% overall |
 | Xavier vs looks-linear, all else equal | seed decides | eff. rank 1.50 vs 7.04 at `L = 16` |
+| mode-independent imbalance | Thm 19: exponent unchanged | exact to 2e-15 at `K/L = 24` |
+| random init | mode-dependent, weakens the bias | `d log K/d log s < 0` in every cell tested |
 
 ## Tests and studies
 
@@ -64,4 +67,5 @@ python studies/forcing.py       # the rate law, with the operator force prescrib
 python studies/seed_source.py   # fluctuation vs systematic seed, across tasks
 python studies/symmetrize.py    # switching the nonlinearity off exactly
 python studies/report.py        # regenerates every table in file 04 section 5
+python studies/imbalance.py     # dropping balancedness: what the exponent does
 ```
