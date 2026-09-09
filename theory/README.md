@@ -66,7 +66,7 @@ pytest tests/test_theory_transfer.py     # file 02
 pytest tests/test_theory_nonlinear.py    # file 03
 pytest tests/test_theory_instability.py  # file 04
 pytest tests/test_theory_imbalance.py    # file 05
-pytest tests/test_theory_alignment.py    # file 06
+pytest tests/test_theory_reduction.py    # file 06
 pytest tests/test_theory_balanced.py     # closed-form mode gains (deep linear reference)
 
 python studies/forcing.py       # the rate law, with the operator force prescribed

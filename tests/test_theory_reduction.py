@@ -7,7 +7,7 @@ import torch
 
 from olo.models.crelu_mlp import CReLUMLP
 from olo.models.deep_linear import DeepLinear
-from olo.theory.alignment import modal_reduction
+from olo.theory.reduction import modal_reduction
 from olo.theory.nonlinear import decompose
 
 

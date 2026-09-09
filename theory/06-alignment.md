@@ -18,7 +18,7 @@ and `g_k = u_k^\top G v_k`. The two agree exactly when `A_\ell A_\ell^\top` and
 aligned with the whole product. That is Theorem 6.1 of Haas et al. (ICML 2026), proved for
 fixed-gates linear networks and conditional on the subproduct being large enough.
 
-Three measurable quantities (`olo.theory.alignment`), none of which assumes anything:
+Three measurable quantities (`olo.theory.reduction`), none of which assumes anything:
 
 * **`reduction_error`** `= \|\text{exact} - \text{diagonal}\| / \|\text{exact}\|` — what the
   replacement actually costs. This is the quantity that matters; alignment only matters

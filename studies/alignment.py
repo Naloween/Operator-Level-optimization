@@ -42,7 +42,7 @@ from olo.models.crelu_mlp import CReLUMLP
 from olo.models.deep_linear import DeepLinear
 from olo.tasks.teacher_student import TeacherStudent
 from olo.tasks.vision import MNIST
-from olo.theory.alignment import modal_reduction
+from olo.theory.reduction import modal_reduction
 from olo.theory.instability import amplification, log_velocity_exponent
 
 MODELS = {"deep_linear": DeepLinear, "crelu_mlp": CReLUMLP}
