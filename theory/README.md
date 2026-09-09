@@ -12,6 +12,7 @@ with the measurement that would confirm or refute it.
 | [`03-dynamics.md`](03-dynamics.md) | master equation for singular-value dynamics, self/cross split, four hypotheses ruled out | reduction is unconditional |
 | [`04-instability.md`](04-instability.md) | drive vs feedback, the rate `psi = (1-2/L)+p`, growth as the clock, where the CReLU seed comes from, exact invariance under symmetrized batches | §1 and §4 unconditional; §2–§3 need (2.1)–(2.2) |
 | [`05-imbalance.md`](05-imbalance.md) | balancedness weakened to mode-independence; `K >= L`; what random init actually does to the exponent | unconditional; the modal reduction still assumed |
+| [`06-alignment.md`](06-alignment.md) | the modal reduction measured: what it costs, when separation helps, and the task exponent on real data | measurement only; no new theorems |
 
 ## Reading order
 
@@ -52,6 +53,9 @@ rather than hypothetical.
 | Xavier vs looks-linear, all else equal | seed decides | eff. rank 1.50 vs 7.04 at `L = 16` |
 | mode-independent imbalance | Thm 19: exponent unchanged | exact to 2e-15 at `K/L = 24` |
 | random init | mode-dependent, weakens the bias | `d log K/d log s < 0` in every cell tested |
+| modal reduction cost | assumed free in file 04 | 3% from looks-linear, **43% from Xavier** |
+| separation buys alignment (Thm 6.1) | error falls with separation | holds above a threshold that grows with depth |
+| task exponent on MNIST | unknown | `p ≈ +11` from an isometric start: the task *reinforces* the bias |
 
 ## Tests and studies
 
@@ -61,6 +65,8 @@ pytest tests/test_theory_modes.py        # file 01 §4
 pytest tests/test_theory_transfer.py     # file 02
 pytest tests/test_theory_nonlinear.py    # file 03
 pytest tests/test_theory_instability.py  # file 04
+pytest tests/test_theory_imbalance.py    # file 05
+pytest tests/test_theory_alignment.py    # file 06
 pytest tests/test_theory_balanced.py     # closed-form mode gains (deep linear reference)
 
 python studies/forcing.py       # the rate law, with the operator force prescribed
@@ -68,4 +74,5 @@ python studies/seed_source.py   # fluctuation vs systematic seed, across tasks
 python studies/symmetrize.py    # switching the nonlinearity off exactly
 python studies/report.py        # regenerates every table in file 04 section 5
 python studies/imbalance.py     # dropping balancedness: what the exponent does
+python studies/alignment.py     # what the modal reduction costs, and p on real data
 ```
