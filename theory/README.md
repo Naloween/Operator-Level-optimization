@@ -13,12 +13,19 @@ with the measurement that would confirm or refute it.
 | [`04-instability.md`](04-instability.md) | drive vs feedback, the rate `psi = (1-2/L)+p`, growth as the clock, where the CReLU seed comes from, exact invariance under symmetrized batches | §1 and §4 unconditional; §2–§3 need (2.1)–(2.2) |
 | [`05-imbalance.md`](05-imbalance.md) | balancedness weakened to mode-independence; `K >= L`; what random init actually does to the exponent | unconditional; the modal reduction still assumed |
 | [`06-alignment.md`](06-alignment.md) | the modal reduction measured: what it costs, when separation helps, and the task exponent on real data | measurement only; no new theorems |
+| [`07-patterns.md`](07-patterns.md) | **the nonlinear answer**: low-rank bias at a fixed gate pattern — mechanism universal, outcome set by the drive | exact reformulation; the key bound is a conjecture |
 
 ## Reading order
 
 01 (structure) → 02 (statics at frozen weights) → 03 (dynamics, and what failed) →
 04 (the mechanism). A reader who wants only the answer can start at 04: it is
 self-contained apart from Corollary 2.1 and Lemma 2 of file 01.
+
+## Naming
+
+Two unrelated objects were both called "mode" in files 01–06. A **pattern** `eps` is a gate
+pattern, one sign vector per layer (files 01–03, 07). A **direction** `k` is a singular index
+(files 04–06). "Mode-independent imbalance" in file 05 means *direction*-independent.
 
 ## The one-line summary
 
@@ -56,6 +63,8 @@ rather than hypothetical.
 | modal reduction cost | assumed free in file 04 | 3% from looks-linear, **43% from Xavier** |
 | separation buys alignment (Thm 6.1) | error falls with separation | holds above a threshold that grows with depth |
 | task exponent on MNIST | unknown | `p ≈ +11` from an isometric start: the task *reinforces* the bias |
+| bias at an arbitrary gate pattern | unknown | gain exponent `2 − 2/L`, robust to `δ = 0.4` |
+| realized vs typical patterns | `(H-mode)` needed? | **no** — they bias identically |
 
 ## Tests and studies
 
@@ -67,6 +76,7 @@ pytest tests/test_theory_nonlinear.py    # file 03
 pytest tests/test_theory_instability.py  # file 04
 pytest tests/test_theory_imbalance.py    # file 05
 pytest tests/test_theory_reduction.py    # file 06
+pytest tests/test_theory_patterns.py     # file 07
 pytest tests/test_theory_balanced.py     # closed-form mode gains (deep linear reference)
 
 python studies/forcing.py       # the rate law, with the operator force prescribed
@@ -75,4 +85,5 @@ python studies/symmetrize.py    # switching the nonlinearity off exactly
 python studies/report.py        # regenerates every table in file 04 section 5
 python studies/imbalance.py     # dropping balancedness: what the exponent does
 python studies/alignment.py     # what the modal reduction costs, and p on real data
+python studies/patterns.py      # low-rank bias at fixed gate patterns
 ```

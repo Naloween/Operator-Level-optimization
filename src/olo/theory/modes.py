@@ -128,3 +128,82 @@ def compare(net, X: torch.Tensor, n_random: int = 32,
         separation_random=sep(R[:n]),
         separation_realized=sep(E[:n]),
     )
+
+
+# -- dynamics at a fixed gate pattern ---------------------------------------
+#
+# NAMING. This module's "mode" is a **gate pattern** `eps` -- a sign vector per layer.
+# `olo.theory.instability` and `olo.theory.imbalance` use "mode" for the k-th **singular
+# direction** of an operator. They are unrelated objects and the collision is mine; in the
+# code below the gate one is `pattern` and the spectral one is `direction k`.
+#
+# The point of working at a fixed pattern: `J_eps` is a polynomial in the weights with no
+# discontinuity, so `t -> J_eps(t)` is smooth even where `t -> J(x)` jumps. And the weight
+# gradient `Gamma_l` is one matrix shared by every pattern -- the patterns differ only in
+# how they compose it. So the dynamics of every pattern is a fixed-gates linear network
+# driven by the same `Gamma`, which is what makes the question tractable at all.
+
+
+def gates_of_pattern(net, eps: torch.Tensor) -> list[torch.Tensor]:
+    """The gate tensors a CReLU net would have on prescribed signs `eps`, shape (L-1, d).
+
+    Returned in the layout `net.gates` uses, so `operator`, `all_contexts` and every
+    diagnostic work at a prescribed pattern with no special-casing.
+    """
+    if eps.shape[0] != net.depth - 1:
+        raise ValueError(f"need {net.depth - 1} sign vectors, got {eps.shape[0]}")
+    out = []
+    for z in eps:
+        pos = torch.diag_embed((z > 0).to(torch.float64)).unsqueeze(0)
+        neg = torch.diag_embed((z < 0).to(torch.float64)).unsqueeze(0)
+        out.append(torch.cat([pos, -neg], dim=-2))
+    return out
+
+
+@torch.no_grad()
+def pattern_dynamics(net, eps: torch.Tensor, grads: list[torch.Tensor],
+                     x: torch.Tensor | None = None) -> dict:
+    """Singular-value velocity of `J_eps` under the *realized* weight gradients.
+
+    `grads[l]` is `Gamma_l = dL/dW_l`, computed from the real loss on the real data (so
+    every cross-input effect is already inside it). Then, exactly,
+
+        sdot_k(eps) = - sum_l u_k^T A_l^eps Gamma_l B_l^eps v_k
+
+    with no approximation and no alignment assumption: `J_eps = A_l^eps W_l B_l^eps` holds
+    by construction. Also returns the pattern's own mode gain
+    `c_k = sum_l ||A_l^T u_k||^2 ||B_l v_k||^2` and the effective drive `g_k := -sdot_k/c_k`,
+    which is defined so that `sdot_k = -c_k g_k` holds identically -- the split is a
+    change of variables, not a hypothesis.
+    """
+    width = net.width
+    gates = gates_of_pattern(net, eps)
+    probe = torch.zeros(1, net.d_in, dtype=torch.float64) if x is None else x[:1]
+    J = net.operator(probe, gates)[0].double()
+    U, S, Vh = torch.linalg.svd(J)
+    V = Vh.T
+    ctx = net.all_contexts(probe, gates)
+
+    k = S.shape[0]
+    sdot = torch.zeros(k, dtype=torch.float64)
+    c = torch.zeros(k, dtype=torch.float64)
+    for l in range(net.depth):
+        A = ctx[l][0][0].double()
+        B = ctx[l][1][0].double()
+        sdot -= (U[:, :k] * ((A @ grads[l].double() @ B) @ V[:, :k])).sum(0)
+        c += (A.T @ U).pow(2).sum(0)[:k] * (B @ V).pow(2).sum(0)[:k]
+    g = torch.where(c > 0, -sdot / c.clamp_min(1e-300), torch.zeros_like(c))
+    return {"s": S.numpy(), "sdot": sdot.numpy(), "gain": c.numpy(), "drive": g.numpy(),
+            "width": width}
+
+
+def hamming_mix(realized: torch.Tensor, random_: torch.Tensor, frac: float,
+                generator: torch.Generator | None = None) -> torch.Tensor:
+    """Interpolate between two patterns by flipping `frac` of the realized signs.
+
+    `frac = 0` is the realized pattern, `frac = 1` an independent Rademacher one, and the
+    values between trace out the path from patterns the data actually produces to typical
+    ones -- which is the axis (H-mode) in `theory/03-dynamics.md` is stated along.
+    """
+    mask = torch.rand(realized.shape, generator=generator) < frac
+    return torch.where(mask, random_, realized)
