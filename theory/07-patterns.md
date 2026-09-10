@@ -60,8 +60,16 @@ number was unstable.
 
 ## 2. The main result: the mechanism survives, at every pattern
 
-Sweep the nonlinearity `δ := max_ℓ ‖Δ_ℓ‖/‖S_ℓ‖` from 0 (looks-linear, where every pattern
-gives the *same* operator) upward, holding the spectrum seed fixed, and measure the
+Recall from file 01 that a CReLU layer splits exactly as `W_ℓ = [P_ℓ | Q_ℓ]`,
+`S_ℓ := (P_ℓ − Q_ℓ)/2`, `Δ_ℓ := (P_ℓ + Q_ℓ)/2`, giving `W_ℓ D(z) = S_ℓ + Δ_ℓ diag(sign z)`.
+So `S_ℓ` is the pattern-independent part of layer `ℓ` and `Δ_ℓ` is the part the gate pattern
+multiplies. Define the **nonlinearity**
+
+    δ := max_ℓ ‖Δ_ℓ‖ / ‖S_ℓ‖ ,
+
+which is 0 exactly at a looks-linear configuration (`Δ = 0`, Cor. 2.1) and grows as the
+network leaves the linear manifold. Sweep it from 0 (where every pattern gives the *same*
+operator) upward, holding the spectrum seed fixed, and measure the
 **gain exponent** of (1.2) at random Rademacher patterns. No gradient enters — this is pure
 geometry.
 
@@ -179,6 +187,15 @@ linear network forever.
 
 > **Conjecture.** For every pattern `ε`, `|d log K^ε / d log s| ≤ C(δ)` with `C(δ) → 0` as
 > `δ → 0`, and `C` growing much more slowly than the perturbative `(1+δ)^L − 1`.
+>
+> **Resolved in [`08-gain-bound.md`](08-gain-bound.md), with a correction.** A bound in `δ`
+> alone is *impossible*: the theorem needs an upper bound on `K`, and `K` is unbounded above
+> (one layer scale to zero sends `K → ∞` at fixed `Π x_ℓ`). What is proved instead is a
+> certificate, `|d log K/d log s| ≤ w/(2σ)` with `w` the width of a band containing `log K`
+> and `σ` the spread of `log s` — whose floor is proved unconditionally
+> (`c_k ≥ L s_k² g^{-2/L}`) and whose ceiling is one measured scalar. It certifies the
+> exponent to within 0.02–0.065 of `2 − 2/L` near the linear manifold and 0.27–0.79 far from
+> it, with 0 violations across the grid.
 
 Measured `C`: `≤ 0.02` at `δ = 0.05`, `≤ 0.09` at `δ = 0.4`, `≤ 0.24` at `δ = 0.8`, roughly
 flat in depth. A proof would have to exploit that the pattern change is

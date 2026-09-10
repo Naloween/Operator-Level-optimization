@@ -179,3 +179,94 @@ def mode_gains(net, x: torch.Tensor, sample: int = 0) -> ModeGain:
         A, B = pick(ctx[l][0]), pick(ctx[l][1])
         q[:, l] = ((A.T @ U).pow(2).sum(0)[:k] * (B @ Vh.T).pow(2).sum(0)[:k]).numpy()
     return ModeGain(s=S.numpy(), q=q, L=net.depth)
+
+
+# -- a rigorous certificate for the gain exponent ---------------------------
+
+
+def slope_bound(x: np.ndarray, lo: float, hi: float) -> float:
+    """Lemma A: `|least-squares slope| <= (hi - lo) / (2 sd(x))` when every `y` is in [lo,hi].
+
+    Proof. Let `xc = x - mean(x)`, so `<xc, 1> = 0` and hence `<xc, y> = <xc, y - c1>` for
+    every constant `c`. Take `c` the midpoint of the band, so `|y_i - c| <= w/2` with
+    `w = hi - lo`. Cauchy-Schwarz gives
+
+        |b| = |<xc, y - c1>| / ||xc||^2 <= ||y - c1|| / ||xc|| <= (w/2) sqrt(n) / ||xc||,
+
+    and `||xc|| = sqrt(n) sd(x)`. The midpoint is what buys the factor 2; centring `y` on
+    its own mean instead would only give `w / sd(x)`.
+    """
+    sd = float(np.std(np.asarray(x, dtype=float)))
+    return (hi - lo) / (2.0 * sd) if sd > 0 else float("inf")
+
+
+def gain_floor(s: np.ndarray, weight_norms, depth: int) -> np.ndarray:
+    """Lemma B: `c_k >= L s_k^2 g^{-2/L}` with `g = prod_l ||W_l||_2`. No hypotheses.
+
+    Proof. `s_k = u_k^T A_l W_l B_l v_k = <A_l^T u_k, W_l B_l v_k>`, so Cauchy-Schwarz gives
+    `s_k <= ||A_l^T u_k|| ||W_l|| ||B_l v_k||`, i.e. `q_{l,k} >= s_k^2 / ||W_l||^2` for every
+    layer. AM-GM on `c_k = sum_l q_{l,k}` then gives
+    `c_k >= L (prod_l q_{l,k})^{1/L} >= L s_k^2 g^{-2/L}`.
+
+    Tight: an orthogonal chain has every `q_{l,k} = 1`, `g = 1`, `c_k = L`.
+    """
+    g = float(np.prod(np.asarray(weight_norms, dtype=float)))
+    return depth * np.asarray(s, dtype=float) ** 2 * g ** (-2.0 / depth)
+
+
+@dataclass
+class GainCertificate:
+    """A rigorous bound on how far the gain exponent can be from `2 - 2/L`."""
+
+    exponent: float          # the measured d log c / d log s
+    deviation: float         # |exponent - (2 - 2/L)|
+    bound: float             # the certified bound on that deviation
+    band: float              # width of the band containing log K
+    sd_log_s: float          # spread of the log-spectrum: the bound's denominator
+    floor_is_proved: bool    # whether the band's lower end came from Lemma B
+
+    @property
+    def holds(self) -> bool:
+        return self.deviation <= self.bound + 1e-9
+
+    @property
+    def tightness(self) -> float:
+        return self.deviation / self.bound if self.bound > 0 else float("nan")
+
+
+def gain_certificate(s: np.ndarray, c: np.ndarray, depth: int,
+                     weight_norms=None, floor: float = 1e-11) -> GainCertificate:
+    """Certify `|d log c/d log s - (2 - 2/L)|` from the measured spectrum and gain.
+
+    `K_k := c_k s_k^{2/L - 2}` by definition, so the exponent is exactly
+    `(2 - 2/L) + d log K/d log s` and Lemma A bounds the second term by the width of any
+    band containing `log K`, over twice the spread of `log s`.
+
+    With `weight_norms` supplied the band's lower end is Lemma B's *proved* floor, making
+    the whole statement a priori except for the single measured number `max_k K_k`. Without
+    them the observed minimum is used, which is still a rigorous certificate for the data
+    at hand -- and roughly four times tighter, because Lemma B's `g = prod ||W_l||`
+    overshoots.
+    """
+    s = np.asarray(s, dtype=float)
+    c = np.asarray(c, dtype=float)
+    m = (s > floor) & (c > 0)
+    if int(m.sum()) < 3:
+        return GainCertificate(*(float("nan"),) * 5, floor_is_proved=False)
+    ls, lK = np.log(s[m]), np.log(c[m] * s[m] ** (2.0 / depth - 2.0))
+    if weight_norms is not None:
+        lo = float(np.min(np.log(gain_floor(s[m], weight_norms, depth)
+                                 * s[m] ** (2.0 / depth - 2.0))))
+        proved = True
+    else:
+        lo, proved = float(lK.min()), False
+    hi = float(lK.max())
+    exponent = float(np.polyfit(ls, lK, 1)[0]) + balanced_exponent(depth)
+    return GainCertificate(
+        exponent=exponent,
+        deviation=abs(exponent - balanced_exponent(depth)),
+        bound=slope_bound(ls, lo, hi),
+        band=hi - lo,
+        sd_log_s=float(ls.std()),
+        floor_is_proved=proved,
+    )

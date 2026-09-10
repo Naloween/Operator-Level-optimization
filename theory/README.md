@@ -14,6 +14,7 @@ with the measurement that would confirm or refute it.
 | [`05-imbalance.md`](05-imbalance.md) | balancedness weakened to mode-independence; `K >= L`; what random init actually does to the exponent | unconditional; the modal reduction still assumed |
 | [`06-alignment.md`](06-alignment.md) | the modal reduction measured: what it costs, when separation helps, and the task exponent on real data | measurement only; no new theorems |
 | [`07-patterns.md`](07-patterns.md) | **the nonlinear answer**: low-rank bias at a fixed gate pattern — mechanism universal, outcome set by the drive | exact reformulation; the key bound is a conjecture |
+| [`08-gain-bound.md`](08-gain-bound.md) | a proved certificate for the gain exponent at any gate pattern | Lemmas A, B and Thm 20 proved; 0 violations |
 
 ## Reading order
 
@@ -65,6 +66,7 @@ rather than hypothetical.
 | task exponent on MNIST | unknown | `p ≈ +11` from an isometric start: the task *reinforces* the bias |
 | bias at an arbitrary gate pattern | unknown | gain exponent `2 − 2/L`, robust to `δ = 0.4` |
 | realized vs typical patterns | `(H-mode)` needed? | **no** — they bias identically |
+| gain exponent, certified | Thm 20 | within **0.02–0.065** of `2−2/L` near the linear manifold, 0 violations |
 
 ## Tests and studies
 
@@ -77,6 +79,7 @@ pytest tests/test_theory_instability.py  # file 04
 pytest tests/test_theory_imbalance.py    # file 05
 pytest tests/test_theory_reduction.py    # file 06
 pytest tests/test_theory_patterns.py     # file 07
+pytest tests/test_theory_gain_bound.py   # file 08 (Lemmas A, B, Thm 20)
 pytest tests/test_theory_balanced.py     # closed-form mode gains (deep linear reference)
 
 python studies/forcing.py       # the rate law, with the operator force prescribed
