@@ -7,6 +7,7 @@ with the measurement that would confirm or refute it.
 
 | file | contents | status |
 |---|---|---|
+| [`00-derivation.md`](00-derivation.md) | **start here** — everything defined and derived from scratch, each step tagged EXACT / ASSUMPTION / MEASURED | self-contained audit document |
 | [`01-crelu-structure.md`](01-crelu-structure.md) | gate isometry, exact sign decomposition, uniform per-layer bound, modes | all unconditional |
 | [`02-mode-ensemble.md`](02-mode-ensemble.md) | exact transfer operator for mode averages, positivity, stabilization | unconditional except Thm 9 (primitivity) |
 | [`03-dynamics.md`](03-dynamics.md) | master equation for singular-value dynamics, self/cross split, four hypotheses ruled out | reduction is unconditional |
