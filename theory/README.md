@@ -16,6 +16,7 @@ with the measurement that would confirm or refute it.
 | [`06-alignment.md`](06-alignment.md) | the modal reduction measured: what it costs, when separation helps, and the task exponent on real data | measurement only; no new theorems |
 | [`07-patterns.md`](07-patterns.md) | **the nonlinear answer**: low-rank bias at a fixed gate pattern — mechanism universal, outcome set by the drive | exact reformulation; the key bound is a conjecture |
 | [`08-gain-bound.md`](08-gain-bound.md) | a proved certificate for the gain exponent at any gate pattern | Lemmas A, B and Thm 20 proved; 0 violations |
+| [`09-basis-free.md`](09-basis-free.md) | **removes the alignment assumption**: effective-rank dynamics from traces alone | Thm 21 exact; Lemma 22 proved |
 
 ## Reading order
 
@@ -81,6 +82,7 @@ pytest tests/test_theory_imbalance.py    # file 05
 pytest tests/test_theory_reduction.py    # file 06
 pytest tests/test_theory_patterns.py     # file 07
 pytest tests/test_theory_gain_bound.py   # file 08 (Lemmas A, B, Thm 20)
+pytest tests/test_theory_moments.py      # file 09 (Thm 21, Lemma 22)
 pytest tests/test_theory_balanced.py     # closed-form mode gains (deep linear reference)
 
 python studies/forcing.py       # the rate law, with the operator force prescribed
