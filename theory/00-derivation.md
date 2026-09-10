@@ -140,11 +140,39 @@ with `g_k := u_k^\top G v_k` one needs the Gram matrices `A_lA_l^\top` and `B_l^
 product.
 
 > **(A2) Alignment.** `U^\top A_lA_l^\top U` and `V^\top B_l^\top B_l V` are diagonal.
-> **[ASSUMPTION]**. Its cost is the relative error of the reduction, **[MEASURED]** at
-> **median 0.029 from a looks-linear start and 0.425 from Xavier** (1890 snapshots).
-> Worse, that error is *proportional to the bias strength* — as the gain's spread grows from
-> 0 to 7.1 the reduction error grows from 0 to 0.87, ratio ≈ 0.43 throughout. **There is no
-> regime with substantial bias and an accurate reduction.**
+> **[ASSUMPTION]**, and **it fails qualitatively in the regime that matters.**
+
+Being precise about what fails. Since `\dot s_k = (\dot J)_{kk}` in the operator's own bases
+is exact, and `\dot J = -\sum_l A_lA_l^\top G B_l^\top B_l`, the exact velocity is
+
+$$\dot s_k = -\sum_l \sum_{i,j} (\tilde A_l)_{ki}\, \tilde G_{ij}\, (\tilde B_l)_{jk}, \qquad \tilde A_l = U^\top A_lA_l^\top U,\ \tilde B_l = V^\top B_l^\top B_l V,\ \tilde G = U^\top G V .$$
+
+The reduction keeps only `(i,j) = (k,k)`. **Under (A2)'s failure, direction `k`'s singular
+value is driven by gradient components in *other* directions**, routed through the Grams'
+off-diagonal. That is a coupling, not a small correction.
+
+**[MEASURED]** on networks trained 400 steps, comparing the exponent computed from the exact
+velocity against the one from the diagonal surrogate:
+
+| model | init | task | `L` | rel. error | cos | `ψ` exact | `ψ` diagonal |
+|---|---|---|---|---|---|---|---|
+| CReLU | looks-linear | MNIST | 16 | 0.023 | 1.000 | 4.668 | 4.379 |
+| CReLU | looks-linear | teacher–student | 16 | 0.013 | 1.000 | −0.266 | −0.354 |
+| CReLU | Xavier | teacher–student | 16 | 0.229 | 0.998 | **−0.016** | **+0.734** |
+| CReLU | Xavier | MNIST | 16 | 0.439 | 0.968 | **−0.050** | **+0.686** |
+| deep linear | Xavier | MNIST | 16 | 0.362 | 0.981 | **−0.003** | **+0.667** |
+| deep linear | Xavier | teacher–student | 16 | 0.805 | 0.899 | **−0.083** | **+0.667** |
+
+**Near the linear manifold the reduction is accurate (1–5% error, exponents agreeing to
+~0.2). At Xavier it gets the sign wrong**: the diagonal surrogate reports `ψ ≈ +0.7` — a
+low-rank bias — where the exact dynamics have `ψ ≈ 0`, none. High cosine does not save it,
+because the disagreement is in how the velocity is *distributed across directions*, which is
+exactly what an exponent measures.
+
+**Consequence, stated bluntly.** Everything built on `c_k` (§5, including Theorem 20) is a
+rigorous theory of the *induced step's diagonal*. It predicts spectral dynamics only where
+(A2) approximately holds — i.e. near-isometric networks. From a random initialization it does
+not, and asserting `2-2/L` there would be wrong in sign, not merely in magnitude.
 
 **The way around (A2), used everywhere below.** Do not assume it. *Define*
 
@@ -345,14 +373,20 @@ by term and the network stays exactly linear (`2\times10^{-16}` over 2000 steps)
 | | statement | cost |
 |---|---|---|
 | (A1) | simple singular values | generic |
-| (A2) | alignment — **avoided** via (4.3) | would be 3% / 43%, and ∝ the bias |
+| (A2) | alignment | **1–5% near an isometry; sign-wrong at Xavier** (§4.2) |
 | (A3) | `\omega` is a power law in `s` | `λ/(ψ\bar\omega)\in[0.37,2.77]`, `R^2` 0.06–0.59 |
+
+(4.3) makes `\dot s_k = -c_kg_k` an identity and so avoids *stating* (A2) — but it does not
+avoid *needing* it. Without (A2) the residual `g_k` absorbs the off-diagonal coupling, and
+the split into "architecture `c_k`" and "task `g_k`" stops being a split into architecture and
+task. **The decomposition is only interpretable where (A2) approximately holds.**
 
 **Measured, not proved:** `p` on two task families; the gain exponent's robustness in `δ`;
 `(H-mode)`'s irrelevance; the depth wall living in `r(0)` (Xavier `r(0)` grows linearly in
 `L`: 3.5, 8.2, 15.1, 32.2 nats, and training conserves it — final `r/r(0)` = 0.99, 1.01).
 
-**Not established.** Any bound on `p`. Any bound on the remainder in terms of `δ` alone —
+**Not established.** That `c_k` governs spectral dynamics away from near-isometric networks —
+measured false at Xavier, where it predicts the wrong sign. Any bound on `p`. Any bound on the remainder in terms of `δ` alone —
 **impossible**, since `K` is unbounded above (one layer scale to zero sends `K\to\infty` at
 fixed `\prod x_l`). Anything at width > 16 or depth > 32 outside the earlier MNIST sweeps.
 
