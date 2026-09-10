@@ -1,406 +1,303 @@
-# Spectral dynamics of deep factored networks: a self-contained derivation
+# Spectral dynamics of deep networks, without choosing a basis
 
-This file is the audit document. It defines every object used anywhere in `theory/`,
-derives every claim from scratch, and tags each step as **[EXACT]**, **[ASSUMPTION]**, or
-**[MEASURED]**. Nothing is assumed from the other files; where a result is proved elsewhere
-the proof is reproduced here in full.
+This is the audit document. It defines every object, derives every claim, and tags each step
+**[EXACT]**, **[ASSUMPTION]** or **[MEASURED]**. It is self-contained: nothing is imported
+from the other files.
 
-Read §8 first if you want the ledger of what is and is not established.
+It replaces an earlier version built on per-direction quantities. That version rested on an
+alignment assumption which is measured to fail qualitatively (§9), and the whole point of
+what follows is that the assumption is never needed.
 
 ---
 
 ## 1. Setup
 
-**Network.** `L` layers with weights `W_1, …, W_L`. Between them sit **gates** `D_l`, matrices
-that may depend on the input. The **operator** (input–output Jacobian) is
+**Network.** `L` layers `W_1,…,W_L` with **gates** `D_l` between them. The **operator** is the
+input–output Jacobian
 
 $$J \;=\; W_L\,D_{L-1}\,W_{L-1}\cdots D_1\,W_1 . \tag{1.1}$$
 
-Four instances, all covered by what follows:
+| model | gate `D_l` |
+|---|---|
+| deep linear | `I` |
+| FGLN | fixed diagonal |
+| ReLU MLP | `diag(1[z>0])` |
+| CReLU MLP | `[diag(1[z>0]); −diag(1[z<0])]` |
 
-| model | gate `D_l` | shape |
-|---|---|---|
-| deep linear | `I` | `d×d` |
-| FGLN | fixed diagonal | `d×d` |
-| ReLU MLP | `diag(1[z>0])` | `d×d` |
-| CReLU MLP | `[diag(1[z>0]); −diag(1[z<0])]` | `2d×d` |
+**Gate pattern.** A *pattern* `ε` fixes all the gates by hand rather than reading them off an
+input; `J_ε` is the resulting operator. When `ε` is the pattern an input `x` produces,
+`J_ε = J(x)` — **[MEASURED]** to `1e-14`. Patterns matter for one reason: `t ↦ J_ε(t)` is a
+smooth (polynomial) function of the weights, whereas `t ↦ J(x)` jumps whenever `x` crosses a
+region boundary.
 
-**Gate pattern.** A *pattern* `ε` is a choice of all the gates, made by hand rather than read
-off an input. Write `J_ε` for the resulting operator. A pattern need not be realized by any
-input. When `ε = ε(x)` is the pattern input `x` produces, `J_ε = J(x)` — verified to `1e-14`.
+**Contexts.** For each layer, split the product around `W_l`:
 
-**Contexts.** For each layer `l`, split the product either side of `W_l`:
+$$A_l := W_LD_{L-1}\cdots W_{l+1}D_l,\qquad B_l := D_{l-1}W_{l-1}\cdots W_1,\qquad J = A_l W_l B_l . \tag{1.2}$$
 
-$$A_l := W_L D_{L-1}\cdots W_{l+1}D_l, \qquad B_l := D_{l-1}W_{l-1}\cdots W_1, \qquad J = A_l\,W_l\,B_l . \tag{1.2}$$
+**Weight gradient.** `Γ_l := ∂\mathcal L/∂W_l` — **one matrix per layer**, computed from the
+real loss on the real data. Every pattern is driven by the same `Γ`; patterns differ only in
+how they compose it.
 
-This holds for every `l` simultaneously. `A_L = I`, `B_1 = I`.
+> **(1.3) [EXACT]** Holding a pattern fixed, under `\dot W_l = -Γ_l`,
+> $$\dot J_\varepsilon \;=\; -\sum_{l=1}^{L} A_l^\varepsilon\,Γ_l\,B_l^\varepsilon .$$
 
-**Spectrum.** `J = \sum_k s_k u_k v_k^\top` with `s_1 \ge \dots \ge s_d \ge 0`. A **direction**
-is an index `k`. (Files 01–03 call a *pattern* a "mode"; files 04–06 call a *direction* a
-"mode". Neither word is used below.)
+*Proof.* With the gates fixed, `J_ε` is a polynomial in the weights; apply the product rule
+to (1.2), which holds for every `l` simultaneously. ∎
 
-**Weight gradient.** `Γ_l := ∂\mathcal{L}/∂W_l`, one matrix per layer, computed from the real
-loss on the real data.
-
----
-
-## 2. What "low-rank bias" means
-
-Put `m_k := \log s_k` (for `s_k > 0`). Then
-
-* `\bar m = \frac1d\sum_k m_k = \log \bar s` where `\bar s` is the geometric mean — the
-  operator's **scale**;
-* the spread of `m` is its **shape**. Define the **separation** between two directions
-  `r_{jk} := m_j - m_k = \log(s_j/s_k)`.
-
-Multiplying every `s_k` by one constant moves `\bar m` and leaves every `r_{jk}` fixed. So
-the low-rank bias is a statement about the *spread* of `m` and about nothing else. Condition
-number and effective rank are both functions of that spread.
+That is the only dynamical input below. Everything else is linear algebra applied to
+`(J, \dot J)`.
 
 ---
 
-## 3. The exact dynamics
+## 2. What the low-rank bias is, and why the obvious route forces an assumption
 
-### 3.1 Derivative of a singular value
+The bias is the claim that training makes `J`'s spectrum **concentrate** — a few singular
+values grow relative to the rest, so the operator becomes effectively low rank.
 
-> **(3.1) [EXACT, given A1]** If `s_k` is a **simple** singular value and `J(t)` is
-> differentiable, then `\dot s_k = u_k^\top \dot J\, v_k`.
+The obvious way to study this is to track each singular value `s_k` and ask whether the large
+ones grow faster. That runs into a problem immediately. "Direction `k`" is defined by the
+singular vectors `u_k, v_k`, and to turn `\dot s_k = u_k^\top \dot J v_k` into something
+interpretable one writes `\dot J` from (1.3) and needs the matrices `A_lA_l^\top` and
+`B_l^\top B_l` to be **diagonal in the bases `\{u_k\},\{v_k\}`**. They are not, in general;
+§9 measures what that costs, and it is not a small correction.
 
-*Proof.* Simplicity makes `u_k, v_k` differentiable, and `s_k = u_k^\top J v_k`. Then
-
-$$\dot s_k = \dot u_k^\top J v_k + u_k^\top \dot J v_k + u_k^\top J \dot v_k = s_k\,\dot u_k^\top u_k + u_k^\top \dot J v_k + s_k\, v_k^\top \dot v_k,$$
-
-using `Jv_k = s_k u_k` and `u_k^\top J = s_k v_k^\top`. Unit norm gives
-`\dot u_k^\top u_k = \tfrac12 \tfrac{d}{dt}\|u_k\|^2 = 0`, likewise for `v_k`. ∎
-
-> **(A1) Simple spectrum.** At a crossing of singular values the derivative is only
-> one-sided. **[ASSUMPTION]**, generic, standard.
-
-### 3.2 Velocity at a fixed pattern
-
-> **(3.2) [EXACT]** Hold the pattern `ε` fixed. Under `\dot W_l = -Γ_l`,
-> $$\dot s_k(\varepsilon) \;=\; -\sum_{l=1}^{L} u_k^\top A_l^\varepsilon\, Γ_l\, B_l^\varepsilon\, v_k .$$
-
-*Proof.* With the gates fixed, `J_ε` is a polynomial in the weights and the product rule
-gives `\dot J_\varepsilon = \sum_l A_l^\varepsilon \dot W_l B_l^\varepsilon` from (1.2).
-Substitute into (3.1). ∎
-
-Two things this buys, and they are the reason for working at fixed patterns:
-
-* `t \mapsto J_\varepsilon(t)` is smooth, whereas `t \mapsto J(x)` jumps when an input crosses
-  a region boundary;
-* `Γ_l` is **one matrix shared by every pattern**. All cross-input coupling is inside it.
-  Different patterns are the *same* dynamics composed differently.
-
-Verified against finite differences of `J_ε`'s singular values to `1e-6`.
-
-### 3.3 Separation
-
-> **(3.3) [EXACT]** With `\omega_k := \dot s_k/s_k` (the **log-velocity**),
-> $$\dot r_{jk} = \omega_j - \omega_k .$$
-
-*Proof.* `\dot m_k = \dot s_k/s_k = \omega_k` by the chain rule; `r_{jk} = m_j - m_k`. ∎
-
-> **(3.4) [EXACT]** Let `\lambda` be the least-squares slope of `\omega` on `m` across
-> directions, and `e_k` the residual: `\omega_k = a + \lambda m_k + e_k`. Then
-> $$\dot r_{jk} = \lambda\, r_{jk} + (e_j - e_k) \qquad\text{identically.}$$
-
-*Proof.* Substitute the regression form into (3.3). The decomposition defines `e`, so
-nothing is assumed. ∎
-
-**This is where `d\log(\text{separation})/dt` comes from, and it is exact.** `λ > 0` means
-every separation grows; the residual is the part not explained by a size-dependent rate.
-Note also that the *mean* of `ω` cancels from (3.3) entirely: it is pure rescaling.
+**So we will not track individual singular values.** The rest of this file uses only
+quantities that do not refer to any basis.
 
 ---
 
-## 4. The gain, and the one place alignment enters
+## 3. Traces, and why `M = J^\top J`
 
-### 4.1 Definition
+### 3.1 The bridge
 
-> **(4.1) [DEFINITION]** The **gain** of direction `k` is
-> $$c_k := \sum_l \big\|A_l^\top u_k\big\|^2\,\big\|B_l v_k\big\|^2 .$$
+A trace is basis-free: `\operatorname{tr}(A)` is the same number however you coordinatise.
+To exploit that we need the spectrum expressed through traces, and the object that does it is
 
-`c_k` is computable in any network with no hypothesis. Its meaning:
+$$M \;:=\; J^\top J, \qquad \text{eigenvalues } \mu_k = s_k^2 .$$
 
-> **(4.2) [EXACT]** `c_k` is the `(k,k)` entry of the induced operator step
-> `\Delta J = -\eta\sum_l A_lA_l^\top G B_l^\top B_l` under `G = u_kv_k^\top`.
+`M` is symmetric positive semidefinite, so it has a genuine eigendecomposition, and
 
-*Proof.* `u_k^\top \big(\sum_l A_lA_l^\top u_kv_k^\top B_l^\top B_l\big) v_k
-= \sum_l (u_k^\top A_lA_l^\top u_k)(v_k^\top B_l^\top B_l v_k)`, which is the display. ∎
-Checked against that sum to `1e-9`.
+$$\operatorname{tr}(M^p) \;=\; \sum_k \mu_k^{\,p} \tag{3.1}$$
 
-### 4.2 The factorization `\dot s_k = -c_k g_k`
+— the **power sums of the spectrum**. That is the whole role of `M^p`: `p` is a dial that
+weights the spectrum. `p = 1` counts total energy `\sum_k\mu_k = \|J\|_F^2`; larger `p`
+weights the top of the spectrum more heavily. We will only ever need `p = 1` and `p = 2`.
+(Higher `p` gives finer shape information at no extra cost in assumptions, but is not used.)
 
-Suppose the gradient is a true gradient flow on a shared operator, `Γ_l = A_l^\top G B_l^\top`
-with `G = ∂\mathcal L/∂J`. Then (3.2) reads
-`\dot s_k = -\sum_l u_k^\top A_lA_l^\top G B_l^\top B_l v_k`. To collapse this to `-c_k g_k`
-with `g_k := u_k^\top G v_k` one needs the Gram matrices `A_lA_l^\top` and `B_l^\top B_l` to be
-**diagonal in the bases `\{u_k\}, \{v_k\}`** — i.e. each subproduct aligned with the whole
-product.
+### 3.2 An effective rank made of two traces
 
-> **(A2) Alignment.** `U^\top A_lA_l^\top U` and `V^\top B_l^\top B_l V` are diagonal.
-> **[ASSUMPTION]**, and **it fails qualitatively in the regime that matters.**
+$$\boxed{\ \mathrm{PR} \;:=\; \frac{\operatorname{tr}(M)^2}{\operatorname{tr}(M^2)} \;=\; \frac{\big(\sum_k\mu_k\big)^2}{\sum_k\mu_k^2}\ }$$
 
-Being precise about what fails. Since `\dot s_k = (\dot J)_{kk}` in the operator's own bases
-is exact, and `\dot J = -\sum_l A_lA_l^\top G B_l^\top B_l`, the exact velocity is
+the **participation ratio**. If `r` of the `\mu_k` are equal and the rest zero,
+`\mathrm{PR} = r` exactly; for an isometry `\mathrm{PR} = d`, for a rank-one operator
+`\mathrm{PR} = 1`. It is a smooth, scale-invariant count of how many directions are alive —
+`\mathrm{PR}(cM) = \mathrm{PR}(M)`, so it measures the spectrum's *shape* and ignores its
+size. **The low-rank bias is the statement `\mathrm{PR}` decreases.**
 
-$$\dot s_k = -\sum_l \sum_{i,j} (\tilde A_l)_{ki}\, \tilde G_{ij}\, (\tilde B_l)_{jk}, \qquad \tilde A_l = U^\top A_lA_l^\top U,\ \tilde B_l = V^\top B_l^\top B_l V,\ \tilde G = U^\top G V .$$
-
-The reduction keeps only `(i,j) = (k,k)`. **Under (A2)'s failure, direction `k`'s singular
-value is driven by gradient components in *other* directions**, routed through the Grams'
-off-diagonal. That is a coupling, not a small correction.
-
-**[MEASURED]** on networks trained 400 steps, comparing the exponent computed from the exact
-velocity against the one from the diagonal surrogate:
-
-| model | init | task | `L` | rel. error | cos | `ψ` exact | `ψ` diagonal |
-|---|---|---|---|---|---|---|---|
-| CReLU | looks-linear | MNIST | 16 | 0.023 | 1.000 | 4.668 | 4.379 |
-| CReLU | looks-linear | teacher–student | 16 | 0.013 | 1.000 | −0.266 | −0.354 |
-| CReLU | Xavier | teacher–student | 16 | 0.229 | 0.998 | **−0.016** | **+0.734** |
-| CReLU | Xavier | MNIST | 16 | 0.439 | 0.968 | **−0.050** | **+0.686** |
-| deep linear | Xavier | MNIST | 16 | 0.362 | 0.981 | **−0.003** | **+0.667** |
-| deep linear | Xavier | teacher–student | 16 | 0.805 | 0.899 | **−0.083** | **+0.667** |
-
-**Near the linear manifold the reduction is accurate (1–5% error, exponents agreeing to
-~0.2). At Xavier it gets the sign wrong**: the diagonal surrogate reports `ψ ≈ +0.7` — a
-low-rank bias — where the exact dynamics have `ψ ≈ 0`, none. High cosine does not save it,
-because the disagreement is in how the velocity is *distributed across directions*, which is
-exactly what an exponent measures.
-
-**Consequence, stated bluntly.** Everything built on `c_k` (§5, including Theorem 20) is a
-rigorous theory of the *induced step's diagonal*. It predicts spectral dynamics only where
-(A2) approximately holds — i.e. near-isometric networks. From a random initialization it does
-not, and asserting `2-2/L` there would be wrong in sign, not merely in magnitude.
-
-**The way around (A2), used everywhere below.** Do not assume it. *Define*
-
-> **(4.3) [DEFINITION]** `g_k := -\dot s_k / c_k`, so that `\dot s_k = -c_k g_k` holds
-> **identically**.
-
-This is legitimate but changes the meaning: `g_k` is no longer "the loss gradient's component
-on direction `k`". It is the residual after dividing out a known geometric factor. What makes
-that a genuine decomposition rather than a tautology is that `c_k` is computed independently
-of `\dot s_k`, and §5 shows `c_k` has structure.
-
-Everything from here uses (4.3), so **(A2) is not assumed anywhere below.**
+Two traces. No eigenvectors.
 
 ---
 
-## 5. The gain's exponent
+## 4. The exact dynamics of `PR`
 
-### 5.1 The balanced closed form
+### 4.1 The object `X`, and what `x_k` is
 
-Suppose the factorization is *balanced and aligned*: all matrices simultaneously
-diagonalizable with layer `l` carrying singular value `a_{l,k}` on direction `k`, and all
-`a_{l,k} = s_k^{1/L}`.
+Put
 
-> **(5.1) [EXACT, given balance+alignment]** `c_k = L\,s_k^{2-2/L}`.
+$$X \;:=\; J^\top \dot J .$$
 
-*Proof.* Diagonality gives `\|A_l^\top u_k\|^2 = \prod_{j>l}a_{j,k}^2` and
-`\|B_lv_k\|^2 = \prod_{j<l}a_{j,k}^2`, so
-`c_k = \sum_l \prod_{j\ne l}a_{j,k}^2 = s_k^2\sum_l a_{l,k}^{-2}`, using
-`s_k = \prod_l a_{l,k}`. Balance gives `\sum_l a_{l,k}^{-2} = L s_k^{-2/L}`. ∎
+`X` is *not* symmetric and has no special structure; it is just the natural pairing of the
+operator with its velocity. Its role is fixed by one fact. Let `w_k` be a unit eigenvector of
+`M` for a simple eigenvalue `\mu_k`, and write
 
-This is the classical `2-2/L` rich-get-richer exponent (Saxe 2014; Arora et al. 2019).
+$$x_k := w_k^\top X\, w_k \qquad\text{(the diagonal of } X \text{ in } M\text{'s eigenbasis).}$$
 
-### 5.2 Dropping balance
+> **(4.1) [EXACT, given simple `\mu_k`]** `\dot\mu_k = 2x_k`.
 
-Write `a_{l,k} = s_k^{1/L}x_{l,k}^{-1/2}`, forcing `\prod_l x_{l,k} = 1`, and
+*Proof.* `\dot M = \dot J^\top J + J^\top\dot J = X^\top + X`. First-order perturbation theory
+for a simple eigenvalue of a symmetric matrix gives
+`\dot\mu_k = w_k^\top \dot M w_k = w_k^\top(X+X^\top)w_k = 2w_k^\top X w_k`. ∎
+**[MEASURED]** against finite differences of `\mathrm{eigvalsh}`, agreeing to the `O(h)`
+truncation error.
 
-> **(5.2) [DEFINITION]** `c_k = s_k^{2-2/L}K_k`, `K_k := \sum_l x_{l,k}`, so
-> $$\frac{d\log c}{d\log s} = \Big(2-\frac2L\Big) + \frac{d\log K}{d\log s} \tag{5.3}$$
-> where both derivatives mean least-squares slopes across directions. **[EXACT]** — (5.3) is
-> arithmetic once `K` is defined, whatever the network.
+So **`x_k` is (half) the growth rate of eigenvalue `k`**, and `x_k/\mu_k` is its *relative*
+growth rate — the quantity that says whether direction `k` is gaining share.
 
-> **(5.4) [EXACT, aligned]** `K_k \ge L`, equality iff direction `k` is balanced.
-> *Proof.* `\prod_l x_{l,k} = 1`, so AM–GM gives `\sum_l x_{l,k}\ge L(\prod_l x_{l,k})^{1/L}=L`. ∎
+**The point that makes all of this work.** We never compute `x_k`, and never form `M`'s
+eigenbasis. We only need two sums of them, and both are traces:
 
-> **(5.5) [EXACT, aligned]** If `x_{l,k}` does not depend on `k`, then `K` is constant across
-> directions, `d\log K/d\log s = 0`, and the exponent is *exactly* `2-2/L` however extreme
-> the imbalance. **[MEASURED]** to `2\times10^{-15}` with a 20× bottleneck layer.
-> *Proof.* `\log c_k = (2-2/L)\log s_k + \log K`, affine with slope `2-2/L`. ∎
+$$\operatorname{tr}(X) = \sum_k x_k, \qquad \operatorname{tr}(MX) = \sum_k \mu_k x_k . \tag{4.2}$$
 
-So *balancedness* was never the necessary hypothesis for deep linear networks;
-*direction-independence of the imbalance* is, and it is far weaker. **[MEASURED]**: this does
-**not** transfer to CReLU — a layerwise rescaling that provably leaves every gate pattern
-identical (0 gate flips, `\|\Delta J\|/\|J\| = 3\times10^{-16}`) still moves the exponent by up
-to 0.33.
+*Proof.* Evaluate each trace in `M`'s eigenbasis, where `M = \mathrm{diag}(\mu)`: the diagonal
+of `X` is `x_k` and the diagonal of `MX` is `\mu_kx_k`. Traces are basis-independent, so the
+values hold however they are computed. ∎ **[MEASURED]** to `4\times10^{-13}`.
 
-### 5.3 Theorem 20: a certificate with no alignment assumption
+### 4.2 The two derivatives
 
-> **(5.6) Lemma A [EXACT].** Let `x,y\in\mathbb R^n`, `x` non-constant, `b` the least-squares
-> slope of `y` on `x`. If every `y_i` lies in an interval of length `w`, then
-> `|b| \le w/(2\,\mathrm{sd}(x))`.
+> **(4.3) [EXACT]** `\dfrac{d}{dt}\operatorname{tr}(M) = 2\operatorname{tr}(X)` and
+> `\dfrac{d}{dt}\operatorname{tr}(M^2) = 4\operatorname{tr}(MX)`.
 
-*Proof.* `\langle\tilde x,\mathbb 1\rangle = 0` gives
-`\langle\tilde x,\tilde y\rangle = \langle\tilde x, y-c\mathbb 1\rangle` for any `c`. Take `c`
-the band's **midpoint**, so `|y_i-c|\le w/2`. Cauchy–Schwarz:
-`|b| \le \|y-c\mathbb 1\|/\|\tilde x\| \le (w/2)\sqrt n/(\sqrt n\,\mathrm{sd}(x))`. ∎
-Tight at `x=(-1,1), y=(0,w)`; worst ratio `0.912` over `2\times10^5` random instances.
+*Proof.* `\dot M = X + X^\top`, so `\frac{d}{dt}\operatorname{tr}M = \operatorname{tr}(X)+\operatorname{tr}(X^\top) = 2\operatorname{tr}(X)`.
+For the second, `\frac{d}{dt}\operatorname{tr}(M^2) = \operatorname{tr}(\dot MM + M\dot M) = 2\operatorname{tr}(M\dot M) = 2[\operatorname{tr}(MX)+\operatorname{tr}(MX^\top)]`,
+and `\operatorname{tr}(MX^\top) = \operatorname{tr}\big((MX^\top)^\top\big) = \operatorname{tr}(XM) = \operatorname{tr}(MX)`
+using `M = M^\top`. ∎
 
-> **(5.7) Lemma B [EXACT, no hypotheses at all].** With `g := \prod_l\|W_l\|_2`,
-> $$c_k \;\ge\; L\,s_k^2\,g^{-2/L} .$$
+### 4.3 The velocity of the effective rank
 
-*Proof.* For each `l`, put `a = A_l^\top u_k`, `b = B_lv_k`. Then
-`s_k = u_k^\top A_lW_lB_lv_k = \langle a, W_lb\rangle \le \|a\|\|W_l\|\|b\|`, so the `l`-th term
-of `c_k` is `\ge s_k^2/\|W_l\|^2 \ge 0`. AM–GM over the `L` terms gives
-`c_k \ge L(\prod_l s_k^2/\|W_l\|^2)^{1/L} = Ls_k^2g^{-2/L}`. ∎
-Tight for an orthogonal chain (ratio exactly `1.0000`). This is (5.4) without alignment; the
-price is the factor `(s_k/g)^{2/L}`, which tends to 1 with depth.
+Since `\log\mathrm{PR} = 2\log\operatorname{tr}(M) - \log\operatorname{tr}(M^2)`,
 
-> **(5.8) Theorem 20 [EXACT].** Let `σ` be the standard deviation of `\log s_k` over the
-> directions with `s_k>0`, and let all `\log K_k` lie in a band of width `w`. Then
-> $$\Big|\frac{d\log c}{d\log s} - \Big(2-\frac2L\Big)\Big| \;\le\; \frac{w}{2σ} .$$
-> With Lemma B supplying the band's floor, `w \le \log(Λ/L) + (2/L)\log(g/s_{\min})` where
-> `Λ := \max_k K_k` is the single measured input.
+> **(4.4) [EXACT]**
+> $$\frac{d}{dt}\log\mathrm{PR} \;=\; \frac{4\operatorname{tr}(X)}{\operatorname{tr}(M)} \;-\; \frac{4\operatorname{tr}(MX)}{\operatorname{tr}(M^2)} .$$
 
-*Proof.* By (5.3) the left side is `|d\log K/d\log s|`; apply Lemma A. ∎
-
-**[MEASURED]**, 0 violations, across **deep linear, FGLN, ReLU MLP and CReLU MLP**, depths
-4–32, six seeds × six random gate patterns:
-
-| regime | certified bound | measured deviation |
-|---|---|---|
-| near the linear manifold | **0.021 – 0.065** | 0.002 – 0.005 |
-| far from it (`δ ≈ 1`) | 0.27 – 0.79 | 0.15 – 0.49 |
-
-Nothing in Lemmas A, B or Theorem 20 mentions gates, CReLU, balance or alignment.
+Four traces of matrices you already have. **[MEASURED]** against finite differences of
+`\log\mathrm{PR}` on trained CReLU networks: relative error `7\times10^{-8}` to
+`2\times10^{-6}`.
 
 ---
 
-## 6. Architecture versus task
+## 5. The criterion, and what `Cheb` means
 
-### 6.1 The exponent decomposition
+> **(5.1) Theorem 21 [EXACT].** With `\omega_k := x_k/\mu_k` the relative growth rate,
+> $$\frac{d}{dt}\log \mathrm{PR} \;=\; \frac{-2\,\mathrm{Cheb}}{\operatorname{tr}(M)\operatorname{tr}(M^2)}, \qquad \mathrm{Cheb} \;:=\; \sum_{k,j}\mu_k\mu_j\,(\omega_k-\omega_j)(\mu_k-\mu_j).$$
+> Since the prefactor is positive, **`PR` falls if and only if `\mathrm{Cheb} \ge 0`.**
 
-From `\omega_k = \dot s_k/s_k = -c_kg_k/s_k` (using (4.3)), taking logs,
-`\log|\omega_k| = \log c_k + \log|g_k| - m_k`. Slopes of logs add:
+*Proof.* Put (4.4) over a common denominator: the numerator is
+`4[\operatorname{tr}(X)\operatorname{tr}(M^2) - \operatorname{tr}(MX)\operatorname{tr}(M)]`.
+Using (4.2) this is `4[\sum_kx_k\sum_j\mu_j^2 - \sum_k\mu_kx_k\sum_j\mu_j]`. Now expand
+`\mathrm{Cheb}`, writing `\mu_k\mu_j(\omega_k-\omega_j) = x_k\mu_j - x_j\mu_k`:
 
-> **(6.1) [EXACT]** With `ψ := d\log|\omega|/d\log s` and `p := d\log|g|/d\log s`,
-> $$ψ \;=\; \frac{d\log c}{d\log s} - 1 + p \;=\; \Big(1-\frac2L\Big) + p + \underbrace{\frac{d\log K}{d\log s}}_{|\cdot|\ \le\ w/2σ\ \text{by (5.8)}} .$$
+$$\mathrm{Cheb} = \sum_{k,j}(x_k\mu_j - x_j\mu_k)(\mu_k-\mu_j) = \sum_{k,j}\big[x_k\mu_j\mu_k - x_k\mu_j^2 - x_j\mu_k^2 + x_j\mu_k\mu_j\big].$$
 
-**[MEASURED]**: the identity holds to `1.8\times10^{-15}`.
+The first and fourth double sums each equal `\operatorname{tr}(MX)\operatorname{tr}(M)`, the
+second and third each equal `\operatorname{tr}(X)\operatorname{tr}(M^2)` (relabel `k\leftrightarrow j`).
+So `\mathrm{Cheb} = 2\operatorname{tr}(MX)\operatorname{tr}(M) - 2\operatorname{tr}(X)\operatorname{tr}(M^2)`,
+which is `-\tfrac12` times the numerator. ∎ Verified symbolically.
 
-So the exponent splits into an **architecture** term `φ := 1-2/L` (proved, universal over
-patterns, saturating at 1), a **task** term `p` (one measurable number), and a **remainder**
-certified by Theorem 20.
+**What `Cheb` is.** Each term compares two directions. If the one with the larger eigenvalue
+also has the larger *relative* growth rate, then `(\omega_k-\omega_j)` and `(\mu_k-\mu_j)`
+share a sign and the term is positive. `\mathrm{Cheb}` is the `\mu_k\mu_j`-weighted sum of
+those comparisons — a **covariance between the relative growth rate and the eigenvalue**. So
+Theorem 21 says exactly:
 
-### 6.2 What `p` is
+> **The effective rank falls if and only if bigger directions grow relatively faster.**
 
-`p` measures how the effective per-direction drive scales with the direction's size —
-equivalently, how the target's spectrum sits relative to the operator's current one. `p>0`:
-the loss pushes hardest on directions already large, so architecture and task pull together.
-`p<0`: the task opposes the bias. **[MEASURED]**
+That is the rich-get-richer statement, as an exact equivalence, with no assumption anywhere.
+Note the two degenerate cases it gets right: if `\omega` is the same for every direction the
+sum vanishes (a uniform rescaling changes no ratio), and if the spectrum is flat it vanishes
+too (nothing to concentrate).
 
-| task | init | median `p` | |
+---
+
+## 6. When the criterion can be evaluated in advance
+
+Theorem 21 is a *condition*, not a prediction. To predict, one needs to know how `\omega_k`
+depends on `\mu_k`. One case closes completely.
+
+> **(6.1) Lemma 22 [EXACT].** Suppose `\omega_k = C\mu_k^{\,\theta-1}`, i.e. `x_k = C\mu_k^{\,\theta}`.
+> Write `f(p) := \sum_k\mu_k^{\,p}` for the spectral moment function. Then
+> $$\mathrm{Cheb} \;=\; 2C\big[f(1+\theta)f(1) - f(\theta)f(2)\big] \;\ge\; 0 \iff \theta \ge 1$$
+> (for `C>0`, strictly unless the spectrum is degenerate).
+
+*Proof.* Substituting `x_k = C\mu_k^\theta` into the trace form of `\mathrm{Cheb}` gives the
+bracket directly. For the sign: `p\mapsto\log f(p)` is convex (Hölder), and the two exponent
+pairs `\{1+\theta,1\}` and `\{\theta,2\}` have the same sum `2+\theta`. For a log-convex `f`,
+`f(a)f(b)` at fixed `a+b` increases with `|a-b|`. Here `|(1+\theta)-1| = \theta` against
+`|\theta-2| = |2-\theta|`, and `\theta > 2-\theta \iff \theta>1`. ∎
+**[MEASURED]** 0 violations over `2\times10^5` random spectra and exponents.
+
+> **(6.2) Corollary [EXACT, given balance and alignment].** For a balanced depth-`L` network
+> under pure growth (`\dot J = cJ`-like forcing, i.e. `G = -cJ`), every layer contributes
+> `\mu^{1+(L-l)/L+(l-1)/L}` to `x`, independently of `l`, so `\theta = 2 - 1/L`. Hence
+> **`PR` strictly falls for every `L \ge 2`**, with equality at `L = 1`.
+
+A single matrix rescaled uniformly does not change its effective rank; two or more layers do.
+This is the low-rank bias, and the mechanism is **Hölder's inequality**, not alignment.
+
+The hypotheses of (6.2) are exactly the ones (6.1) does *not* need: Lemma 22 holds for any
+network whose relative rate happens to follow a power law, and `\theta` is measurable.
+
+---
+
+## 7. What the criterion says about real networks
+
+**[MEASURED]** `d/dt\log\mathrm{PR}` from (4.4), CReLU on MNIST after 400 steps:
+
+| init | `L` | `d/dt\log\mathrm{PR}` | |
 |---|---|---|---|
-| MNIST | looks-linear | **+10.95** | reinforces |
-| MNIST | Xavier | −1.03 | opposes |
-| teacher–student (orthogonal target) | Xavier | −1.40 | opposes |
+| looks-linear | 4 | −0.0220 | rank **falls** |
+| looks-linear | 16 | −0.3796 | rank **falls** |
+| Xavier | 4 | **+0.1456** | rank **rises** |
+| Xavier | 16 | **+0.0076** | rank **rises** |
 
-Mechanism: ten classes through width 16 make the operator gradient effectively rank ≤ 10.
+From a near-isometric start the network *acquires* low-rank structure; from a random start —
+where it begins collapsed, effective rank 1.5–5 of 12 — training slowly *undoes* it. **The
+bias is something a well-conditioned network develops, not something a badly conditioned one
+suffers.**
 
-### 6.3 The gap I had wrong, and it matters
-
-`ψ` and `λ` (from (3.4)) are **different slopes**: `ψ` is the slope of `\log|\omega|` on `m`,
-`λ` the slope of `\omega` on `m`. They coincide only if `\omega` is a power law in `s`:
-
-> **(A3) Power law.** `\omega_k \approx -C s_k^{ψ}`, under which `λ \approx ψ\,\bar\omega`.
-> **[ASSUMPTION]**. **[MEASURED]** and it is *weak here*: the ratio `λ/(ψ\bar\omega)` ranges
-> **0.37 – 2.77**, with `R^2` of the power-law fit at **0.06 – 0.59**.
-
-An earlier version of `07-patterns.md` wrote (6.1) with `λ` on the left. That is wrong;
-only `ψ` obeys it. The consequence is important and limiting:
-
-* **`ψ` is what decomposes** into architecture + task + certified remainder.
-* **`λ` is what drives separation**, exactly, by (3.4).
-* The bridge between them is (A3), which does not hold well in the measured regimes.
-
-What survives without (A3) is the **sign**: **[MEASURED]** `\mathrm{sign}(\Delta r) = \mathrm{sign}(λ)`
-in **100%** of intervals where the power-law form fits (`R^2\ge0.9`, n=148) and 89% over all
-519. So the direction of the effect is reliable; its magnitude via `ψ` is not, unless `R^2`
-is high — which is why `R^2` should be reported alongside every such number.
-
----
-
-## 7. Patterns
-
-**[MEASURED]** Bias rates at realized versus Rademacher gate patterns, 408 snapshots from 48
-training runs:
-
-$$\operatorname{corr}(λ_{\text{realized}}, λ_{\text{random}}) = +0.997,\qquad \operatorname{median}|λ_{\text{realized}}-λ_{\text{random}}| = 0.024$$
-
-against a median `|λ|` of `0.138`. The bias is a property of the weights, not of which
-regions the data selects. So no transfer argument from a pattern ensemble to the data is
-needed — this removes the hypothesis `(H-mode)` of `03-dynamics.md` entirely.
-
-**[MEASURED]** The gain exponent at arbitrary patterns, sweeping the nonlinearity
-`δ := \max_l\|\Delta_l\|/\|S_l\|` (CReLU only; `W_l=[P_l|Q_l]`, `S_l=(P_l-Q_l)/2`,
-`\Delta_l=(P_l+Q_l)/2`, so `W_lD(z)=S_l+\Delta_l\,\mathrm{diag}(\operatorname{sign}z)` and
-`δ=0` iff the network is exactly linear):
-
-| `L` | `2-2/L` | `δ=0` | `0.05` | `0.15` | `0.40` | `0.82` |
-|---|---|---|---|---|---|---|
-| 8 | 1.750 | 1.744 | 1.748 | 1.736 | 1.649 | 1.554 |
-| 32 | 1.938 | 1.936 | 1.937 | 1.922 | 1.860 | 1.890 |
-
-Within 1% to `δ=0.15`, within 15% at `δ=0.8` — far better than the perturbative
-`(1+δ)^L\approx10^5` bound at `L=32,δ=0.4`, because a pattern change acts on `c_k` mostly as
-a *direction-independent* factor, which cancels in a log-log slope by (5.5).
+**Caveat.** Single snapshots, one task. The sign is exact and assumption-free at the point
+measured; a trajectory across depths, seeds and datasets has not been run and is the obvious
+next experiment.
 
 ---
 
 ## 8. Ledger
 
-**Proved, no assumptions beyond (A1):** (3.1)–(3.4) the exact dynamics and the separation
-identity; (4.2) the gain's meaning; (5.3) the `K` decomposition; Lemma A; **Lemma B**;
-**Theorem 20**; (6.1) the exponent identity. Lemmas A, B and Theorem 20 hold for *any*
-factored operator — verified on four architectures including ReLU, whose square gates kill
-directions outright.
+**Proved with no assumptions beyond a simple spectrum:** (1.3) the per-pattern velocity;
+(4.1) `\dot\mu_k = 2x_k`; (4.2) the two traces; (4.3), (4.4) the derivatives; **Theorem 21**,
+the exact criterion. None of these mentions gates, so all hold for deep linear, FGLN, ReLU
+and CReLU alike.
 
-**Proved under stated extra hypotheses:** (5.1) needs balance and alignment; (5.4), (5.5)
-need alignment.
+**Proved under stated hypotheses:** Lemma 22 needs the relative rate to be a power law in the
+eigenvalue (measurable); Corollary 6.2 additionally needs balance, alignment, and pure-growth
+forcing.
 
-**CReLU-specific** (not in this file; `04-instability.md` §4): from a looks-linear
-configuration `\Delta S_l = -\tfrac\eta2\mathbb E_b[R_b]` and
-`\Delta\Delta_l = -\tfrac\eta2\mathbb E_b[R_bE_b]` exactly, so the residual/gate-sign
-correlation is the only source of nonlinearity; a negation-closed batch makes it vanish term
-by term and the network stays exactly linear (`2\times10^{-16}` over 2000 steps).
+**Measured, not proved:** §7's signs; `\theta` on real tasks; the claim that a random
+initialization supplies the collapse (its initial separation grows linearly in `L` — 3.5, 8.2,
+15.1, 32.2 nats at `L = 2,4,8,16` — and training conserves it, final `r/r(0)` = 0.99, 1.01).
 
-**Assumptions, with measured cost:**
-
-| | statement | cost |
-|---|---|---|
-| (A1) | simple singular values | generic |
-| (A2) | alignment | **1–5% near an isometry; sign-wrong at Xavier** (§4.2) |
-| (A3) | `\omega` is a power law in `s` | `λ/(ψ\bar\omega)\in[0.37,2.77]`, `R^2` 0.06–0.59 |
-
-(4.3) makes `\dot s_k = -c_kg_k` an identity and so avoids *stating* (A2) — but it does not
-avoid *needing* it. Without (A2) the residual `g_k` absorbs the off-diagonal coupling, and
-the split into "architecture `c_k`" and "task `g_k`" stops being a split into architecture and
-task. **The decomposition is only interpretable where (A2) approximately holds.**
-
-**Measured, not proved:** `p` on two task families; the gain exponent's robustness in `δ`;
-`(H-mode)`'s irrelevance; the depth wall living in `r(0)` (Xavier `r(0)` grows linearly in
-`L`: 3.5, 8.2, 15.1, 32.2 nats, and training conserves it — final `r/r(0)` = 0.99, 1.01).
-
-**Not established.** That `c_k` governs spectral dynamics away from near-isometric networks —
-measured false at Xavier, where it predicts the wrong sign. Any bound on `p`. Any bound on the remainder in terms of `δ` alone —
-**impossible**, since `K` is unbounded above (one layer scale to zero sends `K\to\infty` at
-fixed `\prod x_l`). Anything at width > 16 or depth > 32 outside the earlier MNIST sweeps.
+**Not established.** Predicting `\mathrm{Cheb}` or `\theta` for a general network and loss.
+This is the same difficulty as before, but it is now posed on trace moments, so no basis is
+chosen and no alignment assumption can arise. Whether it is easier there is unknown.
+Everything is width ≤ 16, depth ≤ 32, two task families.
 
 ---
 
-## 9. The picture in one paragraph
+## 9. What this supersedes, and why
 
-A gated network is, at every instant, a *family* of linear networks indexed by gate patterns,
-all sharing one weight gradient. Each pattern's operator moves by
-`\Delta J_\varepsilon = -\eta\sum_l A_l^\varepsilon Γ_l B_l^\varepsilon`, which in that
-pattern's singular basis multiplies direction `k` by the gain `c_k \propto s_k^{2-2/L}`.
-The architecture is therefore an **amplifier with a fixed, depth-set, bounded exponent**,
-applied to whatever anisotropy the data and loss present; it does not create low-rank
-structure. What the spectrum does is decided by three independent things: the **seed** `r(0)`
-(multiplicative, and at random initialization it grows linearly in depth), the **task
-exponent** `p` (positive on real data, negative on well-conditioned targets), and the
-**architecture exponent** `1-2/L` (saturating, so depth 1024 and 256 differ by 0.6%).
+The earlier framework tracked per-direction gains `c_k := \sum_l\|A_l^\top u_k\|^2\|B_lv_k\|^2`
+and split `\dot s_k = -c_kg_k` into "architecture" and "task". Writing `\dot s_k = (\dot J)_{kk}`
+in the operator's bases and expanding (1.3),
+
+$$\dot s_k = -\sum_l\sum_{i,j}(\tilde A_l)_{ki}\,\tilde G_{ij}\,(\tilde B_l)_{jk},\qquad \tilde A_l = U^\top A_lA_l^\top U,\ \tilde B_l = V^\top B_l^\top B_lV,$$
+
+that split keeps only `(i,j)=(k,k)`. Discarding the rest is the **alignment assumption**, and
+under its failure direction `k` is driven by gradient components in *other* directions.
+
+**[MEASURED]**, comparing the exponent from the exact velocity with the one from that
+surrogate, on networks trained 400 steps:
+
+| model | init | task | exact | surrogate |
+|---|---|---|---|---|
+| CReLU | looks-linear | MNIST | 4.668 | 4.379 |
+| CReLU | Xavier | teacher–student | **−0.016** | **+0.734** |
+| CReLU | Xavier | MNIST | **−0.050** | **+0.686** |
+| deep linear | Xavier | MNIST | **−0.003** | **+0.667** |
+
+Six of six Xavier cells, both architectures, both tasks: the surrogate reports a low-rank
+bias where the exact dynamics have none. Wrong in **sign**, not magnitude. Defining
+`g_k := -\dot s_k/c_k` makes the split an identity but does not help — `g_k` then absorbs the
+off-diagonal coupling, so it is no longer "the task".
+
+Results from that framework that **survive**, because they never used the assumption: the
+exact velocity (1.3); that realized and random gate patterns give indistinguishable rates
+(correlation `+0.997` over 408 snapshots), so no ensemble-to-data transfer argument is
+needed; and, for CReLU specifically, that one gradient step from a looks-linear configuration
+gives `\Delta S_l = -\tfrac\eta2\mathbb E_b[R_b]` and `\Delta\Delta_l = -\tfrac\eta2\mathbb E_b[R_bE_b]`
+exactly — so the residual/gate-sign correlation is the only source of nonlinearity, and a
+batch closed under negation makes it vanish term by term (`\Delta` stays at `2\times10^{-16}`
+over 2000 steps).
+
+What does **not** survive is the claim that the architecture contributes a `2-2/L`
+amplification to the *spectral dynamics*. That is a statement about the induced step's
+diagonal, and it predicts the spectrum only where the alignment assumption approximately
+holds — near-isometric networks, not the regime one trains in from a random start.

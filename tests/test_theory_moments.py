@@ -110,3 +110,43 @@ def test_participation_ratio_is_a_sensible_effective_rank():
     r1 = torch.zeros(6, 6, dtype=torch.float64)
     r1[0, 0] = 3.0
     assert rank_flow(r1, torch.zeros_like(r1)).pr == pytest.approx(1.0)
+
+
+def test_eigenvalue_velocity_is_twice_the_diagonal_of_X():
+    """(4.1): mudot_k = 2 x_k, with x_k the diagonal of J^T Jdot in M's eigenbasis."""
+    g = torch.Generator().manual_seed(0)
+    for _ in range(50):
+        d = int(torch.randint(3, 8, (1,), generator=g))
+        J = torch.randn(d, d, generator=g, dtype=torch.float64)
+        Jd = torch.randn(d, d, generator=g, dtype=torch.float64)
+        M = J.T @ J
+        mu, W = torch.linalg.eigh(M)
+        if float((mu[1:] - mu[:-1]).min()) < 1e-3:
+            continue                                  # (4.1) needs a simple spectrum
+        x = (W.T @ (J.T @ Jd) @ W).diagonal()
+        h = 1e-7
+        mu2 = torch.linalg.eigvalsh((J + h * Jd).T @ (J + h * Jd))
+        assert torch.allclose((mu2 - mu) / h, 2 * x, atol=1e-4, rtol=1e-4)
+
+
+def test_the_two_traces_are_the_two_sums_over_directions():
+    """(4.2): tr(X) = sum_k x_k and tr(MX) = sum_k mu_k x_k, computed with no eigenbasis."""
+    g = torch.Generator().manual_seed(1)
+    for _ in range(100):
+        d = int(torch.randint(2, 9, (1,), generator=g))
+        J = torch.randn(d, d, generator=g, dtype=torch.float64)
+        Jd = torch.randn(d, d, generator=g, dtype=torch.float64)
+        M = J.T @ J
+        mu, W = torch.linalg.eigh(M)
+        X = J.T @ Jd
+        x = (W.T @ X @ W).diagonal()
+        assert float(torch.trace(X)) == pytest.approx(float(x.sum()), abs=1e-10)
+        assert float(torch.trace(M @ X)) == pytest.approx(float((mu * x).sum()), abs=1e-10)
+
+
+def test_flat_spectrum_and_uniform_rate_both_give_zero():
+    """The two degenerate cases Theorem 21 must get right."""
+    flat = np.ones(5)
+    assert chebyshev_correlation(flat, np.arange(5.0)) == pytest.approx(0.0, abs=1e-12)
+    mu = np.array([5.0, 2.0, 1.0])
+    assert chebyshev_correlation(mu, 0.3 * mu) == pytest.approx(0.0, abs=1e-12)
