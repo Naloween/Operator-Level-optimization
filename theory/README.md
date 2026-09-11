@@ -18,6 +18,7 @@ with the measurement that would confirm or refute it.
 | [`08-gain-bound.md`](08-gain-bound.md) | a proved certificate for the gain exponent at any gate pattern | Lemmas A, B and Thm 20 proved; 0 violations |
 | [`09-basis-free.md`](09-basis-free.md) | **removes the alignment assumption**: effective-rank dynamics from traces alone | Thm 21 exact; Lemma 22 proved |
 | [`10-mismatch.md`](10-mismatch.md) | the implicit bias in closed form: `R = E_x[(Id - T)(G_x)]`, when it vanishes, and a bound | all proved; no measurements |
+| [`11-mean-transfer.md`](11-mean-transfer.md) | **the mechanism**: the nonlinearity is a Perron–Frobenius contraction that bounds the bias in depth | exact under (H-R), whose moments are measured |
 
 ## Reading order
 
@@ -68,6 +69,7 @@ rather than hypothetical.
 | separation buys alignment (Thm 6.1) | error falls with separation | holds above a threshold that grows with depth |
 | task exponent on MNIST | unknown | `p ≈ +11` from an isometric start: the task *reinforces* the bias |
 | bias at an arbitrary gate pattern | unknown | gain exponent `2 − 2/L`, robust to `δ = 0.4` |
+| context-Gram spread vs depth | Thm 4 vs Thm 5 | linear branch 9.8→37 over depth 2→10; nonlinear branch 6.44→6.37, converged |
 | realized vs typical patterns | `(H-mode)` needed? | **no** — they bias identically |
 | gain exponent, certified | Thm 20 | within **0.02–0.065** of `2−2/L` near the linear manifold, 0 violations |
 

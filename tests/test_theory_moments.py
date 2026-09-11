@@ -150,3 +150,78 @@ def test_flat_spectrum_and_uniform_rate_both_give_zero():
     assert chebyshev_correlation(flat, np.arange(5.0)) == pytest.approx(0.0, abs=1e-12)
     mu = np.array([5.0, 2.0, 1.0])
     assert chebyshev_correlation(mu, 0.3 * mu) == pytest.approx(0.0, abs=1e-12)
+
+
+# -- file 11: the mean transfer and its two branches -------------------------
+
+
+def test_rademacher_transfer_identities():
+    """Lemma 1: E[M X M^T] = S X S^T + Delta Dg(X) Delta^T, by exhaustive sign averaging."""
+    g = torch.Generator().manual_seed(0)
+    for d in (2, 3):
+        S = torch.randn(d, d, generator=g, dtype=torch.float64)
+        D = torch.randn(d, d, generator=g, dtype=torch.float64)
+        X = torch.randn(d, d, generator=g, dtype=torch.float64)
+        fwd = torch.zeros(d, d, dtype=torch.float64)
+        bwd = torch.zeros(d, d, dtype=torch.float64)
+        signs = torch.tensor([[1.0, -1.0]] * d, dtype=torch.float64)
+        for bits in range(2**d):
+            e = torch.tensor([signs[i][(bits >> i) & 1] for i in range(d)],
+                             dtype=torch.float64)
+            M = S + D @ torch.diag(e)
+            fwd += M @ X @ M.T
+            bwd += M.T @ X @ M
+        fwd /= 2**d
+        bwd /= 2**d
+        assert torch.allclose(fwd, S @ X @ S.T + D @ torch.diag(X.diagonal()) @ D.T, atol=1e-12)
+        assert torch.allclose(bwd, S.T @ X @ S + torch.diag((D.T @ X @ D).diagonal()),
+                              atol=1e-12)
+
+
+def test_nonlinear_branch_closes_on_diagonals():
+    """Thm 5: diag(Delta Dg(X) Delta^T) = (Delta o Delta) diag(X), a nonnegative map."""
+    rng = np.random.default_rng(0)
+    for _ in range(500):
+        d = int(rng.integers(2, 7))
+        D = rng.normal(size=(d, d))
+        X = rng.normal(size=(d, d))
+        X = X @ X.T
+        F = D @ np.diag(np.diag(X)) @ D.T
+        assert np.allclose(np.diag(F), (D**2) @ np.diag(X))
+
+
+def test_nonlinear_branch_saturates_while_linear_branch_spreads():
+    """Thm 4 vs Thm 5: iterate F from I and compare the log-spectrum spread."""
+    def spread(P):
+        w = np.linalg.eigvalsh(P)
+        w = w[w > 1e-300]
+        return np.log(w.max() / w.min()) if w.size > 1 else 0.0
+
+    d = 8
+    g = np.random.default_rng(0)
+    S = g.normal(size=(d, d)) / np.sqrt(d)
+    D = g.normal(size=(d, d)) / np.sqrt(d)
+    lin, non = np.eye(d), np.eye(d)
+    for _ in range(30):
+        lin = S @ lin @ S.T
+        lin = lin / np.trace(lin) * d
+        non = D @ np.diag(np.diag(non)) @ D.T
+        non = non / np.trace(non) * d
+    early_non = D @ np.diag(np.diag(np.eye(d))) @ D.T
+    early_non = early_non / np.trace(early_non) * d
+    assert spread(lin) > 20.0                        # linear branch has spread wide open
+    assert abs(spread(non) - spread(early_non)) < 2.0   # nonlinear branch has converged
+
+
+def test_schur_horn_contraction():
+    """Thm 6: diag(X) is majorized by lambda(X); equal trace, smaller Frobenius norm."""
+    rng = np.random.default_rng(1)
+    for _ in range(5000):
+        d = int(rng.integers(2, 9))
+        A = rng.normal(size=(d, d))
+        X = A + A.T
+        dg = np.sort(np.diag(X))[::-1]
+        lam = np.sort(np.linalg.eigvalsh(X))[::-1]
+        assert dg.sum() == pytest.approx(lam.sum(), abs=1e-9)
+        assert np.all(np.cumsum(dg) <= np.cumsum(lam) + 1e-9)
+        assert np.linalg.norm(dg) <= np.linalg.norm(lam) + 1e-9
