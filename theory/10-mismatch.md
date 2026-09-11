@@ -200,20 +200,30 @@ statement here is a consequence of §2–§5; none needs a measurement.
 
 ### 6.1 The gate enters the bias only through its rank
 
-Write `B_l = D_{l-1}C_{l-1}` with `C_{l-1} := W_{l-1}\cdots W_1`, so that
+Write `B_l = D_{l-1}C_{l-1}` with `C_{l-1} := W_{l-1}D_{l-2}\cdots W_1` — the chain below
+layer `l`, *including its interior gates*. Then
 
 $$N_l \;=\; B_l^\top B_l \;=\; C_{l-1}^\top\,\big(D_{l-1}^\top D_{l-1}\big)\,C_{l-1}. \tag{6.1}$$
 
 Everything the nonlinearity does to the input-side Gram is in the factor `D^\top D`.
 
 > **Proposition 6.1.** For **CReLU**, `D(z)^\top D(z) = I` for every `z` (the gate is an
-> isometry), so `N_l = C_{l-1}^\top C_{l-1}` — **the gate contributes nothing at all**. For
-> **ReLU**, `D^\top D = D^2 = D` is a projector of rank equal to the number of active units, so
-> `N_l = C_{l-1}^\top D_{l-1} C_{l-1} \preceq C_{l-1}^\top C_{l-1}`, with equality iff every
-> unit is active on the range of `C_{l-1}`.
+> isometry), so `N_l = C_{l-1}^\top C_{l-1}` — **the gate at that position contributes
+> nothing**, and `N_l` inherits the rank of `C_{l-1}`, which the interior CReLU gates also
+> cannot reduce. For **ReLU**, `D^\top D = D^2 = D` is a projector of rank equal to the number
+> of active units, so `N_l = C_{l-1}^\top D_{l-1} C_{l-1} \preceq C_{l-1}^\top C_{l-1}`, with
+> equality iff every unit is active on the range of `C_{l-1}`.
 
 *Proof.* `D(z)^\top D(z) = \Lambda + (I-\Lambda) = I` for CReLU (Lemma 1 of file 01) and
-`D^2 = D` for a 0/1 diagonal. The Loewner inequality follows from `D \preceq I`. ∎
+`D^2 = D` for a 0/1 diagonal. The Loewner inequality follows from `D \preceq I`. For the rank
+claim, every CReLU gate is injective (Cor. 1.2 of file 01), so no gate anywhere in the chain
+can lower the rank. ∎
+
+**What this does and does not say.** The gate drops out of the *outermost* position exactly.
+The interior gates do **not** disappear: they are absorbed into the effective layer matrices
+`M_j = W_jD_{j-1} = S_j + \Delta_jE_j` (Lemma 2 of file 01), which still depend on the gate
+pattern unless `\Delta_j = 0`. So Proposition 6.1 says the CReLU gate contributes no *rank
+deficiency*, not that it contributes nothing at all.
 
 The same distinction propagates down the chain on the output side, because
 `A_{l-1} = A_l\,(W_lD_{l-1})` and, by the layer identity `W_lD(z) = S_l + \Delta_l E(z)`, at a
@@ -229,10 +239,22 @@ by the number of dead units and the Gram strictly shrinks at every step.
 *Proof.* A singular PSD matrix has a null direction `w`; then
 `\|\widetilde N_l\| \ge |w^\top(N_l - n_lI)w| = n_l`. ∎
 
-This is the precise sense in which "CReLU removes the collapse". It is not that CReLU is
-better conditioned by accident: **the isometric gate drops out of the input-side Gram
-identically, so the nonlinearity contributes exactly zero to the implicit bias there, while a
-projector gate contributes its own rank deficiency on top of whatever the weights do.**
+This is the precise sense in which "CReLU removes the collapse", and it is worth stating what
+survives and what does not:
+
+> **Corollary 6.2b (CReLU does not remove the implicit bias).** The vanishing statement of §4
+> — `\mathcal R = (1-L)G`, pure rescaling — requires **two** conditions: `\Delta_l = 0`
+> (looks-linear, killing the drift term by Cor. 4.5) *and* every context Gram a multiple of
+> `I` (killing the anisotropy term by Cor. 4.2), which for a looks-linear CReLU network means
+> the `O_l` are orthogonal. Gradient descent preserves neither in general: it changes the
+> singular values of each `O_l` immediately, and it moves `\Delta_l` off zero unless the
+> batch is closed under negation with a linear teacher. **Zero bias is a property of a
+> configuration, not of the architecture.**
+>
+> What CReLU removes is the *gate's* contribution — the rank deficiency of Prop. 6.1 and, at
+> `\Delta = 0`, the input dependence of Cor. 4.5. The *weights'* contribution is untouched.
+> So a CReLU network has, at best, **exactly the implicit bias of a deep linear network of
+> the same depth**, which by Cor. 4.3 is zero only at `L = 1`.
 
 ### 6.2 Dead directions receive no update at all
 
@@ -300,6 +322,8 @@ through conditioning, not through the averaging.
   structural difference** between an isometric gate and a projector gate — the first
   contributes nothing to the input-side Gram, the second contributes its rank deficiency.
 * §6.3 separates two networks with identical operators, which no operator-level account can do.
+* Corollary 6.2b says precisely how much CReLU buys: it removes the gate's contribution and
+  leaves the factorisation's, so the bias is reduced to the deep-linear one, not to zero.
 * Corollary 6.3 connects dead units to the bias quantitatively.
 * None of it needs alignment, balancedness, a power-law ansatz, or a claim about what the
   singular values do.
