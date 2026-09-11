@@ -193,14 +193,134 @@ of extremes, `\kappa^{2(L-l)/L}`. ∎
 
 ---
 
-## 6. What this gives, and what it does not
+## 6. What this says about a classical MLP
+
+The framework is architecture-agnostic, so it can be *evaluated* on a specific one. Every
+statement here is a consequence of §2–§5; none needs a measurement.
+
+### 6.1 The gate enters the bias only through its rank
+
+Write `B_l = D_{l-1}C_{l-1}` with `C_{l-1} := W_{l-1}\cdots W_1`, so that
+
+$$N_l \;=\; B_l^\top B_l \;=\; C_{l-1}^\top\,\big(D_{l-1}^\top D_{l-1}\big)\,C_{l-1}. \tag{6.1}$$
+
+Everything the nonlinearity does to the input-side Gram is in the factor `D^\top D`.
+
+> **Proposition 6.1.** For **CReLU**, `D(z)^\top D(z) = I` for every `z` (the gate is an
+> isometry), so `N_l = C_{l-1}^\top C_{l-1}` — **the gate contributes nothing at all**. For
+> **ReLU**, `D^\top D = D^2 = D` is a projector of rank equal to the number of active units, so
+> `N_l = C_{l-1}^\top D_{l-1} C_{l-1} \preceq C_{l-1}^\top C_{l-1}`, with equality iff every
+> unit is active on the range of `C_{l-1}`.
+
+*Proof.* `D(z)^\top D(z) = \Lambda + (I-\Lambda) = I` for CReLU (Lemma 1 of file 01) and
+`D^2 = D` for a 0/1 diagonal. The Loewner inequality follows from `D \preceq I`. ∎
+
+The same distinction propagates down the chain on the output side, because
+`A_{l-1} = A_l\,(W_lD_{l-1})` and, by the layer identity `W_lD(z) = S_l + \Delta_l E(z)`, at a
+looks-linear CReLU configuration `W_lD(z) = O_l` is orthogonal — so `A_{l-1}A_{l-1}^\top = A_lA_l^\top`,
+the Gram is *carried unchanged* down every layer. For ReLU, `W_lD_{l-1}(x)` is rank-deficient
+by the number of dead units and the Gram strictly shrinks at every step.
+
+> **Corollary 6.2 (a hard floor on the anisotropy of a ReLU MLP).** If any unit is inactive at
+> layer `l-1`, then `N_l` is singular, so `\|\widetilde N_l\| \ge n_l` and hence `b_l \ge 1`.
+> The same holds for `a_l` on the output side. **A ReLU network with any dead unit has
+> per-layer anisotropy at least 1, structurally — independently of the weights.**
+
+*Proof.* A singular PSD matrix has a null direction `w`; then
+`\|\widetilde N_l\| \ge |w^\top(N_l - n_lI)w| = n_l`. ∎
+
+This is the precise sense in which "CReLU removes the collapse". It is not that CReLU is
+better conditioned by accident: **the isometric gate drops out of the input-side Gram
+identically, so the nonlinearity contributes exactly zero to the implicit bias there, while a
+projector gate contributes its own rank deficiency on top of whatever the weights do.**
+
+### 6.2 Dead directions receive no update at all
+
+By Theorem 4.1 the bias acts entrywise through the gain matrix
+`C_{ij} = \sum_l \mu_{l,i}\nu_{l,j}`.
+
+> **Corollary 6.3.** If `\nu_{l,j} = 0` — direction `j` killed by the gate at layer `l` — the
+> `l`-th term drops out of `C_{ij}` for **every** `i`. If a direction is killed at every layer,
+> `C_{ij} = 0` for all `i`, and `(\mathrm{Id} - \mathcal T/c)` acts as the identity on that
+> column: the factored model applies **zero** update where operator-space descent would apply
+> the full `G`. The mismatch there is total, not partial.
+
+So for a ReLU MLP the implicit bias is readable off the activation pattern: each dead unit
+deletes one term from the gain of every direction it kills, and the bias is the resulting
+*spread* of `C` across `(i,j)`. This is a quantitative link between the dying-ReLU phenomenon
+and the implicit bias, rather than two separately-noted pathologies.
+
+### 6.3 A prediction that separates two networks computing the same function
+
+Both ReLU and CReLU admit looks-linear initializations at which the network is exactly a
+linear function. The framework says they are **not** equivalent:
+
+| | operator `J(x)` | contexts `A_l(x), B_l(x)` | drift term |
+|---|---|---|---|
+| CReLU, looks-linear | input-free | input-free (`W_lD(z) = O_l` for every `z`) | **zero** |
+| ReLU, looks-linear (mirrored) | input-free | **input-dependent** (`D_l(x)` still varies) | nonzero |
+
+*Proof.* For CReLU, Corollary 2.1 of file 01 gives `W_lD(z) = O_l` independently of `z`, so
+every context is a fixed product. For ReLU, the mirrored construction makes the *function*
+linear but leaves `D_l(x) = \mathrm{diag}(\mathbb 1[z_l(x)>0])` varying with the input, so the
+contexts vary even though their product does not. ∎
+
+**Same function, same operator, different implicit bias.** By Theorem 3.1 the CReLU network
+has no input-dependence term whatever, and if in addition its `O_l` are orthogonal it has
+`\mathcal R = (1-L)G` exactly — no bias at all. The ReLU network has a nonzero drift term at
+the same point. This is a prediction no framework phrased in terms of the operator alone can
+make, because the two networks have the *same* operator.
+
+### 6.4 Depth
+
+Theorem 5.1 says the bias is a convex average over layers, so it does **not** compound
+multiplicatively with depth. Depth enters only through the per-layer anisotropies, and for a
+network at random initialization those are set by products of random matrices: by Corollary
+5.2's form, `a_l \asymp \kappa^{2(L-l)/L}` and `b_l \asymp \kappa^{2(l-1)/L}`, so
+
+$$a_lb_l \;\asymp\; \kappa^{2(L-1)/L} \;\approx\; \kappa^2 \quad\text{for every } l,$$
+
+*independently of the layer*. The middle-layer and edge-layer contributions are comparable,
+and the bound becomes `\beta \lesssim \kappa^2` where `\kappa` is the operator's own condition
+number. For random initialization `\log\kappa` grows linearly in `L` (the Lyapunov spectrum of
+a product of random matrices has O(1) gaps), so `\beta` grows **exponentially in depth** —
+through conditioning, not through the averaging.
+
+> **Summary prediction for a classical MLP.** `\beta \ge 1` structurally as soon as any unit
+> is dead (6.2), grows like `\kappa^2` with the operator's conditioning (6.4), cannot be
+> reduced by tuning the learning rate (which only moves the scale term of Theorem 3.1), and
+> assigns *zero* update to directions the gates kill at every layer (6.3).
+
+### 6.5 What this predicts that the earlier account could not
+
+* The `2 - 2/L` exponent **saturates** with depth, so it cannot explain a depth-dependent
+  failure. `\beta \lesssim \kappa^2` with `\log\kappa \propto L` does, and locates the depth
+  dependence in the conditioning rather than in the exponent.
+* The earlier account treats all gated networks alike. Proposition 6.1 gives an **exact
+  structural difference** between an isometric gate and a projector gate — the first
+  contributes nothing to the input-side Gram, the second contributes its rank deficiency.
+* §6.3 separates two networks with identical operators, which no operator-level account can do.
+* Corollary 6.3 connects dead units to the bias quantitatively.
+* None of it needs alignment, balancedness, a power-law ansatz, or a claim about what the
+  singular values do.
+
+**The limits, stated.** Theorem 5.1 is an upper bound, so 6.4 bounds how large the bias can
+be, not how large it is; a matching lower bound needs the non-degeneracy that Corollary 4.4
+shows can fail. The `\log\kappa \propto L` step cites standard facts about products of random
+matrices rather than proving them here. And nothing in §6 controls the drift term itself — 6.3
+says when it is zero, not how big it is otherwise.
+
+---
+
+## 7. What this gives, and what it does not
 
 **Gives.** An exact closed form for the implicit bias (Thm 2.2); a separation into a harmless
 scale term, a factorisation term and a nonlinearity term (Thm 3.1); a complete
 characterisation of when the factorisation term vanishes (Thm 4.1, with 4.2–4.5 as the
 cases); an explicit, scale-free upper bound showing the bias is a **convex average of
-per-layer context anisotropies** (Thm 5.1); and the forward arrow of the
-conditioning-to-bias feedback loop in closed form (Cor. 5.2).
+per-layer context anisotropies** (Thm 5.1); the forward arrow of the
+conditioning-to-bias feedback loop in closed form (Cor. 5.2); and, in §6, its evaluation on
+ReLU and CReLU MLPs.
 
 Nothing above uses balancedness, alignment of contexts with the operator's singular basis, a
 power-law ansatz, or any property of the gates. Corollary 5.2 alone is stated for a balanced
