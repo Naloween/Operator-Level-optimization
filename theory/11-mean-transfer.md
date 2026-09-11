@@ -180,7 +180,96 @@ Perron–Frobenius branch dominates and its context anisotropy saturates.
 
 ---
 
-## 7. Status and limits
+## 7. The covariance, and what controls it
+
+Corollary 3 gives `\mathbb E[\mathcal T]`. The mismatch needs `\mathbb E_x[\mathcal T_{x_0,x}(G_x)]`,
+which differs from `\mathbb E[\mathcal T](G)` by a covariance, because `G_x` and the gate pattern
+`\varepsilon(x)` are both functions of the same `x`. This section computes what that covariance
+is made of. Two regimes.
+
+### 7.1 At a looks-linear configuration the drift is a reweighting by gate agreement
+
+> **Lemma 8 [EXACT].** For any two CReLU gates,
+> $$D(\varepsilon)^\top D(\varepsilon') \;=\; \mathrm{diag}\big(\mathbb 1[\varepsilon = \varepsilon']\big),$$
+> the per-unit **agreement indicator**.
+
+*Proof.* With `\Lambda = \mathrm{diag}(\mathbb 1[\varepsilon>0])` and
+`D = [\Lambda;\,-(I-\Lambda)]`, `D^\top D' = \Lambda\Lambda' + (I-\Lambda)(I-\Lambda')`, whose
+`i`-th diagonal entry is `\mathbb 1[\varepsilon_i>0]\mathbb 1[\varepsilon'_i>0] + \mathbb 1[\varepsilon_i<0]\mathbb 1[\varepsilon'_i<0] = \mathbb 1[\varepsilon_i=\varepsilon'_i]`,
+and whose off-diagonal entries vanish because both factors are diagonal. ∎ Verified exactly
+over 2000 random pairs. Note the self case `\varepsilon = \varepsilon'` recovers `D^\top D = I`.
+
+> **Theorem 9 (drift at `\Delta = 0`).** At a looks-linear configuration, `A_l` is input-free
+> and `B_l = D(\varepsilon_{l-1})N_l` with `N_l` input-free, so
+> $$\mathcal T_{x_0,x}(H) = \sum_l A_lA_l^\top\,H\,N_l^\top\,\mathrm{diag}\big(\mathbb 1[\varepsilon_{l-1}(x)=\varepsilon_{l-1}(x_0)]\big)\,N_l,$$
+> and hence
+> $$\mathbb E_x\big[\mathcal T_{x_0,x}\big](H) = \sum_l A_lA_l^\top\,H\,N_l^\top\,\mathrm{diag}(\pi_l)\,N_l, \qquad \pi_{l,i} := \mathbb P_x\big[\varepsilon_{l-1,i}(x)=\varepsilon_{l-1,i}(x_0)\big].$$
+> **If `\pi_{l,i}` does not depend on the unit `i`, this is `\pi_l` times the self-transfer on
+> layer `l` — a pure rescaling, contributing no rotation.** The drift rotates the update only
+> through the *variation of the agreement probability across units*.
+
+*Proof.* Substitute Lemma 8 into Definition 2.1 of file 10, using `A_l(x) = A_l` and
+`N_l(x) = N_l` at `\Delta = 0`; then take expectations entrywise. ∎
+
+**Measured** on looks-linear CReLU networks, 512 inputs:
+
+| `L` | layer | mean `\pi` | sd of `\pi` across units |
+|---|---|---|---|
+| 4 | 1 | 0.5011 | 0.0016 |
+| 4 | 2 | 0.5012 | 0.0010 |
+| 16 | 1 | 0.5008 | 0.0007 |
+| 16 | 8 | 0.5007 | 0.0009 |
+
+So `\pi \approx 1/2` with unit-to-unit variation of 0.1–0.3%: **at a looks-linear
+configuration the drift is, to that accuracy, a factor of one half and nothing else.** It
+lands in the *scale* bucket of Theorem 3.1 of file 10 — the harmless one — and this is the
+sense in which the earlier claim "looks-linear kills the drift" is true. It does not kill it;
+it makes it a rescaling.
+
+### 7.2 Away from it, the covariance is the residual/gate-sign correlation
+
+Centre each factor, `A_l = \bar A_l + \tilde A_l` and so on.
+
+> **Theorem 10 (covariance decomposition).** With `C_l := \mathbb E_x[A_l^\top G_xB_l^\top] - \bar A_l^\top\bar G\,\bar B_l^\top`,
+> $$C_l \;=\; \underbrace{\mathbb E[\tilde A_l^\top \tilde G B_l^{\;\top}]}_{\text{(i)}} + \underbrace{\mathbb E[\tilde A_l^\top \bar G \tilde B_l^\top]}_{\text{(ii)}} + \underbrace{\bar A_l^\top\mathbb E[\tilde G\tilde B_l^\top]}_{\text{(iii)}} + \underbrace{\mathbb E[\tilde A_l^\top\tilde G\tilde B_l^\top]}_{\text{(iv)}},$$
+> and **under (H-R) term (ii) vanishes exactly.**
+
+*Proof.* Expanding the product of three centred-plus-mean factors gives eight terms; the four
+with exactly one centred factor vanish because the other two are constants and the centred one
+has mean zero. For (ii), `\tilde A_l` and `\tilde B_l` depend on **disjoint** layer patterns, so
+under (H-R) they are independent; hence
+`\mathbb E[\tilde A_{ji}\tilde B_{lk}] = \mathbb E[\tilde A_{ji}]\mathbb E[\tilde B_{lk}] = 0`. ∎
+Numerically the term decays as `n^{-0.488}` under sampling — i.e. it is exactly zero.
+
+> **Theorem 11 (what the surviving terms are).** Expanding in powers of `\Delta`,
+> $$\tilde A_l = \sum_j \big(S_L\cdots S_{j+1}\big)\,\Delta_j\,E_{j-1}\,\big(S_{j-1}\cdots S_{l+1}\big) \;+\; O(\|\Delta\|^2)$$
+> (verified symbolically), so to first order
+> $$\mathbb E[\tilde A_l^\top\tilde G\,\bar B_l^\top] = \sum_j \big(\cdots\big)^\top\,\mathbb E_x\big[E_{j-1}\,\tilde G_x\big]\,\big(\cdots\big)\bar B_l^\top + O(\|\Delta\|^2),$$
+> and likewise for (iii). **Every surviving term is, at leading order, a contraction of the
+> correlations `\mathbb E_x[E_j\tilde G_x]` between the gate sign pattern and the centred
+> gradient.**
+
+> **Corollary 12 (one quantity controls both).** `\mathbb E_x[E_j\tilde G_x]` is exactly the
+> object of Theorem 16 of [`04-instability.md`](04-instability.md), where
+> `\Delta\Delta_l = -\tfrac\eta2\,\mathbb E_b[R_bE_b]` identifies it as the *unique* source of
+> nonlinearity from a looks-linear configuration. So the residual/gate-sign correlation
+> controls both
+> * the **creation** of the nonlinearity (Thm 16), and
+> * the **error** of the mean-field transfer of Corollary 3 (Thm 11).
+>
+> The measured dichotomy therefore transfers verbatim: it is `\Theta(B^{-1/2})` under
+> sign-symmetric data and `\Theta(1)` on MNIST — log-log batch slopes `-0.507\pm0.010` and
+> `-0.032\pm0.036` over nine runs each.
+
+That is the closure this file was aiming at. The drift is not an uncontrolled residue: at
+`\Delta = 0` it is a rescaling by the gate-agreement probability (Thm 9), and away from it its
+leading correction is the same correlation that made the network nonlinear in the first place
+(Cor. 12) — a quantity that is measured, that vanishes for symmetric data, and that a
+negation-closed batch sets to exactly zero (Thm 17 of file 04).
+
+---
+
+## 8. Status and limits
 
 | Result | Statement | Status |
 |---|---|---|
@@ -196,11 +285,12 @@ Perron–Frobenius branch dominates and its context anisotropy saturates.
 
 * **(H-R) is a modelling hypothesis.** Its first and second moments are measured; full mutual
   independence is not, and is false exactly. Everything in §3 onwards inherits this.
-* **Corollary 3 gives the mean of `\mathcal T`, not of `\mathcal T(G_x)`.** The drift term of
-  file 10 is `\mathbb E_x[\mathcal D(G_x)]`, which equals
-  `\mathbb E[\mathcal D]\,\mathbb E[G_x] + \mathrm{Cov}(\mathcal D, G_x)`; this file computes the
-  first piece and says nothing about the covariance. Since `G_x` and `\varepsilon(x)` are both
-  functions of `x`, that covariance is not zero.
+* **The covariance is characterised, not bounded.** §7 shows term (ii) vanishes and identifies
+  the rest as contractions of `\mathbb E_x[E_j\tilde G_x]` *to first order in* `\Delta`; the
+  `O(\|\Delta\|^2)` remainder is not controlled, and no norm bound on the whole covariance is
+  proved.
+* **Theorem 9's conclusion is conditional on `\pi` being unit-independent**, which is measured
+  to 0.1–0.3% but not derived.
 * **Theorem 5 assumes the `\Delta_j\circ\Delta_j` share a primitive limit.** Layer-varying
   `\Delta` gives an inhomogeneous product of nonnegative matrices; Birkhoff-contraction
   arguments should still give saturation, but that is not proved here.

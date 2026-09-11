@@ -225,3 +225,51 @@ def test_schur_horn_contraction():
         assert dg.sum() == pytest.approx(lam.sum(), abs=1e-9)
         assert np.all(np.cumsum(dg) <= np.cumsum(lam) + 1e-9)
         assert np.linalg.norm(dg) <= np.linalg.norm(lam) + 1e-9
+
+
+def test_gate_cross_product_is_the_agreement_indicator():
+    """Lemma 8: D(e)^T D(e') = diag(1[e = e']); the self case recovers D^T D = I."""
+    def gate(e):
+        return torch.cat([torch.diag((e > 0).double()), -torch.diag((e < 0).double())], 0)
+
+    g = torch.Generator().manual_seed(0)
+    for _ in range(500):
+        d = int(torch.randint(2, 9, (1,), generator=g))
+        e1 = torch.randint(0, 2, (d,), generator=g).double() * 2 - 1
+        e2 = torch.randint(0, 2, (d,), generator=g).double() * 2 - 1
+        assert torch.allclose(gate(e1).T @ gate(e2), torch.diag((e1 == e2).double()))
+        assert torch.allclose(gate(e1).T @ gate(e1), torch.eye(d, dtype=torch.float64))
+
+
+def test_agreement_probability_is_near_uniform_across_units():
+    """Thm 9's hypothesis: pi ~ 1/2 with small unit-to-unit spread, so the drift is a scale."""
+    from olo.models.crelu_mlp import CReLUMLP
+
+    g = torch.Generator().manual_seed(0)
+    net = CReLUMLP(d_in=12, d_out=12, width=12, depth=8).double()
+    net.initialize("looks_linear", seed=0)
+    X = torch.randn(512, 12, generator=g, dtype=torch.float64)
+    for z in net.pre_activations(X)[:3]:
+        s = torch.sign(z)
+        pi = (s.unsqueeze(0) == s.unsqueeze(1)).double().mean(dim=(0, 1))
+        assert abs(float(pi.mean()) - 0.5) < 0.02
+        assert float(pi.std()) < 0.01          # near-uniform => drift is a rescaling
+
+
+def test_context_context_covariance_vanishes_under_independence():
+    """Thm 10 term (ii): E[At^T Gbar Bt^T] = 0 when At, Bt are independent and centred."""
+    rng = np.random.default_rng(0)
+    d = 4
+    Sa, Da = rng.normal(size=(d, d)), rng.normal(size=(d, d))
+    Sb, Db = rng.normal(size=(d, d)), rng.normal(size=(d, d))
+    Gb = rng.normal(size=(d, d))
+    vals = []
+    for n in (10**3, 10**5):
+        ea = rng.choice([-1.0, 1.0], size=(n, d))
+        eb = rng.choice([-1.0, 1.0], size=(n, d))
+        A = Sa[None] + Da[None] * ea[:, None, :]
+        B = Sb[None] + Db[None] * eb[:, None, :]
+        At, Bt = A - A.mean(0), B - B.mean(0)
+        vals.append(np.abs(np.einsum("nji,jk,nlk->il", At, Gb, Bt) / n).max())
+    # exactly zero, so the sample estimate must shrink with n rather than plateau
+    assert vals[1] < vals[0] / 3

@@ -125,13 +125,21 @@ and vanishes iff `C` is constant. Two consequences:
 
 > **Corollary 4.5 (when the input-dependence term vanishes).** `\mathcal D_{x_0,x} = 0` for
 > all `x` iff `A_l(\cdot)` and `B_l(\cdot)` are constant in the input. This holds exactly for
-> deep linear and fixed-gate networks, and for a CReLU network at a looks-linear
-> configuration, where `W_lD(z) = O_l` for every `z` makes the contexts input-free.
+> deep linear and fixed-gate networks.
 
-Putting 4.2 and 4.5 together: **a rectifier network whose layers are orthogonal and
-looks-linear has `\mathcal R = (1-L)G` exactly** — pure rescaling, no bias at all, at any
-depth. That is a complete, unconditional statement, and it is the extreme point of the
-picture.
+**A correction, because the obvious extension is false.** A CReLU network at a looks-linear
+configuration has `W_lD(z) = O_l` for every `z`, which makes `A_l` input-free and makes the
+*self* Gram `B_l^\top B_l = N_l^\top N_l` input-free (gate isometry). But `B_l = D(\varepsilon)N_l`
+itself still carries its gate, so the **cross** product `B_l(x)^\top B_l(x_0)` does not, and
+`\mathcal D \ne 0`. [`11-mean-transfer.md`](11-mean-transfer.md) §7 computes it exactly: it is
+the self-transfer with the `B`-side Gram reweighted by the two inputs' gate *agreement*
+pattern, which is a pure rescaling to the extent that the per-unit agreement probability does
+not vary across units (measured: `0.501`, unit-to-unit sd `0.001`).
+
+So 4.2 plus 4.5 give: **a deep linear or fixed-gate network whose contexts are multiples of
+isometries has `\mathcal R = (1-L)G` exactly** — pure rescaling, no bias, at any depth. For
+looks-linear CReLU the same conclusion holds up to the spread of the agreement probability,
+not exactly.
 
 ---
 
