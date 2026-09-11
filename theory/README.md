@@ -17,6 +17,7 @@ with the measurement that would confirm or refute it.
 | [`07-patterns.md`](07-patterns.md) | **the nonlinear answer**: low-rank bias at a fixed gate pattern — mechanism universal, outcome set by the drive | exact reformulation; the key bound is a conjecture |
 | [`08-gain-bound.md`](08-gain-bound.md) | a proved certificate for the gain exponent at any gate pattern | Lemmas A, B and Thm 20 proved; 0 violations |
 | [`09-basis-free.md`](09-basis-free.md) | **removes the alignment assumption**: effective-rank dynamics from traces alone | Thm 21 exact; Lemma 22 proved |
+| [`10-mismatch.md`](10-mismatch.md) | the implicit bias in closed form: `R = E_x[(Id - T)(G_x)]`, when it vanishes, and a bound | all proved; no measurements |
 
 ## Reading order
 
