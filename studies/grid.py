@@ -35,18 +35,23 @@ import torch
 
 from olo.init.schemes import haar
 from olo.models.crelu_mlp import CReLUMLP
+from olo.models.deep_linear import DeepLinear
 from olo.models.relu_mlp import ReLUMLP
 from olo.models.residual_mlp import ResidualReLUMLP
 from olo.tasks.teacher_student import TeacherStudent
 from olo.tasks.mnist1d import MNIST1D
 
-ARCH = {"relu_mlp": ReLUMLP, "crelu_mlp": CReLUMLP, "residual_mlp": ResidualReLUMLP}
+ARCH = {"relu_mlp": ReLUMLP, "crelu_mlp": CReLUMLP, "residual_mlp": ResidualReLUMLP,
+        "deep_linear": DeepLinear}
 
 #: init name -> the scheme each architecture uses to realise it
 INIT = {
-    "xavier":     {"relu_mlp": "xavier",   "crelu_mlp": "xavier",       "residual_mlp": "xavier"},
-    "orthogonal": {"relu_mlp": "haar",     "crelu_mlp": "looks_linear", "residual_mlp": "haar"},
-    "identity":   {"relu_mlp": "identity", "crelu_mlp": "identity",     "residual_mlp": "identity"},
+    "xavier":     {"relu_mlp": "xavier",   "crelu_mlp": "xavier",       "residual_mlp": "xavier",
+                   "deep_linear": "xavier"},
+    "orthogonal": {"relu_mlp": "haar",     "crelu_mlp": "looks_linear", "residual_mlp": "haar",
+                   "deep_linear": "haar"},
+    "identity":   {"relu_mlp": "identity", "crelu_mlp": "identity",     "residual_mlp": "identity",
+                   "deep_linear": "identity"},
 }
 
 
@@ -73,7 +78,8 @@ def initialize(net, arch: str, init: str, seed: int) -> None:
                 net.W_out.copy_(haar(*net.W_out.shape, g))
         return
 
-    # ReLU / CReLU: start from the orthogonal realisation (which handles every shape), then
+    # ReLU / CReLU / deep linear: start from the orthogonal realisation (which handles every
+    # shape), then
     # set the SQUARE inner layers to the identity version of the same block structure.
     net.initialize(INIT["orthogonal"][arch], seed=seed)
     with torch.no_grad():
@@ -83,7 +89,7 @@ def initialize(net, arch: str, init: str, seed: int) -> None:
             n_out, n_in = W.shape
             if arch == "crelu_mlp" and n_in == 2 * n_out:
                 W.copy_(torch.cat([torch.eye(n_out), -torch.eye(n_out)], dim=1))
-            elif arch == "relu_mlp" and n_in == n_out:
+            elif arch in ("relu_mlp", "deep_linear") and n_in == n_out:
                 W.copy_(torch.eye(n_out))
 
 
