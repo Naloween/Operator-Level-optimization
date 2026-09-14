@@ -18,6 +18,7 @@ with the measurement that would confirm or refute it.
 | [`08-gain-bound.md`](08-gain-bound.md) | a proved certificate for the gain exponent at any gate pattern | Lemmas A, B and Thm 20 proved; 0 violations |
 | [`09-basis-free.md`](09-basis-free.md) | **removes the alignment assumption**: effective-rank dynamics from traces alone | Thm 21 exact; Lemma 22 proved |
 | [`10-mismatch.md`](10-mismatch.md) | the implicit bias in closed form: `R = E_x[(Id - T)(G_x)]`, when it vanishes, and a bound | all proved; no measurements |
+| [`12-grid.md`](12-grid.md) | **the measurement grid**: 3 architectures x 3 inits x 3 tasks at depth 128, and what to prove from it | empirical; 72/81 capped |
 | [`11-mean-transfer.md`](11-mean-transfer.md) | **the mechanism**: the nonlinearity is a Perron–Frobenius contraction that bounds the bias in depth | exact under (H-R), whose moments are measured |
 
 ## Reading order
