@@ -1,11 +1,11 @@
 # What the grid says
 
-`studies/grid.py`: 3 architectures x 3 initialisations x 3 tasks x 3 seeds, depth **128**,
+`studies/grid.py`: **4** architectures x 3 initialisations x 3 tasks x 3 seeds, depth **128**,
 width 32, full batch (n = 256), lr 1e-4, up to 30k steps. Tables in
 `runs/theory/grid_report.txt`; raw traces in `runs/theory/grid.json`; per-run checkpoints in
 `runs/theory/grid_ckpt/`.
 
-**Caveat, first.** 72 of 81 runs hit the step cap. Every "final" number below is
+**Caveat, first.** 96 of 108 runs hit the step cap. Every "final" number below is
 end-of-budget, not end-of-training. Checkpoints exist, so extending is one command.
 
 ---
@@ -102,7 +102,93 @@ where the contexts are well conditioned enough for the quantity to mean anything
 
 ---
 
-## 6. What to try to prove
+## 6. The deep linear baseline
+
+A fourth architecture with no nonlinearity at all, run identically, so every number above can
+be read against what the *factorisation alone* does.
+
+### 6.1 Isometric contexts give a bias of exactly zero
+
+`sin` at step 0 on the isotropic teacher:
+
+| architecture | identity | orthogonal | xavier |
+|---|---|---|---|
+| **deep linear** | **0.006** | **0.006** | 0.975 |
+| CReLU | 0.331 | 0.227 | — |
+| residual | 0.722 | 0.782 | 0.799 |
+| ReLU | 0.971 | 0.999 | 1.000 |
+
+`0.006` is `theory/10` Corollary 4.2 measured: with every context a multiple of an isometry
+the mismatch is a **pure rescaling**, with no direction change at all. It is the first
+quantity in this project to hit a predicted zero rather than approach it, and it calibrates
+the rest of the column — the ordering is exactly the trainability ordering of §1.
+
+### 6.2 The rank-1 collapse at depth is the product, not the gates
+
+Effective rank at initialisation under Xavier:
+
+| deep linear | CReLU | ReLU | residual |
+|---|---|---|---|
+| **1.11 ± 0.18** | 1.08 ± 0.06 | 1.02 ± 0.04 | 9.01 ± 1.75 |
+
+A network with **no nonlinearity whatsoever** is already at rank 1.1 of 32. So the depth-128
+collapse under Xavier is a property of the product of random matrices, full stop; the gates
+add nothing to it. Only the skip connection escapes, because `prod_l(I + W_lD_l)` with `1/L`
+scaling is near the identity however the weights are drawn.
+
+### 6.3 The terminal rank is task-set across the linear/nonlinear divide
+
+| task | target | deep linear | CReLU | residual | ReLU |
+|---|---|---|---|---|---|
+| teacher low-rank | 4 | 3.72 | 4.21 | 4.13 | 2.10 |
+| MNIST-1D | 10 | 3.52 | 2.83 | 2.45 | 2.34 |
+| teacher isotropic | 32 | 27.57 | 24.25 | 26.30 | 9.52 |
+
+The universality of §2 now spans the linear control too. Whatever sets the endpoint is not
+the nonlinearity.
+
+### 6.4 The nonlinearity strictly adds bias, and it never subtracts it
+
+Final `sin`, best initialisation per architecture:
+
+| task | deep linear | CReLU | residual | ReLU |
+|---|---|---|---|---|
+| teacher low-rank | **0.352** | 0.497 | 0.993 | 0.985 |
+| teacher isotropic | **0.666** | 0.994 | 0.967 | 0.999 |
+| MNIST-1D | **0.978** | 0.995 | 0.999 | 0.999 |
+
+Deep linear is the best case in every task. No architecture anywhere in the grid beats it.
+
+### 6.5 The bias appears in the first 5% of training
+
+Steps for `sin` to first exceed 0.9, of a 30k budget:
+
+| architecture | `sin(0)` | steps | % of budget |
+|---|---|---|---|
+| deep linear | 0.15 | 1500–1750 | 5–6% |
+| CReLU | 0.33–0.43 | 1000–1500 | 3–5% |
+| residual | 0.76–0.81 | 1000 | 3% |
+| ReLU | 0.95–0.98 | **0** | 0% |
+
+Even from an exactly isometric start the mismatch saturates almost immediately. Whatever the
+initialisation buys, it is spent within a few percent of training.
+
+### 6.6 This is not a vanishing-gradient artefact
+
+The obvious worry is that `sin -> 1` merely reports noise once `G` has collapsed. It does not.
+Median `sin` by relative loss, over 5983 snapshots:
+
+| `L/L_0` | 1–0.1 | 0.1–0.01 | 1e-2–1e-3 | 1e-3–1e-5 | < 1e-8 |
+|---|---|---|---|---|---|
+| median `sin` | 0.999 | 0.992 | 0.990 | 0.999 | **0.002** |
+
+The mismatch is ~1 throughout training, not only at the end. Only in the last band — 33
+snapshots, at machine-precision convergence — does it fall back to zero, and **only 4 of 108
+runs** ever got there. That reversal is real but rests on very little.
+
+---
+
+## 7. What to try to prove
 
 In order of how sharply the data pins them:
 
@@ -117,6 +203,10 @@ In order of how sharply the data pins them:
 3. **`sin -> 1` generically, and the low-rank exception.** The exception is the informative
    half: it says direction is preserved when the target's rank matches what the isometric
    architecture can hold.
+4. **The nonlinearity only ever adds bias (§6.4), and the deep linear control attains the
+   predicted zero at initialisation (§6.1).** Together these say the implicit bias of a
+   gated network is the factorisation's bias plus a non-negative gate contribution — which is
+   exactly the shape of `theory/10` Prop. 6.1, and is now measured rather than argued.
 
 Nothing here should be proved from the endpoints alone until the runs are actually converged
 (§0 caveat) — extending the 72 capped runs is the first thing to do.
