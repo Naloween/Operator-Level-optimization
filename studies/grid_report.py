@@ -34,7 +34,7 @@ def main() -> None:
     runs = d["runs"]
     archs = sorted({r["arch"] for r in runs})
     inits = [i for i in ("identity", "orthogonal", "xavier") if any(r["init"] == i for r in runs)]
-    tasks = [t for t in ("teacher_isotropic", "teacher_lowrank", "mnist")
+    tasks = [t for t in ("teacher_isotropic", "teacher_lowrank", "mnist1d")
              if any(r["task"] == t for r in runs)]
     print(f"{len(runs)} runs  |  "
           f"converged: {sum(r['stop'] == 'converged' for r in runs)}  "

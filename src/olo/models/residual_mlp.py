@@ -50,14 +50,25 @@ class ResidualReLUMLP(nn.Module):
         gen = torch.Generator().manual_seed(int(seed))
         g = math.sqrt(2.0) if gain == "auto" else float(gain)
         with torch.no_grad():
+            # Residual branches are scaled by 1/depth. Without it ||I + W D|| can reach 2
+            # per block, so the operator is ~2^L and a depth-128 network overflows at step 0
+            # (measured: initial loss 1.6e11). 1/L is the standard depth-scaling for an
+            # unnormalised residual net -- it keeps (1 + 1/L)^L ~ e, hence an O(1) operator at
+            # any depth -- and it is the only way the architecture is comparable at all here.
+            branch = 1.0 / self.depth
             if scheme == "xavier":
-                for W in (self.W_in, *self.blocks, self.W_out):
-                    W.copy_(torch.randn(W.shape, generator=gen) * (g / math.sqrt(W.shape[1])))
+                self.W_in.copy_(torch.randn(self.W_in.shape, generator=gen)
+                                * (g / math.sqrt(self.W_in.shape[1])))
+                self.W_out.copy_(torch.randn(self.W_out.shape, generator=gen)
+                                 * (g / math.sqrt(self.W_out.shape[1])))
+                for W in self.blocks:
+                    W.copy_(torch.randn(W.shape, generator=gen)
+                            * (g * branch / math.sqrt(W.shape[1])))
             elif scheme in ("haar", "orthogonal"):
                 self.W_in.copy_(haar(*self.W_in.shape, gen))
                 self.W_out.copy_(haar(*self.W_out.shape, gen))
                 for W in self.blocks:
-                    W.copy_(haar(*W.shape, gen))
+                    W.copy_(branch * haar(*W.shape, gen))
             elif scheme == "identity":
                 # J = W_out (prod of I) W_in = W_out W_in = I when the maps are (partial)
                 # identities and every block is zero.

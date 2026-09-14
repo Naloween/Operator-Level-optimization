@@ -34,6 +34,7 @@ TASKS: dict[str, str] = {
     "teacher_student": "olo.tasks.teacher_student:TeacherStudent",
     "matrix_sensing": "olo.tasks.matrix_sensing:MatrixSensing",
     "mnist": "olo.tasks.vision:MNIST",
+    "mnist1d": "olo.tasks.mnist1d:MNIST1D",
     "cifar10": "olo.tasks.vision:CIFAR10",
 }
 

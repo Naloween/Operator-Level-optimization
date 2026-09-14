@@ -38,7 +38,7 @@ from olo.models.crelu_mlp import CReLUMLP
 from olo.models.relu_mlp import ReLUMLP
 from olo.models.residual_mlp import ResidualReLUMLP
 from olo.tasks.teacher_student import TeacherStudent
-from olo.tasks.vision import MNIST
+from olo.tasks.mnist1d import MNIST1D
 
 ARCH = {"relu_mlp": ReLUMLP, "crelu_mlp": CReLUMLP, "residual_mlp": ResidualReLUMLP}
 
@@ -88,8 +88,8 @@ def initialize(net, arch: str, init: str, seed: int) -> None:
 
 
 def make_task(name: str, width: int, n: int, seed: int):
-    if name == "mnist":
-        t = MNIST(n_train=n, n_val=256, n_test=256, seed=seed)
+    if name == "mnist1d":
+        t = MNIST1D(n_train=n, n_val=500, n_test=500, seed=seed)
     elif name == "teacher_isotropic":
         t = TeacherStudent(d=width, n=n, target="orthogonal", seed=seed)
     elif name == "teacher_lowrank":
@@ -186,7 +186,7 @@ def main() -> None:
     ap.add_argument("--archs", nargs="+", default=list(ARCH))
     ap.add_argument("--inits", nargs="+", default=list(INIT))
     ap.add_argument("--tasks", nargs="+",
-                    default=["teacher_isotropic", "teacher_lowrank", "mnist"])
+                    default=["teacher_isotropic", "teacher_lowrank", "mnist1d"])
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     ap.add_argument("--depth", type=int, default=8)
     ap.add_argument("--width", type=int, default=32)
