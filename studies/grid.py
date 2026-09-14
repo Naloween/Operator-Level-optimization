@@ -130,19 +130,32 @@ def bias_metrics(dJ: torch.Tensor, G: torch.Tensor, lr: float) -> dict:
             "sin": float(np.sqrt(max(0.0, 1.0 - cos**2)))}
 
 
+def ckpt_path(out: str, arch: str, init: str, task_name: str, seed: int) -> Path:
+    """One checkpoint per configuration, beside the results file."""
+    p = Path(out)
+    return p.parent / (p.stem + "_ckpt") / f"{arch}__{init}__{task_name}__s{seed}.pt"
+
+
 def run(arch: str, init: str, task_name: str, depth: int, width: int, n: int, lr: float,
-        max_steps: int, eval_every: int, tol: float, seed: int, probe: int) -> dict:
+        max_steps: int, eval_every: int, tol: float, seed: int, probe: int,
+        ckpt=None, resume: bool = False) -> dict:
     torch.manual_seed(seed)
     task = make_task(task_name, width, n, seed)
     net = ARCH[arch](d_in=task.d_in, d_out=task.d_out, width=width, depth=depth).double()
     initialize(net, arch, init, seed)
     opt = torch.optim.SGD(net.parameters(), lr=lr)
+    start = 0
+    if resume and ckpt is not None and Path(ckpt).exists():
+        state = torch.load(ckpt, weights_only=False)
+        net.load_state_dict(state["model"])
+        opt.load_state_dict(state["optim"])
+        start = int(state["step"])
 
     X, Y = task.train_batch(0, n)                      # full batch, fixed
     Xp = X[:probe]
     rec, losses, stop = [], [], "max_steps"
 
-    for step in range(max_steps + 1):
+    for step in range(start, max_steps + 1):
         opt.zero_grad(set_to_none=True)
         loss = task.loss(task.forward(net, X), Y)
         loss.backward()
@@ -176,9 +189,20 @@ def run(arch: str, init: str, task_name: str, depth: int, width: int, n: int, lr
             continue
         opt.step()
 
+    # Save the final state, so a run that hit the step cap -- which at this depth and
+    # learning rate is most of them -- can be continued rather than restarted from scratch.
+    if ckpt is not None:
+        Path(ckpt).parent.mkdir(parents=True, exist_ok=True)
+        torch.save({"model": net.state_dict(), "optim": opt.state_dict(),
+                    "step": rec[-1]["step"], "stop": stop,
+                    "config": {"arch": arch, "init": init, "task": task_name,
+                               "depth": depth, "width": width, "n": n, "lr": lr,
+                               "seed": seed, "probe": probe}}, ckpt)
+
     return {"arch": arch, "init": init, "task": task_name, "depth": depth, "width": width,
             "lr": lr, "seed": seed, "n": n, "stop": stop, "steps": rec[-1]["step"],
-            "loss_final": rec[-1]["loss"], "trace": rec}
+            "loss_final": rec[-1]["loss"], "trace": rec,
+            "ckpt": str(ckpt) if ckpt is not None else None}
 
 
 def main() -> None:
@@ -197,13 +221,37 @@ def main() -> None:
     ap.add_argument("--tol", type=float, default=1e-7)
     ap.add_argument("--probe", type=int, default=8)
     ap.add_argument("--out", default="runs/theory/grid.json")
+    ap.add_argument("--resume", action="store_true",
+                    help="skip configurations already recorded in --out, and warm-start any "
+                         "run whose checkpoint exists (so a capped run continues)")
     a = ap.parse_args()
 
     jobs = [(A, i, t, s) for A in a.archs for i in a.inits for t in a.tasks for s in a.seeds]
     out, t0 = [], time.time()
+    prev: dict = {}
+    if a.resume and Path(a.out).exists():
+        out = json.loads(Path(a.out).read_text())["runs"]
+        prev = {(r["arch"], r["init"], r["task"], r["seed"]): r for r in out}
+        # Skip a recorded configuration only if it is actually finished: either it stopped
+        # on its own, or it already ran at least as far as this invocation asks for.
+        # Otherwise re-enter it warm-started from its checkpoint, so raising --max-steps
+        # CONTINUES the capped runs instead of silently leaving them where they were.
+        done = {k for k, r in prev.items()
+                if r["stop"] != "max_steps" or r["steps"] >= a.max_steps}
+        print(f"resuming from {a.out}: {len(prev)} recorded, {len(done)} finished, "
+              f"{len(prev) - len(done)} to continue, {len(jobs) - len(prev)} new", flush=True)
+        out = [r for k, r in prev.items() if k in done]
+    else:
+        done = set()
     for k, (A, i, t, s) in enumerate(jobs):
+        if (A, i, t, s) in done:
+            continue
         r = run(A, i, t, a.depth, a.width, a.n, a.lr, a.max_steps, a.eval_every, a.tol, s,
-                a.probe)
+                a.probe, ckpt_path(a.out, A, i, t, s), a.resume)
+        old = prev.get((A, i, t, s))
+        if old is not None and r["trace"] and r["trace"][0]["step"] > 0:
+            # continued run: keep the earlier history so the trace stays contiguous
+            r["trace"] = [x for x in old["trace"] if x["step"] < r["trace"][0]["step"]] + r["trace"]
         out.append(r)
         f, l = r["trace"][0], r["trace"][-1]
         print(f"[{k+1}/{len(jobs)}] {A:<13}{i:<11}{t:<18}s={s} {r['stop']:<10}"
