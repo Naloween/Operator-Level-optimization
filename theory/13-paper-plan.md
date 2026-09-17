@@ -424,6 +424,9 @@ width.** With the sub-solve budget raised until `ρ` saturates:
 | | d=6, L=8 | d=32, L=8 | d=32, L=32 |
 |---|---|---|---|
 | ρ(dicho) | 0.017 | **0.052** | **0.231** |
+
+*(Saturation confirmed: `ρ = 0.2312` identically at budget 30, 100 and 300 for d=32, L=32. The
+growth with depth and width is genuine surrogate error, not under-solved splits.)*
 | wall clock | <1 s | 16 s | ~40 s + |
 
 `ρ` is trustworthy here — the CG relative residual reaches `5.6e-19` (L=8) and `1.5e-44` (L=32),
@@ -437,6 +440,52 @@ constraint Jacobian `M(ΔW) = Σ_l A_l ΔW_l B_l` loses rank exactly where the o
 which is the regime of interest. **So `ρ = 0` certifies stationarity only where the constraint
 qualification holds, and the paper must say so.** Establishing when LICQ holds for (P) is an open
 item, not a detail.
+
+### 4.2d Direction (a): a closed-form cost-to-go at a general base point — **RUN 2026-09-17: PARTIAL**
+
+`studies/aligned_split.py`. The two-factor split `min ‖Y'−Y‖² + ‖X'−X‖² s.t. Y'X' = Z` has no
+closed form in general, which is both why the recursion is proved exact only from a degenerate
+base point and why it costs 5–40 s per step at d=32. But it **decouples** if the three matrices
+share a frame: with `Z = U S_z Vᵀ`, `Y = U S_y Qᵀ`, `X = Q S_x Vᵀ` it separates into `d` scalar
+problems `min (y−y₀)² + (x−x₀)² s.t. yx = z`, whose stationarity reduces to the quartic
+
+```
+y⁴ − y₀ y³ + x₀ z y − z² = 0
+```
+
+solvable by radicals. That is a **per-mode cost-to-go at a general base point**, and its
+hypothesis is exactly Theorem 6.1 of the ICML paper (spectral separation forces singular-vector
+alignment) — so it is checkable rather than assumed, and the script checks it on every call.
+
+**Result: it works, but only in the separated regime.** d=16, base spectra `σ_i = decay^i`:
+
+| decay | step η | misalignment | aligned cost | reference cost | ratio |
+|---|---|---|---|---|---|
+| 1.00 (flat) | 0.05 | 0.902 | 47.2 | 0.042 | **1112** |
+| 1.00 | 0.002 | 0.902 | 48.4 | 6.5e-5 | **741716** |
+| 0.80 | 0.05 | 0.082 | 0.892 | 0.138 | 6.4 |
+| 0.50 | 0.05 | 0.058 | 0.861 | 0.631 | **1.36** |
+| 0.50 | 0.002 | 0.002 | 0.0165 | 0.0127 | **1.30** |
+| 0.30 | 0.05 | 0.051 | 1.014 | 0.844 | **1.20** |
+| 0.30 | 0.002 | 0.002 | 0.0285 | 0.0241 | **1.18** |
+
+and it is **500–2400× faster** — sub-millisecond against 0.1–1 s — with the constraint met to
+`1e-15` in every case.
+
+**Mechanism.** Restricting both factors to be diagonal in a common frame costs exactly the
+off-diagonal mass, which is what `misalignment` measures. That term is *constant in `y`*, so it
+does not affect the scalar optimisation; it only adds to the achieved cost. The method is
+therefore **exact within the frame-diagonal class**, and its gap to the true optimum is governed
+by misalignment alone. Where the spectrum separates, misalignment falls and the gap closes to
+`1.18–1.36`; where it is flat the singular vectors are arbitrary, misalignment is `0.9`, and the
+answer is wrong by three to six orders of magnitude.
+
+**Status of (a).** This makes the exactness theorem **conditional on spectral separation**, not
+unconditional: a closed form exists under a checkable hypothesis the ICML paper independently
+supports, and — the practical payoff — it is finally fast enough to put the solver inside a
+training loop. It does not reach ratio 1.00 even at strong separation, which points at the inner
+frame `Q` (here from `YᵀY + XXᵀ`) not being the optimal choice. Closing that last ~20% is the
+remaining theory item for (a).
 
 ### 4.3 Result F: does removing the bias change the endpoint? — **RUN 2026-09-17: PASSES**
 
