@@ -396,6 +396,48 @@ powers of two and `34%` at `L = 5` — the same signature. And the minimal reali
 well aligned with the coordinate gradient step (`cos` `+0.92 → +0.81`) while approximately
 preserving balancedness.
 
+### 4.2c Does it scale? — **RUN 2026-09-17: the constructive half scales perfectly, the general-base-point half does not**
+
+`studies/scaling.py`, `runs/theory/scaling.json`. d=32, L up to 128. ALS is dropped. The joint
+(P) reference does not scale, so two different yardsticks are used: at a degenerate base point the
+optimum is the closed-form Schatten value `L Σσ_i(P*)^{2/L}`, exact at any size; elsewhere the
+certificate `ρ`, computed matrix-free by CG on the transfer operator (the dense map would be a
+`d²`-column matrix of height `L d²` — 1 GB at d=32, L=128).
+
+**Degenerate base point — exact at every scale, in milliseconds.**
+
+| L | 8 | 12 | 32 | 48 | 64 | 96 | 128 |
+|---|---|---|---|---|---|---|---|
+| symmetric split, ratio to optimum | 1.000000 | — | 1.000000 | 1.001354 | 1.000000 | 1.000356 | 1.000000 |
+| **depth-proportional** | **1.000000** | **1.000000** | **1.000000** | **1.000000** | **1.000000** | **1.000000** | **1.000000** |
+| relative residual | 5e-15 | — | 1e-14 | 1e-14 | 1.5e-14 | 1.7e-14 | **2.3e-14** |
+| wall clock | <0.05 s | <0.05 s | <0.05 s | <0.05 s | <0.05 s | <0.05 s | **<0.05 s** |
+
+The `d=6` finding reproduces exactly at `d=32`: the symmetric split is exact iff `L` is a power of
+two, the depth-proportional split is exact for every `L`, and it holds at **depth 128 to
+2.3e-14**, computed in closed form with no iteration at all. This half of the method has no
+scaling problem whatever.
+
+**General base point — the recursion is not stationary, and the gap grows with both depth and
+width.** With the sub-solve budget raised until `ρ` saturates:
+
+| | d=6, L=8 | d=32, L=8 | d=32, L=32 |
+|---|---|---|---|
+| ρ(dicho) | 0.017 | **0.052** | **0.231** |
+| wall clock | <1 s | 16 s | ~40 s + |
+
+`ρ` is trustworthy here — the CG relative residual reaches `5.6e-19` (L=8) and `1.5e-44` (L=32),
+so this is the certificate, not an artefact. An earlier run reported `ρ = 0.37–0.64`; that was a
+**sub-solve budget artefact** (budget 8), and it falls to `0.052` at budget 30 and saturates.
+
+**A caveat that matters theoretically.** At budget 8 the solver returned a point with *smaller*
+`Σ‖W_l‖²` (109.4 vs 111.2) yet *worse* `ρ` (0.373 vs 0.052), both feasible. That is not a
+contradiction: the KKT lemma of §3.4 is necessary only at a **regular** optimum, and the
+constraint Jacobian `M(ΔW) = Σ_l A_l ΔW_l B_l` loses rank exactly where the operator collapses —
+which is the regime of interest. **So `ρ = 0` certifies stationarity only where the constraint
+qualification holds, and the paper must say so.** Establishing when LICQ holds for (P) is an open
+item, not a detail.
+
 ### 4.3 Result F: does removing the bias change the endpoint? — **RUN 2026-09-17: PASSES**
 
 `studies/endpoint.py`, `runs/theory/endpoint.json`. Two arms from the same starting operator:
