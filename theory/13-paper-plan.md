@@ -273,12 +273,60 @@ chain satisfies the KKT form with a single `Λ`. (c) Run `ρ` on the existing di
 output — **this answers "was the recursion hitting the global optimum all along?"**
 **Kill if** `ρ` is bounded away from 0 at a verified optimum → the KKT form is wrong.
 
-### 4.3 Result F: does removing the bias actually change the endpoint? — *2 h*
-The riskiest item. DLN, `L ∈ {2,8,32}`, `d = 32`, matrix sensing + low-rank teacher, small init.
-Arm 1 = GD. Arm 2 = exact operator GD (realisable in closed form for DLN — no solver needed for
-this check, just integrate `J` directly and re-factor). Compare mode-learning order and endpoint.
-**Kill if** the endpoints coincide: then the bias changes only the *path*, not what is learned,
-and the paper has no implicit-bias result — fall back to §6 framing (ii).
+### 4.3 Result F: does removing the bias change the endpoint? — **RUN 2026-09-17: PASSES**
+
+`studies/endpoint.py`, `runs/theory/endpoint.json`. Two arms from the same starting operator:
+`gd` = coordinate gradient flow on the factors, `op` = the counterfactual `Jdot = -G`. For width
+>= min(d_in,d_out) the reachable set is unconstrained, so `op` is exactly what the certified
+solver would realise and can be integrated directly — **this check needed no solver**. Both arms
+integrate the *flow* with adaptive steps (step-size-independent trajectory, and the object
+Arora Thm 1 is stated for), stopping at `||grad||/||grad_0|| < 1e-11`. d=20, 3 seeds.
+
+| task | minimiser | L | endpoint gap | gd err vs truth | op err vs truth | gd err vs min-norm | op err vs min-norm | gd stable rank | op stable rank |
+|---|---|---|---|---|---|---|---|---|---|
+| aniso (cond 30) | **unique** | 2 | **0.0001 ± 0.0002** | 0.0001 | 0.0000 | — | — | 5.78 | 5.78 |
+| aniso | **unique** | 3 | **0.0000 ± 0.0001** | 0.0000 | 0.0000 | — | — | 5.78 | 5.78 |
+| underdet (n=10<d=20) | affine | 2 | 0.0517 ± 0.0035 | 0.719 | 0.716 | 0.058 | **0.010** | 3.98 | 3.98 |
+| underdet | affine | 3 | 0.0952 ± 0.0063 | 0.724 | 0.716 | 0.102 | **0.010** | 4.00 | 3.98 |
+| sensing (m=228 of 400, rank 2) | affine | 2 | **0.732 ± 0.039** | **0.179** | 0.681 | 0.734 | **0.035** | **1.345** | 2.368 |
+| sensing | affine | 3 | **0.864 ± 0.060** | **0.076** | 0.681 | 0.865 | **0.037** | **1.347** | 2.364 |
+| deep (sensing, Xavier, ‖J₀‖=4.4) | affine | 8 | **0.959 ± 0.017** | 0.527 | 2.638 | 0.973 | 3.485 | 1.650 | 3.145 |
+
+**Verdict: the endpoints differ, and the check passes.** Four readings, in order of importance.
+
+1. **The control behaves exactly as the theory demands.** With a full-rank ill-conditioned input
+   covariance the minimiser is unique and the two arms agree to `1e-9` on every converged seed —
+   four orders below the smallest real effect. Confirms the user's own prediction, and validates
+   the harness: any gap elsewhere is a genuine selection effect, not integration error.
+2. **Wherever the minimiser is non-unique the arms select different points, and the gap grows
+   with depth**: `underdet` 0.052 → 0.095 and `sensing` 0.73 → 0.86 from `L=2` to `L=3`.
+3. **The unbiased arm converges to the minimum-Frobenius-norm solution**, to `1.0%` on
+   `underdet` and `3.5%` on `sensing` — as predicted for gradient flow from a small start on a
+   convex least-squares problem. The counterfactual is not merely "different", it is a
+   *characterised* limit, which is what makes it usable as a control.
+4. **The sign is the opposite of the one the paper wanted.** On matrix sensing the biased arm
+   recovers the rank-2 ground truth (`err 0.179` at `L=2`, improving to **`0.076` at `L=3`**,
+   stable rank 1.345 vs the truth's 1.36) while the unbiased arm does not (`err 0.681`). The
+   depth trend independently reproduces Arora, Cohen, Hu & Luo (2019). **Correcting the mismatch
+   is actively harmful here.**
+
+**Consequence for the framing.** §6(i) as written — "the bias is removable and here is what it
+was costing you" — is not supported: in the canonical implicit-bias test-bed the bias is what
+makes recovery work. The defensible claim is the control framing:
+
+> The factorisation bias is a specific, quantifiable regulariser. We can now switch it off exactly
+> and at finite step size, so its contribution can be measured rather than inferred — and in the
+> one setting where it has been most studied, switching it off *costs* you recovery.
+
+This answers reviewer U6A5's "is correcting the mismatch even desirable?" with a measurement and
+an honest **no, not always** — which is a better paper than a claimed universal improvement, and
+is the framing to write.
+
+*Caveat, recorded.* The `deep` row is confounded: Xavier at `L=8` gives `‖J₀‖ = 4.4`, so the
+unbiased arm converges to the projection of a *large* initial operator, not to the min-norm
+solution (`err 3.49`). The gap is real but reads "the unbiased arm inherits its initialisation
+while the biased arm does not" rather than "min-norm vs low-rank". Worth its own figure; not
+evidence for reading 3.
 
 ### 4.4 Separation from NGD — *1 h*
 Implement pseudo-inverse-Fisher NGD for a DLN and confirm: (a) it matches arm 2 away from
@@ -296,7 +344,8 @@ trajectories → the unbalanced extension is a distinction without a difference.
 `‖(I − Π_{range M})Δ_*‖/‖Δ_*‖` on grid checkpoints. Decides whether the objective is solvable at
 `L = 128` Xavier at all. Not blocking for the DLN/FGLN paper, but it sets the experimental range.
 
-**Total: ~5 h of checks before committing.** Three of the five remaining can kill a section.
+**Total: ~5 h of checks before committing.** §4.3 is done and passed; three remain, two of
+which can kill a section.
 
 ---
 
