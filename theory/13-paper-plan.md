@@ -75,7 +75,7 @@ the operator-level bias of GD on deep linear networks" is dead on arrival.
 |---|---|
 | **Unbalanced init** | Cohen's notes, open-problem list: "Results assume zero unbalancedness; extension to *small* unbalancedness is mentioned but not developed." |
 | **Discrete GD** | same list: "Theorems focus on gradient flow; translating to practical gradient descent with finite step size requires separate analysis." Known: the invariant moves by `O(η²)` per step. |
-| **Gates** | No closed form exists for FGLN. Confirmed by the survey below and by absence in every source read. |
+| ~~**Gates**~~ | **Retracted 2026-09-17.** We believed no closed form existed for FGLN. One does: see §3.2. |
 
 | Supporting result | Source | What it gives us |
 |---|---|---|
@@ -126,32 +126,58 @@ written up until its go/no-go check in §4 passes.**
 *Status:* proved, trivial, needed as scaffolding. *Hypotheses:* none (any DLN or FGLN, any loss).
 *Role:* defines the object; makes `cos(ΔJ_GD, −G) ≥ 0` a theorem rather than an observation.
 
-### 3.2 Result B — gates break the conservation law down to its diagonal **(new, derived here, UNVERIFIED)**
+### 3.2 Result B — **RETRACTED.** FGLN flow is deep-linear flow in disguise
 
-> **Claim.** Under gradient flow on an FGLN, with `X_l := W_l B_l Gᵀ A_{l+1} W_{l+1}`,
-> ```
-> d/dt (W_{l+1}ᵀW_{l+1}) = −D_l X_l − X_lᵀ D_l ,     d/dt (W_l W_lᵀ) = −D_l X_lᵀ − X_l D_l .
-> ```
-> Therefore:
-> 1. `D_l = I` ⇒ the two agree ⇒ the **matrix** invariant `W_{l+1}ᵀW_{l+1} − W_lW_lᵀ` is conserved
->    (recovers Du–Hu–Lee / Arora balancedness).
-> 2. For general `D_l` they differ, so the matrix invariant is **not** conserved; but taking
->    diagonals, `diag(D_lX_l) = diag(X_lD_l)`, so
->    **`diag(W_{l+1}ᵀW_{l+1}) − diag(W_lW_lᵀ)` is conserved.**
+An earlier draft of this plan claimed gates break the matrix conservation law down to its
+diagonal. **That claim is false**, and Proposition 4.5 of the ICML paper (Haas et al.) is correct.
+The check in full, because the consequence matters more than the retraction.
 
-*Mechanism (why this is the right statement).* The matrix invariant is the Noether charge of the
-gauge freedom `W_l → W_l G`, `W_{l+1} → G^{−1}W_{l+1}`. A gate only commutes with **diagonal**
-`G`, so inserting `D_l` shrinks the gauge group from `GL(n)` to the diagonal torus, and the
-conserved quantity shrinks from the full matrix to its diagonal. The trace case recovers
-Du–Hu–Lee's scalar invariant, which survives because scaling is diagonal.
+**Gate absorption.** For masks (`D_l^2 = D_l`, `D_0 = D_L = I`) put `M_l := D_l W_l D_{l-1}`. Then
+`M_L...M_1 = W_L D_{L-1}^2 W_{L-1} ... D_1^2 W_1 = J` — idempotency is exactly what licenses the
+`M` form; for general diagonal `D_l >= 0` use `M_l := D_l^{1/2} W_l D_{l-1}^{1/2}`. The contexts
+are the `M`-subproducts themselves:
+```
+A_l = W_L D_{L-1} ... W_{l+1} D_l = M_{L:l+1},      B_l = D_{l-1} W_{l-1} ... D_1 W_1 = M_{l-1:1}
+```
+so `Wdot_l = -M_{L:l+1}^T G M_{l-1:1}^T`, and since `M_{L:l+1} D_l = M_{L:l+1}` and
+`D_{l-1} M_{l-1:1} = M_{l-1:1}`,
+```
+Mdot_l = D_l Wdot_l D_{l-1} = - M_{L:l+1}^T G M_{l-1:1}^T .            (B.1)
+```
+**The gates vanish from the equation of motion.**
 
-*Why it matters.* It is the **precise reason Arora's closed form has no gated analogue**:
-`T_W` reduces to powers of `JJᵀ` only when the full matrix invariant holds. So FGLN is not
-"deep linear plus a nuisance" — it is the model class where the conservation structure genuinely
-degrades, in a way we can name exactly.
+**Conservation (Prop. 4.5, reproved).** With `Y_l := M_{l:1} G^T M_{L:l+1}`,
+`Mdot_{l+1}^T M_{l+1} = -M_{l:1} G^T M_{L:l+2} M_{l+1} = -Y_l` and
+`Mdot_l M_l^T = -M_{L:l+1}^T G (M_l M_{l-1:1})^T = -Y_l^T`, so both
+`d/dt (M_{l+1}^T M_{l+1})` and `d/dt (M_l M_l^T)` equal `-(Y_l + Y_l^T)`, and
+`Delta_l := M_{l+1}^T M_{l+1} - M_l M_l^T` is conserved. QED
 
-*Status:* **derived by hand in this session, not verified.** §4.1 is its check.
-*Falsified if:* the numerical check shows the diagonal drifts beyond integrator error.
+**Diagnosis of the error.** The retracted claim compared the *raw* pair `W_{l+1}^T W_{l+1}` against
+`W_l W_l^T`. Tracking the leftover gate exactly, with `Z := Wdot_{l+1}^T W_{l+1}` and
+`V := Wdot_l W_l^T`, one finds `Z D_l = -Y_l` and `V D_l = -Y_l^T`: `Z` and `V^T` agree **only
+after right-multiplication by `D_l`**, i.e. on the gate's active coordinates. That leftover `D_l`
+is not evidence of broken conservation — it is the gate that belongs inside `M`. The supporting
+gauge argument was invalid too: the gauge group is the *commutant* of `D_l` (for a mask with `a`
+active coordinates, `GL(a) x GL(b)`, not the diagonal torus), and Noether bounds conserved
+quantities from below, so symmetry counting can never establish non-conservation.
+
+**Lemma B' (the consequence, and it is the useful part).**
+> (B.1) is *exactly* the deep-linear gradient flow in the variables `M_l`, and the flow preserves
+> the coordinate subspace `{X : D_l X D_{l-1} = X}`. Hence **FGLN gradient flow is deep-linear
+> gradient flow restricted to a fixed coordinate subspace**, and Arora-Cohen-Hazan Thm 1 transfers
+> verbatim under `M`-balancedness:
+> `Jdot = -sum_j (J J^T)^{(L-j)/L} G (J^T J)^{(j-1)/L}`, fractional powers taken on the range.
+
+**What this costs the plan.** FGLN was carrying the argument that we must prove an inequality
+because no identity exists (old §3.6, old Fig. 4). That argument is gone. What remains genuinely
+distinctive about FGLN is narrower and must be stated as such:
+1. `M`-balancedness is a real restriction at initialisation — a Xavier-initialised FGLN does not
+   satisfy it — so the *unbalanced* FGLN question is open for the same reason the unbalanced DLN
+   question is (Cohen's open-problem list), not for a gate-specific reason.
+2. The open object is the **multi-pattern** case: one `W`, many gate patterns, hence many
+   `M`-parameterisations sharing weights, with no single `Delta_l` conserved across patterns.
+   This is Remark 7.2 of the ICML paper, flagged there as lacking interpretability. It is the
+   honest place for the difficulty to live, and `theory/07` already has machinery for it.
 
 ### 3.3 Result C — the degeneracy theorem (headline)
 
@@ -236,11 +262,9 @@ single highest-risk item in the plan.
 
 Ordered by (risk × cheapness). Each has an explicit kill condition.
 
-### 4.1 Result B: the FGLN conservation law — *30 min*
-Integrate FGLN gradient flow (RK4, float64, `L ∈ {4,8}`, `n = 16`, random 0/1 and random
-diagonal gates). Track `‖W_{l+1}ᵀW_{l+1} − W_lW_lᵀ‖_F` (expect: drifts) and
-`‖diag(W_{l+1}ᵀW_{l+1}) − diag(W_lW_lᵀ)‖` (expect: constant to integrator error).
-**Kill if** the diagonal drifts. Then Result B is wrong and §3.2 is deleted.
+### 4.1 ~~Result B~~ — **settled by proof, no experiment needed**
+Closed analytically in §3.2: the claim was false, Prop. 4.5 stands, and Lemma B' replaces it.
+Nothing to run. The surviving FGLN question (multi-pattern, §3.2 item 2) is theory, not a check.
 
 ### 4.2 Result D: the certificate — *1 h*
 (a) Verify the KKT lemma numerically: solve (P) at `L = 2,3` from random `W` by direct
@@ -272,7 +296,7 @@ trajectories → the unbalanced extension is a distinction without a difference.
 `‖(I − Π_{range M})Δ_*‖/‖Δ_*‖` on grid checkpoints. Decides whether the objective is solvable at
 `L = 128` Xavier at all. Not blocking for the DLN/FGLN paper, but it sets the experimental range.
 
-**Total: ~6 h of checks before committing.** Four of the six can kill a section.
+**Total: ~5 h of checks before committing.** Three of the five remaining can kill a section.
 
 ---
 
@@ -283,7 +307,7 @@ trajectories → the unbalanced extension is a distinction without a difference.
 | 1 | Zero-init separation: DLN `L∈{2,3,8}`, `W=0`. Six baselines + NGD + LLQR pinned at exactly `0` (report `‖ΔW‖ = 0` to machine precision, and the order-`<L` derivative vanishing); ours reaches the global optimum in one solve | Result C + D, and the answer to reviewer 4jZv |
 | 2 | Mode-learning order, arm 1 vs arm 2, `L ∈ {2,8,32}` | Result F — the paper's reason to exist |
 | 3 | Endpoint comparison: effective rank and test error vs depth, both arms | Result F(c,d) — answers reviewer U6A5 |
-| 4 | FGLN: matrix invariant drifts, diagonal invariant conserved; and `cos(ΔJ_GD,−G)` vs gate density | Result B |
+| 4 | FGLN multi-pattern: `cos(ΔJ_GD,−G)` and `Δ_ℓ` across gate patterns sharing one `W` — the quantity with no single conserved value | Lemma B' item 2 |
 | 5 | `K_k − L` vs unbalancedness on real trajectories; certificate `ρ` per step | Results B(old)/D, honesty panel |
 
 Conditioning held fixed by construction across arms — reviewer NGj5's objection becomes
@@ -295,13 +319,14 @@ structurally impossible, as in the earlier plan.
 
 **(i) Preferred — "The factorisation bias is removable, and here is what it was doing."**
 Requires §4.3 to pass. Contributions: exact finite-step realisation + certificate (D), the
-degeneracy separation (C), the FGLN conservation collapse (B), and the ablation (F).
+degeneracy separation (C), and the ablation (F). **FGLN no longer contributes a theorem** — it
+enters only through the multi-pattern question, which is not yet a result.
 
 **(ii) Fallback if §4.3 fails — "Solving the operator objective where linearisation fails."**
 Pure optimisation paper. Headline is C + D; the ablation becomes a diagnostic section. Weaker,
 but still standing, and still answers 4jZv and NGj5.
 
-**(iii) Fallback if §4.1 *and* §4.3 fail** — there is no paper here; fold C and D into the
+**(iii) Fallback if §4.3 fails and the multi-pattern question does not open up** — there is no paper here; fold C and D into the
 existing ICML line as a short note and stop. **This is a real possible outcome and we should
 agree in advance that it is acceptable.**
 
@@ -318,7 +343,8 @@ Unconditional citations, with the role each plays:
 
 - **Arora–Cohen–Hazan 2018** — the closed form we generalise away from. Cite in the abstract.
 - **Cohen 2024 lecture notes** — the source for "unbalanced is open" and "discrete is open".
-- **Du–Hu–Lee 2018** — conservation; Result B is its gated refinement.
+- **Du–Hu–Lee 2018** — conservation. Prop. 4.5 of the ICML paper is its gated form; Lemma B'
+  explains why: gate absorption makes the FGLN flow literally the linear one.
 - **Bah et al. 2022** — "the bias is a Riemannian metric"; our arm 2 replaces it with the
   Euclidean one. This is the cleanest one-sentence description of the paper.
 - **Bréchet et al.** — depth-removal precursor (constrained parameterisation).
