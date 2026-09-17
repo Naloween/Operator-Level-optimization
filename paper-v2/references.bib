@@ -1,0 +1,250 @@
+% References for paper-v2. Every entry below was fetched and read on 2026-09-17 unless marked
+% VERIFY. Do not add an entry without checking it; the previous submission carried at least one
+% claim that the cited source did not support.
+
+% ---------------------------------------------------------------- the closed form we generalise
+@inproceedings{arora2018optimization,
+  title     = {On the Optimization of Deep Networks: Implicit Acceleration by Overparameterization},
+  author    = {Arora, Sanjeev and Cohen, Nadav and Hazan, Elad},
+  booktitle = {Proceedings of the 35th International Conference on Machine Learning (ICML)},
+  pages     = {244--253},
+  year      = {2018},
+  note      = {Thm 1: gradient flow, balanced init $W_{j+1}^\top W_{j+1} = W_j W_j^\top$, deep linear},
+  eprint    = {1802.06509},
+  archivePrefix = {arXiv}
+}
+
+@misc{cohen2024lectures,
+  title  = {Lecture Notes on Linear Neural Networks: A Tale of Optimization and Generalization in Deep Learning},
+  author = {Cohen, Nadav},
+  year   = {2024},
+  eprint = {2408.13767},
+  archivePrefix = {arXiv},
+  note   = {Assumption 1 defines unbalancedness magnitude; open-problem list names unbalanced init and discrete GD}
+}
+
+% ---------------------------------------------------------------- conservation / geometry
+@inproceedings{du2018algorithmic,
+  title     = {Algorithmic Regularization in Learning Deep Homogeneous Models: Layers are Automatically Balanced},
+  author    = {Du, Simon S. and Hu, Wei and Lee, Jason D.},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2018},
+  eprint    = {1806.00900},
+  archivePrefix = {arXiv},
+  note      = {Gradient flow conserves $\|W_{l+1}\|_F^2-\|W_l\|_F^2$; linear and ReLU/leaky-ReLU homogeneous nets}
+}
+
+@article{bah2022learning,
+  title   = {Learning deep linear neural networks: Riemannian gradient flows and convergence to global minimizers},
+  author  = {Bah, Bubacarr and Rauhut, Holger and Terstiege, Ulrich and Westdickenberg, Michael},
+  journal = {Information and Inference: A Journal of the IMA},
+  volume  = {11},
+  number  = {1},
+  pages   = {307--353},
+  year    = {2022},
+  eprint  = {1910.05505},
+  archivePrefix = {arXiv},
+  note    = {Factor gradient flow = Riemannian flow on the rank-$r$ manifold with an induced metric}
+}
+
+@misc{brechet2023deep,
+  title  = {Deep orthogonal linear networks are shallow},
+  author = {Br{\'e}chet, Pierre and Papagiannouli, Katerina and An, Jing and Mont{\'u}far, Guido},
+  year   = {2023},
+  eprint = {2011.13831},
+  archivePrefix = {arXiv},
+  note   = {VERIFY author list. Riemannian GD under orthogonality constraints is equivalent to training one layer}
+}
+
+@misc{wendin2025gradient,
+  title  = {Gradient Flow Equations for Deep Linear Neural Networks: A Survey from a Network Perspective},
+  author = {Wendin, Anna and Altafini, Claudio},
+  year   = {2025},
+  eprint = {2511.10362},
+  archivePrefix = {arXiv},
+  note   = {VERIFY author list}
+}
+
+% ---------------------------------------------------------------- implicit bias: the phenomenon
+@inproceedings{saxe2014exact,
+  title     = {Exact solutions to the nonlinear dynamics of learning in deep linear neural networks},
+  author    = {Saxe, Andrew M. and McClelland, James L. and Ganguli, Surya},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2014},
+  eprint    = {1312.6120},
+  archivePrefix = {arXiv}
+}
+
+@inproceedings{gunasekar2017implicit,
+  title     = {Implicit Regularization in Matrix Factorization},
+  author    = {Gunasekar, Suriya and Woodworth, Blake E. and Bhojanapalli, Srinadh and Neyshabur, Behnam and Srebro, Nathan},
+  booktitle = {Advances in Neural Information Processing Systems (NIPS)},
+  year      = {2017}
+}
+
+@inproceedings{arora2019implicit,
+  title     = {Implicit Regularization in Deep Matrix Factorization},
+  author    = {Arora, Sanjeev and Cohen, Nadav and Hu, Wei and Luo, Yuping},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2019},
+  eprint    = {1905.13655},
+  archivePrefix = {arXiv}
+}
+
+@inproceedings{razin2020implicit,
+  title     = {Implicit Regularization in Deep Learning May Not Be Explainable by Norms},
+  author    = {Razin, Noam and Cohen, Nadav},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  pages     = {21174--21187},
+  year      = {2020},
+  eprint    = {2005.06398},
+  archivePrefix = {arXiv}
+}
+
+@inproceedings{li2021towards,
+  title     = {Towards Resolving the Implicit Bias of Gradient Descent for Matrix Factorization: Greedy Low-Rank Learning},
+  author    = {Li, Zhiyuan and Luo, Yuping and Lyu, Kaifeng},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2021},
+  eprint    = {2012.09839},
+  archivePrefix = {arXiv}
+}
+
+@misc{jacot2021saddle,
+  title  = {Saddle-to-Saddle Dynamics in Deep Linear Networks: Small Initialization Training, Symmetry, and Sparsity},
+  author = {Jacot, Arthur and Ged, Fran{\c c}ois and Simsek, Berfin and Hongler, Cl{\'e}ment and Gabriel, Franck},
+  year   = {2021},
+  eprint = {2106.15933},
+  archivePrefix = {arXiv},
+  note   = {VERIFY author list}
+}
+
+% ---------------------------------------------------------------- unbalanced initialisation
+@inproceedings{tarmoun2021understanding,
+  title     = {Understanding the Dynamics of Gradient Flow in Overparameterized Linear Models},
+  author    = {Tarmoun, Salma and Fran{\c c}a, Guilherme and Haeffele, Benjamin D. and Vidal, Ren{\'e}},
+  booktitle = {Proceedings of the 38th International Conference on Machine Learning (ICML)},
+  year      = {2021},
+  note      = {Two-layer; exact solution via conservation laws, no balancedness assumed}
+}
+
+@inproceedings{min2021explicit,
+  title     = {On the Explicit Role of Initialization on the Convergence and Implicit Bias of Overparametrized Linear Networks},
+  author    = {Min, Hancheng and Tarmoun, Salma and Vidal, Ren{\'e} and Mallada, Enrique},
+  booktitle = {Proceedings of the 38th International Conference on Machine Learning (ICML)},
+  year      = {2021},
+  eprint    = {2105.06351},
+  archivePrefix = {arXiv}
+}
+
+@misc{kunin2024get,
+  title  = {Get rich quick: exact solutions reveal how unbalanced initializations promote rapid feature learning},
+  author = {Kunin, Daniel and Raventos, Allan and Dominé, Cl{\'e}mentine and Chen, Feng and Klindt, David and Saxe, Andrew and Ganguli, Surya},
+  year   = {2024},
+  eprint = {2406.06158},
+  archivePrefix = {arXiv},
+  note   = {VERIFY author list}
+}
+
+% ---------------------------------------------------------------- the methods we separate from
+@inproceedings{bernacchia2018exact,
+  title     = {Exact natural gradient in deep linear networks and its application to the nonlinear case},
+  author    = {Bernacchia, Alberto and Lengyel, M{\'a}t{\'e} and Hennequin, Guillaume},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2018},
+  note      = {Exact NGD for deep linear nets; parameterisation invariance holds to first order only}
+}
+
+@misc{dufortlabbe2026layerwise,
+  title  = {Layerwise LQR for Geometry-Aware Optimization of Deep Networks},
+  author = {Dufort-Labb{\'e}, Simon and others},
+  year   = {2026},
+  eprint = {2605.04230},
+  archivePrefix = {arXiv},
+  note   = {VERIFY author list. Local quadratic model over a linearised layer recurrence; subsumes NGD/K-FAC/Shampoo}
+}
+
+@inproceedings{frerix2018proximal,
+  title     = {Proximal Backpropagation},
+  author    = {Frerix, Thomas and M{\"o}llenhoff, Thomas and Moeller, Michael and Cremers, Daniel},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2018},
+  note      = {Layer-wise targets solved by least squares; targets are activations, set heuristically}
+}
+
+@misc{evans2026theory,
+  title  = {Theory of Minimal Weight Perturbations in Deep Networks},
+  author = {Evans, Bethan and Tanner, Jared},
+  year   = {2026},
+  eprint = {2601.16880},
+  archivePrefix = {arXiv},
+  note   = {Closest prior work on min-norm weight perturbation: target is an OUTPUT change, multi-layer results are Lipschitz bounds}
+}
+
+@misc{rawal2026saddle,
+  title  = {A Theory of Saddle Escape in Deep Nonlinear Networks},
+  author = {Rawal, Divit and DeWeese, Michael R.},
+  year   = {2026},
+  eprint = {2605.01288},
+  archivePrefix = {arXiv},
+  note   = {AM--GM on layerwise gradient mass gives the $2-2/L$ exponent; equality at the balanced ansatz}
+}
+
+% ---------------------------------------------------------------- gated linear models
+@misc{gatedlinear2022implicit,
+  title  = {The Implicit Bias of Gradient Descent on Generalized Gated Linear Networks},
+  author = {VERIFY authors},
+  year   = {2022},
+  eprint = {2202.02649},
+  archivePrefix = {arXiv},
+  note   = {VERIFY authors. Asymptotic infinite-time limit; frozen-gate ReLU nets are GLNs}
+}
+
+@misc{haas2026why,
+  title  = {Why Deep Jacobian Spectra Separate: Depth-Induced Scaling and Singular-Vector Alignment},
+  author = {Haas, Nathana{\"e}l and others},
+  year   = {2026},
+  eprint = {2602.12384},
+  archivePrefix = {arXiv},
+  note   = {VERIFY author list. Thm 6.1: spectral separation forces singular-vector alignment. Prop 4.5: balancedness preserved for masked linear networks}
+}
+
+% ---------------------------------------------------------------- Schatten / nuclear norm
+@inproceedings{srebro2005maximum,
+  title     = {Maximum-Margin Matrix Factorization},
+  author    = {Srebro, Nathan and Rennie, Jason D. M. and Jaakkola, Tommi S.},
+  booktitle = {Advances in Neural Information Processing Systems (NIPS)},
+  year      = {2005},
+  note      = {$\|X\|_* = \min_{X=UV^\top} \tfrac12(\|U\|_F^2+\|V\|_F^2)$}
+}
+
+@article{recht2010guaranteed,
+  title   = {Guaranteed Minimum-Rank Solutions of Linear Matrix Equations via Nuclear Norm Minimization},
+  author  = {Recht, Benjamin and Fazel, Maryam and Parrilo, Pablo A.},
+  journal = {SIAM Review},
+  volume  = {52},
+  number  = {3},
+  pages   = {471--501},
+  year    = {2010}
+}
+
+@inproceedings{shang2016scalable,
+  title     = {Scalable Algorithms for Tractable Schatten Quasi-Norm Minimization},
+  author    = {Shang, Fanhua and Liu, Yuanyuan and Cheng, James},
+  booktitle = {AAAI Conference on Artificial Intelligence},
+  year      = {2016},
+  eprint    = {1606.01245},
+  archivePrefix = {arXiv},
+  note      = {Bilinear factor norms equal Schatten-1/2 and 2/3 quasi-norms; the general $L$-factor case is folklore}
+}
+
+% ---------------------------------------------------------------- numerics
+@article{paige1982lsqr,
+  title   = {LSQR: An Algorithm for Sparse Linear Equations and Sparse Least Squares},
+  author  = {Paige, Christopher C. and Saunders, Michael A.},
+  journal = {ACM Transactions on Mathematical Software},
+  volume  = {8},
+  number  = {1},
+  pages   = {43--71},
+  year    = {1982}
+}
