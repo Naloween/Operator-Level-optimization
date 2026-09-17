@@ -702,3 +702,79 @@ Unconditional citations, with the role each plays:
 - **Haas et al. (ICML 2026)** — our Prop 7.1 got `2−2/L` for FGLN without balancing but under
   "deliberately strong" assumptions that were "tested empirically but not rigorously proven".
   Result A + B is the rigorous replacement, and saying so is the honest internal narrative.
+
+
+---
+
+## 8. The nonlinear setting — **RUN 2026-09-18**
+
+`studies/nonlinear.py`, `runs/theory/nonlinear.json`. ReLU MLP without biases, `d=16`, exact
+least-squares floors (LSQR stalls; `M` is densified one column at a time where it fits).
+Per-sample operator gradient `G(x) = (f(x)-y)xᵀ`, rank one. The question is whether one weight
+update can serve `n` incompatible per-input operator steps.
+
+### 8.1 Check 1 — the target is unreachable, and **not** because of over-determination
+
+| L | n | unknowns | constraints | floor | generic | gain |
+|---|---|---|---|---|---|---|
+| 2 | 1 | 512 | 256 | **0.375** | 0.000 | −0.375 |
+| 4 | 1 | 1024 | 256 | **0.501** | 0.000 | −0.501 |
+| 8 | 1 | 2048 | 256 | **0.328** | 0.000 | −0.328 |
+| 8 | 2 | 2048 | 512 | **0.785** | 0.000 | −0.785 |
+| 8 | 8 | 2048 | 2048 | 0.676 | 0.000 | −0.676 |
+| 4 | 8 | 1024 | 2048 | 0.480 | 0.707 | +0.228 |
+| 8 | 32 | 2048 | 8192 | 0.616 | 0.866 | +0.250 |
+| 2 | 32 | 512 | 8192 | 0.899 | 0.968 | +0.070 |
+
+**The headline is the `n = 1` rows.** With a *single* input and `8×` more parameters than
+constraints, the floor is still `0.33–0.50`. So the obstruction is not inputs competing with each
+other — **the operator gradient step is unreachable even for one input.**
+
+*Mechanism.* Every context is rank-limited by the gates: `B_{l+1} = D_l W_l B_l` and
+`A_l = A_{l+1}W_{l+1}D_l`, so `rank ≤ #active units ≈ d/2`. For the first layer `B_1 = I`, so the
+range contribution is `range(A_1) ⊗ R^{d_in}` with `rank(A_1) ≲ d/2`. The target's left factor
+`f(x) − y` generically has a component outside that subspace, and no `ΔW` can produce it.
+
+*Contrast with deep linear.* §4.6 measured the reachability floor at `≤ 1.7e-4` at **depth 128**,
+Xavier, with the operator collapsed to stable rank 1.1. **It is the gates, not the depth, that
+make the target unreachable.**
+
+**Consequence for the project's premise.** "Correct the mismatch" is not achievable in a ReLU
+network — not approximately-but-fixably, but structurally. There is no unbiased trajectory to
+compare against; there is only a `λ`-family of compromises. The object of study changes from
+*the correct step* to *the best available compromise and what it selects*.
+
+### 8.2 Check 2 — `λ` buys gate stability, and is required for sanity
+
+`residual` = relative operator residual, `flip` = fraction of gates that changed, `|dW|` = step norm.
+
+| L | n | λ=0 | λ=0.1 | λ=1 | λ=10 |
+|---|---|---|---|---|---|
+| 2 | 8 | res .79 flip .066 \|dW\| 1.13 | res .79 flip .066 \|dW\| 1.13 | res .81 flip .039 \|dW\| 0.76 | res .97 flip .008 \|dW\| 0.06 |
+| 4 | 8 | res .48 flip .324 \|dW\| **12.71** | res .49 flip .229 \|dW\| 5.08 | res .56 flip .133 \|dW\| 1.19 | res .87 flip .021 \|dW\| 0.15 |
+| 8 | 8 | res .70 flip .282 \|dW\| **12.79** | res .72 flip .147 \|dW\| 3.11 | res .79 flip .057 \|dW\| 0.57 | res .94 flip .011 \|dW\| 0.05 |
+| 8 | 32 | res .62 flip .252 \|dW\| **12.73** | res .63 flip .192 \|dW\| 8.67 | res .66 flip .087 \|dW\| 2.07 | res .80 flip .032 \|dW\| 0.35 |
+
+1. **`λ` is not optional.** At `λ=0` the least-squares solution has `‖ΔW‖ ≈ 12.7` against a target
+   step of unit scale — the map is ill-conditioned and the unregularised answer is unusable.
+2. **The trade-off is real and usable.** `λ ≈ 1` cuts gate flips by `3–5×` (`.28 → .057` at L=8)
+   for a modest residual cost (`.70 → .79`), with `‖ΔW‖` down from 12.8 to 0.57.
+3. **But the bridge is weaker than hoped.** At depth, even `λ=1` leaves `6–9%` of gates flipping,
+   so the fixed-gate algebra used to build `A_l, B_l` is only approximately valid for the step
+   actually taken. The piecewise-linear analysis is a controlled approximation, not an identity.
+
+### 8.3 Verdict
+
+Both checks pass in the sense that mattered — the setting is non-trivial and the knob works — but
+the finding is a **negative result about the project's original premise**, and that is now the
+most defensible thing we have:
+
+> In a ReLU network the operator gradient step is structurally unreachable, by `33–90%` of its
+> norm, because the gates make the contexts rank-deficient. This is *not* a depth effect: at depth
+> 128 a linear network realises the same step to `1e-4`. The implicit bias of a piecewise-linear
+> network is therefore not a deviation from a reachable ideal — the ideal does not exist, and what
+> the network actually does is choose, per step, which inputs' operator steps to serve.
+
+**Next, in order.** (i) Does a `λ`-regularised operator step actually *train* a ReLU MLP to
+comparable loss? Without that the analysis is not legitimate. (ii) If it trains: which inputs get
+served and which get sacrificed, and is that allocation the implicit bias?
