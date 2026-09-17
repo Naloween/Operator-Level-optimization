@@ -316,6 +316,86 @@ alignment decaying steadily in depth; and it **approximately preserves balancedn
 drifting away from the balanced gauge. That is a characterisation of the unbiased weight path,
 and as far as the §2 survey goes, it is not in the literature.
 
+### 4.2b The dichotomy — **RUN 2026-09-17: it is essentially the minimal realisation, and its one defect is fixable**
+
+The plan's original §4.2 intent was to certify the *dichotomic* solver; the first run substituted
+ALS. `studies/certificate.py` now implements the recursion properly: split the chain at its
+midpoint, solve `min ‖Y'−Y‖² + ‖X'−X‖² s.t. Y'X' = Z` **exactly** (its own augmented Lagrangian,
+from both a zero and a balanced-split start), recurse into each half. Solving every split exactly
+is deliberate — it isolates the error due to the greedy *surrogate* from any error due to solving
+the splits badly. d=6, 3 seeds, against the joint (P) reference.
+
+| init | L | **dicho ‖ΔW‖/min-norm** | ρ(dicho) | ALS ‖ΔW‖/min-norm | ρ(ALS) | NGD ‖ΔW‖/min-norm |
+|---|---|---|---|---|---|---|
+| zero | 2, 4, 8 | **1.000** | **0.000** | pinned at 0 | — | pinned at 0 |
+| zero | 3 | 1.113 | 0.388 | pinned at 0 | — | pinned at 0 |
+| zero | 5 | 1.044 | 0.149 | pinned at 0 | — | pinned at 0 |
+| tiny | 2 | **1.000** | **0.000** | 5.9 | 1.000 | 4.14 |
+| tiny | 3 | 1.114 | 0.324 | 11.1 | 1.000 | 6.42 |
+| tiny | 4 | **0.991** | 0.006 | 14.9 | 1.000 | 7.47 |
+| tiny | 5 | 1.080 | 0.183 | 19.2 | 1.000 | 8.58 |
+| tiny | 8 | **0.988** | 0.017 | 29.0 | 1.000 | 10.24 |
+| xavier | 2 | **1.000** | **0.000** | 2.3 | 0.729 | 0.93 |
+| xavier | 3 | 1.081 | 0.169 | 162 ± 201 | 0.993 | 2.34 |
+| xavier | 4 | 1.246 | 0.346 | 112 ± 52 | 1.000 | 4.52 |
+| xavier | 5 | 1.374 | 0.474 | 1713 ± 2158 | 1.000 | 24.6 |
+| xavier | 8 | 1.694 | 0.550 | 2413 ± 3060 | 1.000 | 269 |
+
+**The dichotomy is a different class of object from ALS.** `1.00–1.69×` the minimal weight
+movement against ALS's `2–2413×`, and it is *exact* — `ρ = 0` to machine precision — at `L = 2, 4,
+8`. It also escapes the degenerate point, where ALS, NGD and GD are all pinned.
+
+*(Caveat: at `tiny` `L = 4, 8` the dichotomy scores `0.99`, i.e. it slightly **beats** the joint
+reference. The reference is an augmented Lagrangian and is itself imperfect at depth; ratios near
+1 should be read as "indistinguishable", and the exactness claim rests on the analytic check
+below, not on the ratio.)*
+
+#### The defect, and its fix
+
+The pattern is exact powers of two. The cause: the split objective `min ‖ΔP₁‖² + ‖ΔP₂‖²` puts the
+SVD exponent at **½** — a symmetric split — whereas the correct exponent is the **depth share**.
+From a zero base point the true cost-to-go is the Schatten quasi-norm `V_a(Y) = a Σ σ_i(Y)^{2/a}`
+(`theory/13` §3.4), so the split should minimise `V_a(Y) + V_b(X)` s.t. `YX = Z`, whose optimum is
+`Y = UΣ^{a/L}`, `X = Σ^{b/L}Vᵀ`. For `a = b` that is `Σ^{1/2}` and the symmetric split is right;
+for `a ≠ b` it is not. With `L` a power of two every split is even all the way down, so the
+recursion is exact; otherwise it mis-allocates.
+
+Checked analytically (achieved `Σ_l‖W_l‖²` against the optimum `L Σσ^{2/L}`, `d = 6`):
+
+| L | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 12 | 16 |
+|---|---|---|---|---|---|---|---|---|---|
+| symmetric split | 1.0000 | 1.0161 | 1.0000 | 1.0065 | 1.0060 | 1.0033 | 1.0000 | 1.0018 | 1.0000 |
+| **depth-proportional** | **1.0000** | **1.0000** | **1.0000** | **1.0000** | **1.0000** | **1.0000** | **1.0000** | **1.0000** | **1.0000** |
+
+> **Proposition (to prove and state).** From a zero base point, the hierarchical recursion solves
+> (P) **exactly for every `L`** if and only if each split uses the depth-proportional exponent
+> `t = a/(a+b)`. The symmetric split is exact iff every split in the recursion tree is even, i.e.
+> iff `L` is a power of two.
+
+Proof route: Bellman with `V_a(Y) = a‖Y‖_{S_{2/a}}^{2/a}` as the exact cost-to-go, plus AM–GM for
+the split optimum. Both ingredients are already in §3.4.
+
+**What remains** is the general base point `W ≠ 0`, where `V` has no closed form and the surrogate
+error is genuine — `1.08 → 1.69×` as `L: 3 → 8` at Xavier. That gap is the honest open problem,
+and `ρ` measures it per step.
+
+#### The two realisations along a trajectory
+
+30 steps from a small balanced init:
+
+| L | dicho ‖ΔW‖ / min-norm | cos(dicho, min-norm) | ρ(dicho) | cos(min-norm, GD) | imbalance |
+|---|---|---|---|---|---|
+| 2 | 1.0000 | 1.0000 | 1.3e-13 | +0.921 | 0.038 |
+| 3 | 1.0483 | 0.9541 | 9.1e-02 | +0.893 | 0.049 |
+| 4 | 1.0005 | 0.9995 | 9.4e-04 | +0.821 | 0.062 |
+| 5 | 1.3430 | 0.7529 | 4.6e-01 | +0.556 | 0.106 |
+| 8 | 1.0102 | 0.9899 | 2.0e-02 | +0.805 | 0.558 |
+
+Along an actual trajectory the dichotomy tracks the minimal realisation to within `0.1–5%` at
+powers of two and `34%` at `L = 5` — the same signature. And the minimal realisation itself stays
+well aligned with the coordinate gradient step (`cos` `+0.92 → +0.81`) while approximately
+preserving balancedness.
+
 ### 4.3 Result F: does removing the bias change the endpoint? — **RUN 2026-09-17: PASSES**
 
 `studies/endpoint.py`, `runs/theory/endpoint.json`. Two arms from the same starting operator:

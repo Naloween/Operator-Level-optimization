@@ -25,10 +25,21 @@ form built in:
 
 `rho = 0` iff the candidate step is stationary for (P). We report it for
 
-    minnorm  the augmented-Lagrangian solution of (P)          -- expect ~0
+    minnorm  the joint augmented-Lagrangian solution of (P)   -- the reference answer
+    dicho    the recursive dichotomy                           -- split the chain, solve each half
     als      one exact ALS sweep onto the same target P*       -- the submitted method
     gd       the coordinate gradient step                      -- does not target P* at all
     ngd      pseudo-inverse Fisher / linearised min-norm       -- the first-order counterfactual
+
+`minnorm` is NOT the dichotomy: it attacks (P) jointly over all layers at once, which is why its
+own `rho` is ~0 by construction (any stationary point of that Lagrangian has the KKT form). It is
+the reference the others are measured against. `dicho` splits the chain at its midpoint, solves
+the two-factor problem `min ||Y'-Y||^2 + ||X'-X||^2 s.t. Y'X' = Z` exactly, and recurses. Each
+split being solved exactly is deliberate: it isolates the error due to the greedy SURROGATE
+(`||Z_hi - W_hi||^2 + ||Z_lo - W_lo||^2` stands in for the true cost-to-go `V`) from any error
+due to solving the splits badly. From a zero base point the two agree -- there `V` is the
+Schatten-2/L quasi-norm and the recursion is split-consistent -- so any gap measured here is
+exactly the surrogate error at a general base point.
 
 and compare `||dW||`, which is what (P) actually minimises.
 
@@ -186,6 +197,80 @@ def solve_minnorm(Ws, Pstar, **kw):
     return best[1], best[2]
 
 
+def balanced_split(Z):
+    """Y0 X0 = Z with ||Y0||^2 + ||X0||^2 minimal: the two-factor case of the chain."""
+    U, S, Vt = np.linalg.svd(Z)
+    r = min(U.shape[1], Vt.shape[0], len(S))
+    R = np.diag(np.sqrt(S[:r]))
+    return U[:, :r] @ R, R @ Vt[:r, :]
+
+
+def split2(Y, X, Z, mu0=1e6, outer=60, tol=1e-13):
+    """min ||Y'-Y||^2 + ||X'-X||^2 s.t. Y'X' = Z, by augmented Lagrangian from two starts."""
+    ny, nx = Y.shape, X.shape
+
+    def run(dY0, dX0):
+        Lam = np.zeros_like(Z)
+        mu = mu0
+        v = np.concatenate([dY0.ravel(), dX0.ravel()])
+
+        def fg(v):
+            dY = v[:ny[0] * ny[1]].reshape(ny)
+            dX = v[ny[0] * ny[1]:].reshape(nx)
+            Yp, Xp = Y + dY, X + dX
+            C = Yp @ Xp - Z
+            S = mu * C - Lam
+            f = (float(np.sum(dY * dY)) + float(np.sum(dX * dX))
+                 - float(np.sum(Lam * C)) + 0.5 * mu * float(np.sum(C * C)))
+            return f, np.concatenate([(2 * dY + S @ Xp.T).ravel(), (2 * dX + Yp.T @ S).ravel()])
+
+        cn = np.inf
+        for _ in range(outer):
+            v = minimize(fg, v, jac=True, method="L-BFGS-B",
+                         options={"maxiter": 3000, "ftol": 1e-18, "gtol": 1e-14}).x
+            dY = v[:ny[0] * ny[1]].reshape(ny)
+            dX = v[ny[0] * ny[1]:].reshape(nx)
+            C = (Y + dY) @ (X + dX) - Z
+            cn = float(np.linalg.norm(C))
+            if cn < tol * max(float(np.linalg.norm(Z)), 1e-300):
+                break
+            Lam = Lam - mu * C
+            mu *= 2.0
+        return dY, dX, cn
+
+    Y0, X0 = balanced_split(Z)
+    best = None
+    ref = max(float(np.linalg.norm(Z)), 1e-300)
+    for dY0, dX0 in ((np.zeros(ny), np.zeros(nx)), (Y0 - Y, X0 - X)):
+        dY, dX, cn = run(dY0, dX0)
+        key = (0 if cn < 1e-8 * ref else 1,
+               float(np.sum(dY * dY)) + float(np.sum(dX * dX)))
+        if best is None or key < best[0]:
+            best = (key, Y + dY, X + dX)
+    return best[1], best[2]
+
+
+def solve_dichotomy(Ws, Pstar, **kw):
+    """Split the chain at its midpoint, solve the two-factor problem, recurse into each half."""
+    L = len(Ws)
+    New = [None] * L
+
+    def rec(a, b, Z):
+        if a == b:
+            New[a] = Z
+            return
+        m = (a + b) // 2
+        X = product(Ws[a:m + 1])        # W_m ... W_a
+        Y = product(Ws[m + 1:b + 1])    # W_b ... W_{m+1}
+        Yp, Xp = split2(Y, X, Z, **kw)
+        rec(m + 1, b, Yp)
+        rec(a, m, Xp)
+
+    rec(0, L - 1, Pstar)
+    res = float(np.linalg.norm(product(New) - Pstar))
+    return [n - W for n, W in zip(New, Ws)], res
+
+
 def solve_als(Ws, Pstar, sweeps=200, lam=0.0, tol=1e-14):
     """The submitted method: exact per-layer least squares, reverse Gauss-Seidel sweeps."""
     New = [W.copy() for W in Ws]
@@ -250,6 +335,8 @@ def one_step(d, L, seed, eta, init, rng) -> dict:
     cands = {}
     dW, res = solve_minnorm(Ws, Pstar)
     cands["minnorm"] = (dW, res)
+    dW, res = solve_dichotomy(Ws, Pstar)
+    cands["dicho"] = (dW, res)
     dW, res = solve_als(Ws, Pstar)
     cands["als"] = (dW, res)
     A, B = contexts(Ws)
@@ -285,9 +372,12 @@ def trajectory(d, L, seed, eta, steps, rng) -> dict:
         G = J - Atgt
         Pstar = J - eta * G
         dW, res = solve_minnorm(Ws, Pstar)
+        dcW, dcres = solve_dichotomy(Ws, Pstar)
         A, B = contexts(Ws)
         gdW = [-eta * A[l].T @ G @ B[l].T for l in range(L)]
         nmn = float(np.sqrt(sum(float(np.sum(x * x)) for x in dW)))
+        ndc = float(np.sqrt(sum(float(np.sum(x * x)) for x in dcW)))
+        cos_dc = sum(float(np.sum(a * b)) for a, b in zip(dW, dcW)) / max(nmn * ndc, 1e-300)
         ngd_ = float(np.sqrt(sum(float(np.sum(x * x)) for x in gdW)))
         cos = (sum(float(np.sum(a * b)) for a, b in zip(dW, gdW)) / max(nmn * ngd_, 1e-300))
         New = [W + x for W, x in zip(Ws, dW)]
@@ -298,6 +388,9 @@ def trajectory(d, L, seed, eta, steps, rng) -> dict:
             "step": step, "loss": 0.5 * float(np.sum(G * G)),
             "res": res, "dW_minnorm": nmn, "dW_gd": ngd_, "cos_step": cos,
             "imbalance": imb, "rho": rho(dW, New),
+            "dW_dicho": ndc, "dicho_excess": ndc / max(nmn, 1e-300),
+            "dicho_res": dcres, "cos_dicho": cos_dc,
+            "rho_dicho": rho(dcW, [W + x for W, x in zip(Ws, dcW)]),
             "layer_share": [float(np.linalg.norm(x)) / max(nmn, 1e-300) for x in dW],
             "path_len": path,
         })
@@ -326,7 +419,7 @@ def main() -> None:
                 print(f"[step] {init:<7} L={L} s={s} | " + "  ".join(
                     f"{n}: |dW|={r[n]['dW_norm']:.3e} x{r[n]['excess']:.2f} "
                     f"res={r[n]['rel_residual']:.1e} rho={r[n]['rho']:.1e}"
-                    for n in ("minnorm", "als", "ngd", "gd")), flush=True)
+                    for n in ("minnorm", "dicho", "als", "ngd", "gd")), flush=True)
 
     for L in a.depths:
         rng = np.random.default_rng(7 + L)
@@ -335,7 +428,9 @@ def main() -> None:
         last = t["trace"][-1]
         print(f"[traj] L={L} steps={a.traj_steps} | final loss={last['loss']:.3e} "
               f"imbalance={last['imbalance']:.3e} cos(step,gd)={last['cos_step']:+.4f} "
-              f"rho={last['rho']:.1e} path={last['path_len']:.3f}", flush=True)
+              f"rho={last['rho']:.1e} path={last['path_len']:.3f} | "
+              f"dicho x{last['dicho_excess']:.3f} cos={last['cos_dicho']:+.4f} "
+              f"rho={last['rho_dicho']:.1e} res={last['dicho_res']:.1e}", flush=True)
 
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(json.dumps({"args": vars(a), "steps": steps_out,
