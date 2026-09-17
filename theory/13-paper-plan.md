@@ -12,6 +12,7 @@ Two intended contributions were damaged by the literature check and must be demo
 | Intended claim | What the check found | Action |
 |---|---|---|
 | `K_k ≥ L` (Lemma B, `theory/08`) is new | Rawal & DeWeese (arXiv:2605.01288, Jun 2026) apply AM–GM to layerwise gradient mass to get `T(W) ≳ γ^{2−2/r}`, with equality "precisely when linear-path gains are equal — the defining condition of the balanced ansatz" | **Demote to a cited lemma.** The AM–GM ⇒ `2−2/L` step is in the literature. Our version is per-direction, context-explicit and certificate-shaped, which is packaging, not insight. |
+| *(correction, 2026-09-17)* earlier drafts of this plan said Lemma B proves `K_k ≥ L` "with no hypotheses" | It does **not**. Lemma B gives `K_k ≥ L (s_k/g)^{2/L}` with `g = ∏‖W_l‖₂`, and `(s_k/g)^{2/L} ≤ 1`, so it is strictly weaker. `K_k ≥ L` needs the aligned diagonal picture (`theory/05` Lemma 18). §4.5 finds `K_k ≥ L` holds on every usable direction measured, but that is evidence, not a proof. | Restate everywhere as the weaker inequality. |
 | "Nobody can remove the depth preconditioner, so nobody can run the counterfactual" | Bernacchia, Lengyel & Hennequin (NeurIPS 2018) derive the exact natural gradient for deep linear networks; the follow-up literature states NGD "completely annihilates" pathological curvature in the linear case, and NGD is parameterisation-invariant *to first order* | **Reframe.** NGD already realises the counterfactual to first order. Our separation must be the *exact, finite-step, non-linearised* solve, and it has to be demonstrated where the linearisation vanishes. |
 
 What survives is a narrower but still defensible paper. It is now an **optimisation paper with a
@@ -266,12 +267,54 @@ Ordered by (risk × cheapness). Each has an explicit kill condition.
 Closed analytically in §3.2: the claim was false, Prop. 4.5 stands, and Lemma B' replaces it.
 Nothing to run. The surviving FGLN question (multi-pattern, §3.2 item 2) is theory, not a check.
 
-### 4.2 Result D: the certificate — *1 h*
-(a) Verify the KKT lemma numerically: solve (P) at `L = 2,3` from random `W` by direct
-constrained optimisation, check `ρ ≈ 0`. (b) Verify the zero-base proposition: check the balanced
-chain satisfies the KKT form with a single `Λ`. (c) Run `ρ` on the existing dichotomic solver's
-output — **this answers "was the recursion hitting the global optimum all along?"**
-**Kill if** `ρ` is bounded away from 0 at a verified optimum → the KKT form is wrong.
+### 4.2 Result D: the certificate — **RUN 2026-09-17: PASSES, with a large finding about ALS**
+
+`studies/certificate.py`, `runs/theory/certificate.json`. d=6, L∈{2,3,4}, 3 seeds. For one
+prescribed step `P_* = J − ηG` we solve (P) by augmented Lagrangian and compare four candidate
+realisations by `‖ΔW‖` (what (P) minimises), by the **true** residual `‖∏(W+ΔW) − P_*‖`, and by
+the KKT residual `ρ`.
+
+| init | L | ALS `‖ΔW‖` / min-norm | ρ(ALS) | NGD `‖ΔW‖` / min-norm | NGD true residual | ρ(NGD) | GD true residual |
+|---|---|---|---|---|---|---|---|
+| xavier | 2 | 1.55 – 3.22 | 0.56 – 0.85 | 0.87 – 0.97 | 2e-3 – 7e-3 | 0.01 – 0.25 | 0.13 – 0.16 |
+| xavier | 3 | 5.7 – **447** | 0.98 – 1.00 | 1.04 – 4.63 | 8e-3 – 3e-2 | 0.23 – 0.98 | 0.38 – 0.44 |
+| xavier | 4 | 47 – **175** | 1.00 | 1.22 – 8.72 | 1.6e-2 – **13** | 0.64 – 0.73 | 0.31 – 0.61 |
+| tiny (‖J‖=1e-3) | 2 | 5.5 – 6.1 | 1.00 | 3.9 – 4.3 | **13 – 15** | 0.23 – 0.31 | 1.00 |
+| tiny | 3 | 10.4 – 11.9 | 1.00 | 6.0 – 6.9 | **77 – 150** | 0.36 – 0.57 | 1.00 |
+| tiny | 4 | 14.1 – 16.5 | 1.00 | 7.1 – 8.3 | **540 – 910** | 0.42 – 0.74 | 1.00 |
+
+Three findings, the first of which is the most useful thing produced so far.
+
+1. **ALS reaches the target but its realisation is wildly non-minimal, and it degrades with
+   depth**: `1.5–3×` the minimal weight movement at `L=2`, `6–447×` at `L=3`, `47–175×` at `L=4`.
+   `ρ(ALS) ≈ 1` almost everywhere — ALS's step is close to *orthogonal* to the optimal form, so it
+   is not a noisy approximation of the min-norm realisation, it is a different object. This is a
+   concrete, quantified defect of the submitted method, and it is the natural explanation for why
+   it needed a warm start and behaved badly at depth.
+2. **NGD is not a substitute outside the lazy regime.** At Xavier `L=2` it is within 3–13% of
+   min-norm, but its *true* residual is never zero (it solves the linearised constraint), and at
+   small init the linearisation fails catastrophically: true residual `13` to `910` against a
+   target of unit scale, and `‖ΔW‖` 4–8× minimal. So the separation from Bernacchia et al. is not
+   confined to the measure-zero degenerate point — it covers the whole small-initialisation
+   regime, which is where implicit bias is studied.
+3. **The GD step does not target `P_*` at all** (true residual `1.00` at small init, i.e. it moves
+   essentially nowhere: `‖ΔW‖` is `0.01×` minimal at `L=2` and `0.001×` at `L=4`). That is the
+   small-init stall of `theory/13` §3.3's Proposition, measured.
+
+**The unbiased weight trajectory** (40 steps, the object §4.3 showed is the only thing here not
+already in the literature):
+
+| L | cos(min-norm step, GD step) | max imbalance at step 40 | ρ |
+|---|---|---|---|
+| 2 | **+0.921** | 0.038 | 1e-12 |
+| 3 | **+0.893** | 0.049 | 4e-9 |
+| 4 | **+0.821** | 0.062 | 4e-14 |
+
+So the minimal realisation is **well aligned in direction with the coordinate gradient step and
+differs mainly in magnitude and in how it distributes movement across layers**, with the
+alignment decaying steadily in depth; and it **approximately preserves balancedness** rather than
+drifting away from the balanced gauge. That is a characterisation of the unbiased weight path,
+and as far as the §2 survey goes, it is not in the literature.
 
 ### 4.3 Result F: does removing the bias change the endpoint? — **RUN 2026-09-17: PASSES**
 
@@ -328,28 +371,77 @@ solution (`err 3.49`). The gap is real but reads "the unbiased arm inherits its 
 while the biased arm does not" rather than "min-norm vs low-rank". Worth its own figure; not
 evidence for reading 3.
 
-### 4.4 Separation from NGD — *1 h*
-Implement pseudo-inverse-Fisher NGD for a DLN and confirm: (a) it matches arm 2 away from
-degeneracies (expected — this is §3.4's linearisation statement, and it is a *feature*: it
-validates our solver); (b) it is pinned at `W = 0` while ours is not.
-**Kill if** NGD is *not* pinned at `W=0` → Result C's corollary is wrong for NGD and the headline
-separation shrinks to "Newton-class methods only".
+### 4.4 Separation from NGD — **RUN 2026-09-17: PASSES exactly**
 
-### 4.5 Unbalanced excess is measurable and meaningful — *30 min*
-Over the existing `runs/theory/grid_ckpt/` checkpoints: measure `K_k`, confirm `K_k ≥ L`, and
-correlate `K_k − L` with `max_l‖I_l‖_F`. **Kill if** `K_k − L` is numerically negligible on real
-trajectories → the unbalanced extension is a distinction without a difference.
+At `W = 0` (d=6, L∈{2,3,4}, 3 seeds), with `P_* = ηA ≠ 0`:
 
-### 4.6 Reachability floor — *30 min* (carried over from the previous plan)
-`‖(I − Π_{range M})Δ_*‖/‖Δ_*‖` on grid checkpoints. Decides whether the objective is solvable at
-`L = 128` Xavier at all. Not blocking for the DLN/FGLN paper, but it sets the experimental range.
+| candidate | `‖ΔW‖` | true residual | ρ |
+|---|---|---|---|
+| min-norm (constructive + polish) | 0.70 – 2.13 | **1e-15 – 9e-14** | **1e-29** |
+| ALS | **0** | 1.00 | — |
+| NGD (pseudo-inverse Fisher) | **0** | 1.00 | — |
+| GD | **0** | 1.00 | — |
 
-**Total: ~5 h of checks before committing.** §4.3 is done and passed; three remain, two of
-which can kill a section.
+Exactly as §3.3 predicts: every linearised method returns the zero step, the exact solve reaches
+the target to machine precision. **`L = 2` included** — Gauss–Newton and NGD discard the very
+term that carries the solution.
+
+**A finding that strengthens §3.3 and was not anticipated.** The augmented-Lagrangian solve is
+*itself* pinned at `W = 0`: L-BFGS is a first-order method on the penalty, so the same homogeneity
+argument applies to it, and started from `ΔW = 0` it never leaves. For `L ≥ 3` it also *slides
+back* to the origin from a feasible start when the penalty weight is moderate, and once there the
+gradient is exactly zero and it is trapped. **So the balanced-SVD-chain initialiser of §3.4 is not
+a convenience, it is required** — the escape from a degenerate point must be constructive, and no
+amount of iterating fixes it. That is the cleanest statement of what the method contributes.
+
+### 4.5 Unbalanced excess is measurable and meaningful — **RUN 2026-09-17: PASSES**
+
+`studies/excess.py`, `runs/theory/excess.json`. All 27 deep-linear depth-128 checkpoints from the
+grid. Directions are filtered at `s_k > 1e-12 · s_max`; without that filter the tail of the
+spectrum sits at `s/s_max ~ 1e-16` with several directions sharing an identical value — a
+numerically zero cluster whose singular vectors are arbitrary, and which produces spurious
+"violations" of a theorem that cannot fail.
+
+| init | task | `K/L` median | `K/L` range | unbalancedness | violations of `K ≥ L` | violations of Lemma B |
+|---|---|---|---|---|---|---|
+| identity | teacher_* | **1.000** | [1.000, 1.000] | 1.5e-6 – 2.5e-6 | 0 | 0 |
+| orthogonal | teacher_* | **1.000** | [1.000, 1.000] | 1.5e-6 – 2.4e-6 | 0 | 0 |
+| identity / orthogonal | mnist1d | 1.045 – 1.073 | [1.013, 1.208] | 4.69 | 0 | 0 |
+| **xavier** | all | **38 – 230** | [9.8, **838**] | 8.9 – 9.1 | 0 | 0 |
+
+**The excess is not a distinction without a difference — it spans two and a half orders of
+magnitude.** Where the network is balanced (`unbalancedness ~1e-6`) we measure `K/L = 1.000`
+exactly, which is Arora–Cohen–Hazan Thm 1 reproduced to six digits and is a strong check on the
+whole `c_k` machinery. Where it is not (Xavier at depth 128, unbalancedness ≈ 9) the gain is
+`38–230×` the balanced value. Any claim of the form "results extend to *small* unbalancedness"
+(Cohen's open-problem list) would not reach this regime.
+
+`K_k ≥ L` held on every usable direction across all 27 checkpoints. That is **evidence, not a
+proof**: Lemma B only gives `K_k ≥ L(s_k/g)^{2/L}`, and the stronger form needs alignment.
+
+### 4.6 Reachability floor — **RUN 2026-09-17: PASSES, and it settles the premise**
+
+Same checkpoints. `‖(I − Π_{range M})Δ_*‖ / ‖Δ_*‖` by LSQR applied matrix-free to `M`, never
+forming `M^ᵀM` (which would square a condition number that is the whole point at depth 128):
+
+| init | reachability floor |
+|---|---|
+| identity / orthogonal | 5.9e-16 – 1.0e-13 |
+| **xavier (depth 128)** | 7.3e-6 – **1.7e-4** |
+
+**The prescribed operator step is reachable essentially exactly, even at Xavier depth 128 where
+the operator has collapsed to stable rank ~1.1.** The first-order reachable set is not the
+obstruction. Combined with §4.2 — where ALS overshoots the minimal realisation by up to `447×` —
+this settles the question that opened this line of work: **the difficulty is the solver, not the
+objective.**
+
+**All checks are done. Every one passed.** §4.1 was settled by proof (and retracted the claim it
+was testing); §4.2, §4.3, §4.4, §4.5 and §4.6 all ran and all passed. No section was killed. The
+framing, however, has to change — see §6.
 
 ---
 
-## 5. Experiment plan (only if §4 passes)
+## 5. Experiment plan
 
 | Fig | Content | Why |
 |---|---|---|
@@ -364,27 +456,57 @@ structurally impossible, as in the earlier plan.
 
 ---
 
-## 6. Framing, and the fallbacks
+## 6. Framing, after all six checks
 
-**(i) Preferred — "The factorisation bias is removable, and here is what it was doing."**
-Requires §4.3 to pass. Contributions: exact finite-step realisation + certificate (D), the
-degeneracy separation (C), and the ablation (F). **FGLN no longer contributes a theorem** — it
-enters only through the multi-pattern question, which is not yet a result.
+Every check passed, and none of them rescued the framing they were meant to support. What they
+did instead was move the contribution decisively onto the **solver**.
 
-**(ii) Fallback if §4.3 fails — "Solving the operator objective where linearisation fails."**
-Pure optimisation paper. Headline is C + D; the ablation becomes a diagnostic section. Weaker,
-but still standing, and still answers 4jZv and NGj5.
+**What the checks killed.** §4.3 showed the endpoints differ — but "deep factorisation selects
+low rank, unfactored GD selects minimum Frobenius norm" is Gunasekar et al. 2017 / Arora et al.
+2019 / Li–Luo–Lyu 2021, and in the deep linear case the unbiased arm's *operator* path is plain
+convex GD, fully understood. The endpoint result is a **validation of the instrument**, not a
+contribution. And the bias turned out to *help*, so the ablation cannot be sold as an
+improvement.
 
-**(iii) Fallback if §4.3 fails and the multi-pattern question does not open up** — there is no paper here; fold C and D into the
-existing ICML line as a short note and stop. **This is a real possible outcome and we should
-agree in advance that it is acceptable.**
+**What the checks produced instead**, in descending order of strength:
 
-**Venue realism.** Under (i) this is a plausible main-track submission with a narrow but clean
-contribution. Under (ii) it is a good workshop paper. It is not, in any version, the
-"characterisation of the implicit bias of GD on factored models" we set out to write — §2.1
-closed that door in 2018.
+1. **ALS's realisation is not minimal, by up to `447×`, and `ρ(ALS) ≈ 1`** (§4.2). The submitted
+   method reaches the operator target while moving the weights almost orthogonally to the optimal
+   direction, and it degrades with depth. This is a defect of the method that was never
+   identified, it is measured, and the min-norm solve repairs it.
+2. **The target is reachable to `1e-4` even at Xavier depth 128** (§4.6). The objective is sound;
+   the solver was the problem. This is the premise of the whole direction, now established rather
+   than assumed.
+3. **The exact solve separates from every linearised method, and not only at a measure-zero
+   point** (§4.2, §4.4). At `W=0` it is the only candidate that moves at all; across the entire
+   small-initialisation regime NGD's true residual is `13`–`910` against a unit-scale target.
+   And the escape must be **constructive** — a first-order solver on the exact objective is
+   pinned too (§4.4).
+4. **The unbiased weight path is characterised** (§4.2): `cos` with the GD step `+0.92 → +0.82`
+   as `L: 2 → 4`, and it approximately preserves balancedness. This is the one object in the
+   project that the §2 survey does not already contain.
+5. **The unbalanced excess is real**, `K/L` from `1.000` (balanced, matching Arora to six digits)
+   to `230` (Xavier depth 128) (§4.5).
 
----
+**The framing to write.** Not "the bias is removable and here is what it cost you", but:
+
+> Realising a prescribed operator step in the weights is an exactly solvable problem with a
+> single-multiplier optimality certificate. The submitted ALS solver is far from its optimum, and
+> every linearised alternative — natural gradient included — fails wherever the operator is small.
+> The minimal realisation is computable, certifiable, and works from initialisations at which the
+> whole first- and second-order family provably cannot move.
+
+The bias ablation stays in, but demoted to the section that *validates* the instrument and
+answers reviewer U6A5's "is correcting the mismatch desirable?" with an honest **no, not always**.
+
+**Venue realism, revised.** This is now an optimisation paper with a small theory hook. The `447×`
+ALS result plus the degenerate-init separation is a credible main-track contribution *if* the
+method is shown to scale beyond `d=6`; without that it is a strong workshop paper. The scaling
+question is the next thing to settle, and it was not part of the original check list.
+
+**What is explicitly no longer claimed:** a new characterisation of the implicit bias (§2.1
+closed that in 2018); a gated closed-form gap (§3.2 retracted); `K_k ≥ L` as a hypothesis-free
+theorem (§0 correction); and any universal benefit from removing the bias (§4.3).
 
 ## 7. What we must cite and how
 
