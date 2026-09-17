@@ -778,3 +778,59 @@ most defensible thing we have:
 **Next, in order.** (i) Does a `λ`-regularised operator step actually *train* a ReLU MLP to
 comparable loss? Without that the analysis is not legitimate. (ii) If it trains: which inputs get
 served and which get sacrificed, and is that allocation the implicit bias?
+
+
+### 8.4 The reference was wrong — compare against the ACHIEVABLE step **[user's correction]**
+
+`studies/achievable.py`. The ideal `-ηG` is unreachable *by construction* in a gated network, so
+measuring `cos(ΔJ, -ηG)` conflates two different things. The honest reference is the **achievable
+ideal** `Π_{range M}(-ηG)`; GD's step and the best step both live in `range(M)`, so the
+unreachable part cancels.
+
+Algebra makes it sharp. GD's weight step is `ΔW_l = -lr Σ_x A_lᵀG(x)B_lᵀ`, i.e. exactly `Mᵀ`
+applied to the target. So
+
+```
+GD's induced step  =  M Mᵀ Δ*                     (one Landweber / Richardson step)
+achievable ideal   =  Π Δ* = M(MᵀM)⁺Mᵀ Δ*         (the converged solve)
+```
+
+and the gap between them is precisely the ill-conditioning of `MMᵀ` on its range.
+
+| L | n | achievable fraction | cos(GD, ideal) | **cos(GD, achievable)** | cond(M) on range |
+|---|---|---|---|---|---|
+| 2 | 1 | 0.864 | 0.736 | **0.852** | 5.4 |
+| 2 | 4 | 0.747 | 0.525 | **0.704** | 17.5 |
+| 2 | 16 | 0.448 | 0.367 | **0.820** | 7.8 |
+| 4 | 1 | 0.631 | 0.311 | **0.493** | 1.3e2 |
+| 4 | 4 | 0.763 | 0.409 | **0.535** | 8.6e2 |
+| 4 | 16 | 0.752 | 0.418 | **0.556** | 1.7e3 |
+
+**The implicit bias splits into two mechanisms with different remedies.**
+1. *Unreachability*, set by the gates' rank — not GD's fault, not correctable. Dominant at `L=2`
+   (`0.367 → 0.820` once corrected for).
+2. *Ill-conditioning of the transfer operator* — GD takes one Landweber step where the converged
+   solve is needed. Correctable, and it is what our solver does. Dominant at `L=4`
+   (`0.418 → 0.556` only), with `cond` rising `7.8 → 1.7e3`.
+
+**Consequence: `theory/12`'s headline is measuring the wrong quantity.** `sin → 1` compared `ΔJ`
+against `G` rather than `ΠG`, which forces `sin ≈ 1` whenever most of `G` is unreachable,
+independently of anything GD does. **The 108-run grid must be recomputed against `ΠG`.**
+
+### 8.5 Does it train? — **yes**
+
+`studies/nonlinear_train.py`. ReLU teacher, `d=16`, `L=4`, `n=32`, 200 steps, 3 seeds, initial
+loss `18.34`. Full hyper-parameter grid for every arm, so the fairness objection that sank the
+previous submission cannot recur.
+
+| arm | best hyper | final loss | s / run |
+|---|---|---|---|
+| **op** | `η=2.0, λ=0.1` | **0.1624 ± 0.016** | 11 |
+| adam | `lr=0.02` | 0.1909 ± 0.11 | 1 |
+| gd | `lr=0.05` | 0.7124 ± 0.17 | 1 |
+
+It trains, to slightly better loss than tuned Adam and with `7×` lower seed variance, at `10×` the
+wall clock. `η` is the real knob (`2.0 ≫ 0.5 ≫ 0.1`); `λ` matters little between `0.01` and `0.1`.
+
+**Reading:** the legitimacy precondition is satisfied, and the wall-clock ratio confirms that
+benchmarking is the wrong frame. This is an instrument, not an optimiser.
