@@ -46,42 +46,92 @@ ReLU gates reduce rank and make the target unreachable is self-evident and is us
 the nonlinear regime that are not implied by the deep linear literature.
 
 % =================================================================================
-\section{Definitions}
+\section{Notation}\label{sec:notation}
 
-\begin{definition}[model classes]\label{def:models}
-Weights $W_\ell\in\R^{n_\ell\times n_{\ell-1}}$, $\ell=1..L$.
+\NOTE{Every symbol used later is defined here, in order of dependence.}
+
+\paragraph{N1. Model classes.} Weights $W_\ell\in\R^{n_\ell\times n_{\ell-1}}$, $\ell=1,\dots,L$,
+written collectively $W=(W_1,\dots,W_L)$. Input $x\in\R^{n_0}$, output in $\R^{n_L}$.
 \begin{itemize}[leftmargin=*,itemsep=0pt]
-  \item \textbf{DLN} (deep linear): $\Jop = W_L\cdots W_1$, input-independent.
-  \item \textbf{FGLN} (fixed gates): $\Jop = W_LD_{L-1}\cdots D_1W_1$, $D_\ell$ fixed diagonal.
-  \item \textbf{ReLU MLP} (no biases): $\Jop(x)=W_LD_{L-1}(x)\cdots D_1(x)W_1$ with
-        $D_\ell(x)=\mathrm{diag}(\mathbb 1[z_\ell(x)>0])$, so $f(x)=\Jop(x)x$ exactly.
-  \item \textbf{CReLU MLP}: $c=[\mathrm{relu}(z);\mathrm{relu}(-z)]$, $W\in\R^{d\times 2d}$;
-        $D(z)=[\mathrm{diag}(\mathbb 1[z>0]);-\mathrm{diag}(\mathbb 1[z<0])]$ satisfies
-        $D^\top D=I$, so the gate is an isometry and looks-linear init gives $\Jop(x)=O_L\cdots O_1$
-        orthogonal at any depth.
+  \item \textbf{DLN} (deep linear): $\Jop = W_L\cdots W_1$, independent of $x$.
+  \item \textbf{FGLN} (fixed gates): $\Jop = W_LD_{L-1}\cdots D_1W_1$ with $D_\ell$ a fixed
+        diagonal matrix, independent of $x$.
+  \item \textbf{ReLU MLP} (no biases): pre-activations $z_\ell(x)$, gates
+        $D_\ell(x)=\mathrm{diag}(\mathbb 1[z_\ell(x)>0])$, and
+        $\Jop(x)=W_LD_{L-1}(x)\cdots D_1(x)W_1$, so that $f(x)=\Jop(x)\,x$ exactly.
+  \item \textbf{CReLU MLP}: features $c=[\mathrm{relu}(z);\mathrm{relu}(-z)]$,
+        $W_\ell\in\R^{d\times 2d}$, gate
+        $D(z)=\big[\mathrm{diag}(\mathbb 1[z>0]);-\mathrm{diag}(\mathbb 1[z<0])\big]\in\R^{2d\times d}$.
+        Since $D(z)^\top D(z)=I$ the gate is an isometry, and the looks-linear initialisation
+        $W=[O\mid -O]$ gives $W D(z)=O$ for every $z$, hence $\Jop(x)=O_L\cdots O_1$ orthogonal at
+        any depth.
 \end{itemize}
-\end{definition}
 
-\begin{definition}[contexts, target, realised step]\label{def:contexts}
-$\Jop(x)=A_\ell(x)W_\ell B_\ell(x)$ with $B_1=I$, $A_L=I$,
-$B_{\ell+1}=D_\ell W_\ell B_\ell$, $A_\ell=A_{\ell+1}W_{\ell+1}D_\ell$.
-Coordinate gradient $\partial\mathcal L/\partial W_\ell=\sum_x A_\ell(x)^\top G(x)B_\ell(x)^\top$.
-Target $\Dstar=(-\eta G(x))_x$. Reachable set at first order:
-$M(\dW)=\big(\sum_\ell A_\ell(x)\dW_\ell B_\ell(x)\big)_x$, and $\Pi$ its orthogonal projector.
-\end{definition}
+\paragraph{N2. Contexts.} For each $\ell$ define $A_\ell(x)$ (everything to the left of $W_\ell$)
+and $B_\ell(x)$ (everything to the right) by
+\[
+  B_1=I,\quad B_{\ell+1}=D_\ell(x)W_\ell B_\ell(x),\qquad
+  A_L=I,\quad A_\ell=A_{\ell+1}(x)W_{\ell+1}D_\ell(x),
+\]
+so that $\Jop(x)=A_\ell(x)\,W_\ell\,B_\ell(x)$ for every $\ell$. (DLN and FGLN are the cases where
+$A_\ell,B_\ell$ do not depend on $x$.)
+
+\paragraph{N3. Loss and operator gradient.} Per-sample loss $\ell(f(x),y)$, total
+$\mathcal L=\frac1n\sum_x \ell$. The \emph{operator gradient} is
+$G(x):=\partial \ell/\partial \Jop(x)\in\R^{n_L\times n_0}$; it is rank one both for the squared
+loss ($G=(f-y)x^\top$) and for cross-entropy ($G=(\mathrm{softmax}(f)-e_y)x^\top$). The
+coordinate gradient follows by the chain rule:
+\begin{equation}\label{eq:coordgrad}
+  \frac{\partial\mathcal L}{\partial W_\ell}=\sum_x A_\ell(x)^\top G(x) B_\ell(x)^\top .
+\end{equation}
+
+\paragraph{N4. The two spaces and the step map.} Let
+\[
+ \mathcal W=\bigoplus_{\ell=1}^L\R^{n_\ell\times n_{\ell-1}}\ \ (\text{weight perturbations}),
+ \qquad
+ \mathcal O=\bigoplus_{x\in\mathcal B}\R^{n_L\times n_0}\ \ (\text{per-input operator changes}),
+\]
+both with the Frobenius inner product, $\mathcal B$ the batch, $|\mathcal B|=n$. Define the
+linear \textbf{step map} $M:\mathcal W\to\mathcal O$ and its adjoint by
+\begin{equation}\label{eq:Mdef}
+  \big(M\dW\big)_x:=\sum_{\ell=1}^L A_\ell(x)\,\dW_\ell\,B_\ell(x),
+  \qquad
+  \big(M^\top H\big)_\ell=\sum_{x} A_\ell(x)^\top H_x B_\ell(x)^\top .
+\end{equation}
+$M\dW$ is the first-order change of the operator family induced by $\dW$ at fixed gates. Both
+$M$ and $M^\top$ cost $L$ batched matrix products, so neither is ever formed explicitly.
+
+\paragraph{N5. Target, reachable set, projector.} With step size $\eta>0$ the \textbf{target} is
+\[
+ \Dstar:=\big(-\eta\,G(x)\big)_{x\in\mathcal B}\in\mathcal O ,
+\]
+the operator step we would take if the operator were a free variable. The \textbf{reachable set}
+is $\mathrm{range}(M)\subseteq\mathcal O$ and $\Pi$ denotes orthogonal projection onto it. The
+\textbf{achievable ideal} is $\Pi\Dstar$: the closest point to $\Dstar$ that any weight
+perturbation can produce at first order.
+
+\paragraph{N6. Comparison of \eqref{eq:coordgrad} with \eqref{eq:Mdef}.} Gradient descent takes
+$\dW^{\mathrm{GD}}_\ell=-\mathrm{lr}\,\partial\mathcal L/\partial W_\ell$, and by
+\eqref{eq:coordgrad} and \eqref{eq:Mdef} this is exactly $M^\top$ applied to the target (up to the
+scalar $\mathrm{lr}/\eta$). Hence
+\begin{equation}\label{eq:landw}
+ \text{GD's induced operator change}=M M^\top\Dstar,
+ \qquad
+ \text{achievable ideal}=\Pi\Dstar=M(M^\top M)^{+}M^\top\Dstar .
+\end{equation}
 
 \begin{definition}[the three quantities the diagnostic reports]\label{def:diag}
 \begin{enumerate}[label=(D\arabic*),leftmargin=*,itemsep=0pt]
-  \item \textbf{Reachability} $\ \alpha=\|\Pi\Dstar\|/\|\Dstar\|$ --- how much of the ideal the
-        architecture admits at all. Calibration quantity, not a finding.
-  \item \textbf{Efficiency} $\ \epsilon=\cos(\Delta \Jop_{\mathrm{GD}},\,\Pi\Dstar)$ --- how much
-        of the \emph{achievable} step gradient descent takes. This is the bias, correctly
-        normalised.
-  \item \textbf{Spectral effect} --- what the difference does to $\sigma(\Jop)$: mode ordering,
-        effective rank, and the separation exponent $d\log|\dot s|/d\log s$.
+  \item \textbf{Reachability} $\alpha:=\|\Pi\Dstar\|/\|\Dstar\|\in[0,1]$ --- how much of the ideal
+        the architecture admits at all. Calibration quantity, not a finding.
+  \item \textbf{Efficiency} $\epsilon:=\cos\big(MM^\top\Dstar,\ \Pi\Dstar\big)$ --- how much of the
+        \emph{achievable} step gradient descent takes. This is the bias, correctly normalised.
+  \item \textbf{Spectral effect} --- the effect of the difference on $\sigma(\Jop(x))$: mode
+        ordering, effective rank, and the exponent $d\log|\dot s|/d\log s$.
 \end{enumerate}
-\NOTE{Our earlier grid reported $\cos(\Delta \Jop,G)$, i.e.\ (D2) without the projection. That
-conflates (D1) and (D2) and forces $\cos\approx0$ whenever $\alpha$ is small. Must be recomputed.}
+\NOTE{Our earlier grid reported $\cos(\Delta \Jop,G)$, i.e.\ (D2) \emph{without} the projection,
+which conflates (D1) and (D2) and forces $\cos\approx0$ whenever $\alpha$ is small. Must be
+recomputed.}
 \end{definition}
 
 % =================================================================================
@@ -153,24 +203,62 @@ point the closed-form split \emph{is} the answer and no iteration runs.
         spectral separation (ratio $1.18$--$1.36$).
 \end{itemize}
 
-\paragraph{S2 --- per-input least squares (ReLU, CReLU).}
+\paragraph{S2 --- truncated Krylov iteration on the step map (ReLU, CReLU).}
 With input-dependent gates there is no single target operator, so \eqref{eq:P} has no direct
-analogue. \texttt{studies/dial.py} instead solves the first-order problem
+analogue: one $\dW$ must serve $n$ different per-input targets. We therefore solve the linear
+least-squares problem in $\mathcal W$
 \begin{equation}\label{eq:Q}
-\min_{\dW}\ \big\|M(\dW)-\Dstar\big\|^2 \quad\text{by LSQR truncated at $k$ iterations.}
+  \min_{\dW\in\mathcal W}\ \big\|M\dW-\Dstar\big\|^2
+  \qquad\big(\text{or }\ \big\|M\dW-\Dstar\big\|^2+\lambda^2\|\dW\|^2\ \text{ if damped}\big),
 \end{equation}
+with $M$, $\Dstar$ as in N4--N5. Its minimum-norm solution is $M^{+}\Dstar$ and its image is
+exactly the achievable ideal $\Pi\Dstar$.
+
+\emph{Algorithm.} LSQR \cite{paige1982lsqr} applied matrix-free to $M$ (never to $M^\top M$,
+which would square the condition number). After $k$ iterations LSQR returns
+\[
+  \dW^{(k)}=\arg\min_{\dW\in\mathcal K_k}\|M\dW-\Dstar\|,
+  \qquad
+  \mathcal K_k=\mathrm{span}\Big\{M^\top\Dstar,\ (M^\top M)M^\top\Dstar,\ \dots,\ (M^\top M)^{k-1}M^\top\Dstar\Big\},
+\]
+the order-$k$ Krylov subspace generated by $M^\top M$ from $M^\top\Dstar$. Two endpoints, both
+immediate from this description:
 \begin{itemize}[leftmargin=*,itemsep=0pt]
-  \item \OK{} $k$ is an exactly calibrated dial: $k{=}1$ gives $\cos(\dW,-\nabla)=+1.0000$
-        (Prop.~\ref{prop:landweber}), $k\to\infty$ gives the best achievable step.
-  \item \NO{} \textbf{Linearised, hence pinned at $W=0$} --- precisely the case S1 was built to
-        handle. \textbf{S2 is not robust in the regime we need robustness for.}
-  \item \TD{} No exact-constraint analogue of S1 for the per-input family: the dichotomy splits
-        \emph{one} target, and per-input intermediate targets conflict. Unsolved.
+  \item $k=1$: $\mathcal K_1=\mathrm{span}\{M^\top\Dstar\}$, which by N6 is the gradient
+        direction. So $\dW^{(1)}$ is the gradient step with the residual-minimising step length.
+        \RUN{} Measured on MNIST-1D: $\cos(\dW^{(1)},-\nabla\mathcal L)=+1.0000$.
+  \item $k\to\infty$: $\dW^{(k)}\to M^{+}\Dstar$, so $M\dW^{(k)}\to\Pi\Dstar$, the achievable ideal.
+\end{itemize}
+Therefore \textbf{$k$ is an exactly calibrated dial between gradient descent and the best
+achievable operator step}, and it is the natural one: truncating a Krylov iteration is a standard
+regularisation for ill-posed least squares, damping the small singular directions of $M$ first.
+
+\emph{Cost and conditioning.} One iteration is one application of $M$ and one of $M^\top$, i.e.\
+$2L$ batched matrix products. The number of iterations needed to approach $\Pi\Dstar$ is governed
+by the singular-value distribution of $M$ restricted to its range; for condition number $\kappa$
+the residual decreases roughly like $\big(\frac{\kappa-1}{\kappa+1}\big)^k$.
+
+\emph{Robustness.}
+\begin{itemize}[leftmargin=*,itemsep=0pt]
+  \item \OK{} \textbf{Ill-conditioned $M$: handled.} This is what LSQR is for. Truncation at
+        moderate $k$, or damping $\lambda$, keeps $\|\dW\|$ bounded; undamped it is not
+        ($\|\dW\|\approx12.7$ against a unit-scale target at $\lambda=0$, versus $0.57$ at
+        $\lambda=1$). The method trains from Xavier initialisation, which is the ill-conditioned
+        case of interest.
+  \item \NO{} \textbf{Degenerate $W=0$: fails.} Then $M\equiv0$, so $\mathcal K_k=\{0\}$ and
+        $\dW^{(k)}=0$ for every $k$ --- the case Thm~\ref{thm:degen} describes and S1 was built
+        for.
+  \item \TD{} \textbf{Proposed fix (hybrid).} At a degenerate point all $\Jop(x)$ coincide (they
+        are $0$) and so do all gates, so there is \emph{no per-input structure to preserve}. The
+        aggregate target $P_\star=\arg\min_P\sum_x\|P-(\Dstar)_x\|^2=\frac1n\sum_x(\Dstar)_x$ is then
+        the right object, and S1 realises it exactly by the balanced chain. Use S1 for the escape
+        and S2 thereafter. Small change; not yet implemented or tested.
 \end{itemize}
 
-\paragraph{The gap.} \TD{} A single solver valid across all four model classes, degenerate and
-ill-conditioned included. Without it the diagnostic's readings in the nonlinear regime rest on a
-method that would fail the robustness test we set ourselves.
+\paragraph{The gap.} \TD{} S1 solves an exact nonlinear constraint for a single target; S2 solves
+a linearised problem for a family of targets. There is no exact-constraint analogue of S1 for the
+per-input family, because the dichotomy splits \emph{one} target and per-input intermediate
+targets conflict. The hybrid above closes the degeneracy hole but not this one.
 
 % =================================================================================
 \section{Supporting results}\label{sec:results}
