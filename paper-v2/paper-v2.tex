@@ -21,35 +21,14 @@
 \begin{document}\maketitle
 
 \begin{abstract}
-Gradient descent updates the weights of a factored network, but what the network learns is
-determined by how the \emph{operator} it computes moves. For deep linear networks that induced
-motion is known exactly: under balanced initialisation the gain on singular direction $k$ is
-$L\,s_k^{2-2/L}$, and the low-rank bias, sequential mode learning and saddle-to-saddle dynamics
-all follow from that single exponent. No analogue is known once the gates depend on the input,
-and the results that do address nonlinear networks concern endpoints, infinite-depth limits, or
-ranks rather than finite-time rates.
+Gradient descent updates the weights of a factored network, but what the network learns is determined by how the \emph{operator} it computes moves. The linear operator of a network for a specific input is defined as $P(x)$ such that $f(x) = P(x)x$, and this is the input to output jacobian of an unbiased MLP. For deep linear networks that induced motion is known exactly: under balanced initialisation the gain on singular direction $k$ is $L\,s_k^{2-2/L}$, and the low-rank bias, sequential mode learning and saddle-to-saddle dynamics all follow from that single exponent. No analogue is known once the gates depend on the input, and the results that do address nonlinear networks concern endpoints, infinite-depth limits, or ranks rather than finite-time rates.
 
-We introduce a diagnostic that measures the induced operator motion in any factored network ---
-deep linear, fixed-gate, ReLU and CReLU alike --- and validate it against the closed form to
-$10^{-14}$. It separates two quantities that the usual measurement conflates: how much of the
-ideal operator step the architecture can reach at all, and how much of that reachable step
-gradient descent actually takes. Realising a prescribed operator step in the weights is an
-exactly solvable problem, which lets us drive training by a step anywhere between gradient
-descent and the best reachable one, and so ask which observations belong to the architecture and
-which to the update rule.
+We introduce a diagnostic that measures the induced operator motion in any factored network and validate it against the closed form exactly. It separates two quantities that the usual measurement conflates: how much of the ideal operator step the architecture can reach at all, and how much of that reachable step gradient descent actually takes. Realising a prescribed operator step in the weights is an exactly solvable problem, which lets us drive training by a step of either gradient
+descent and the best reachable one, and so ask which observations belong to the architecture and which to the update rule.
 
 We use this to answer three questions. \textbf{(i)} Does a per-input gain law hold with
-input-dependent gates, and with what exponent? At standard initialisation the exponent is
-$\approx1$ rather than $2-2/L$, identically for linear and nonlinear architectures, and it
-persists throughout training. \textbf{(ii)} Is that exponent a property of the architecture or of
-gradient descent? A step that realises the reachable ideal has \emph{no} spectral tilt at all
-(exponent $\approx0$, unit gain on every direction), so the bias belongs to the update rule; no
-measurement of a gradient-descent trajectory can establish this, since it requires taking the
-other step. \textbf{(iii)} When does a difference in the dynamics become a difference in what is
-learned? We find the effect is graded rather than binary: as the step moves from gradient descent
-toward the reachable ideal, the learned operators rise monotonically in effective rank.
+input-dependent gates, and with what exponent? At standard initialisation the exponent is $\approx1$ rather than $2-2/L$, identically for linear and nonlinear architectures, and it persists throughout training. \textbf{(ii)} Is that exponent a property of the architecture or of gradient descent? A step that realises the reachable ideal has \emph{no} spectral tilt at all (exponent $\approx0$, unit gain on every direction), so the bias belongs to the update rule; no measurement of a gradient-descent trajectory can establish this, since it requires a reference ideal that we establish. \textbf{(iii)} When does a difference in the dynamics become a difference in what is learned? We find the effect is graded rather than binary: as the step moves from gradient descent toward the reachable ideal, the learned operators rise monotonically in effective rank.
 \end{abstract}
-
 
 % =================================================================================
 \section{Question, and why this framing}
