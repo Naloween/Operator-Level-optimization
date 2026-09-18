@@ -1,324 +1,333 @@
-% References for paper-v2. Every entry below was fetched and read on 2026-09-17 unless marked
-% VERIFY. Do not add an entry without checking it; the previous submission carried at least one
-% claim that the cited source did not support.
-
-% ---------------------------------------------------------------- the closed form we generalise
 @inproceedings{arora2018optimization,
-  title     = {On the Optimization of Deep Networks: Implicit Acceleration by Overparameterization},
-  author    = {Arora, Sanjeev and Cohen, Nadav and Hazan, Elad},
-  booktitle = {Proceedings of the 35th International Conference on Machine Learning (ICML)},
-  pages     = {244--253},
-  year      = {2018},
-  note      = {Thm 1: gradient flow, balanced init $W_{j+1}^\top W_{j+1} = W_j W_j^\top$, deep linear},
-  eprint    = {1802.06509},
-  archivePrefix = {arXiv}
+  title = {On the Optimization of Deep Networks: Implicit Acceleration by Overparameterization},
+  author = {Arora, Sanjeev and Cohen, Nadav and Hazan, Elad},
+  booktitle = {International Conference on Machine Learning},
+  pages = {244--253},
+  year = {2018},
+  note = {Thm 1: gradient flow, balanced init $W_{j+1}^\top W_{j+1} = W_j W_j^\top$, deep linear},
+  eprint = {1802.06509},
+  archiveprefix = {arXiv},
 }
 
 @misc{cohen2024lectures,
-  title  = {Lecture Notes on Linear Neural Networks: A Tale of Optimization and Generalization in Deep Learning},
-  author = {Cohen, Nadav},
-  year   = {2024},
+  title = {Lecture Notes on Linear Neural Networks: A Tale of Optimization and Generalization in Deep Learning},
+  author = {Cohen, Nadav and Razin, Noam},
+  year = {2024},
   eprint = {2408.13767},
-  archivePrefix = {arXiv},
-  note   = {Assumption 1 defines unbalancedness magnitude; open-problem list names unbalanced init and discrete GD}
+  archiveprefix = {arXiv},
+  note = {Assumption 1 defines unbalancedness magnitude; open-problem list names unbalanced init and discrete GD},
+  doi = {10.48550/arXiv.2408.13767},
 }
 
-% ---------------------------------------------------------------- conservation / geometry
 @inproceedings{du2018algorithmic,
-  title     = {Algorithmic Regularization in Learning Deep Homogeneous Models: Layers are Automatically Balanced},
-  author    = {Du, Simon S. and Hu, Wei and Lee, Jason D.},
-  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
-  year      = {2018},
-  eprint    = {1806.00900},
-  archivePrefix = {arXiv},
-  note      = {Gradient flow conserves $\|W_{l+1}\|_F^2-\|W_l\|_F^2$; linear and ReLU/leaky-ReLU homogeneous nets}
+  title = {Algorithmic Regularization in Learning Deep Homogeneous Models: Layers are Automatically Balanced},
+  author = {Du, Simon S. and Hu, Wei and Lee, Jason D.},
+  booktitle = {Neural Information Processing Systems},
+  year = {2018},
+  eprint = {1806.00900},
+  archiveprefix = {arXiv},
+  note = {Gradient flow conserves $\|W_{l+1}\|_F^2-\|W_l\|_F^2$; linear and ReLU/leaky-ReLU homogeneous nets},
 }
 
 @article{bah2022learning,
-  title   = {Learning deep linear neural networks: Riemannian gradient flows and convergence to global minimizers},
-  author  = {Bah, Bubacarr and Rauhut, Holger and Terstiege, Ulrich and Westdickenberg, Michael},
+  title = {Learning deep linear neural networks: Riemannian gradient flows and convergence to global minimizers},
+  author = {Bah, Bubacarr and Rauhut, Holger and Terstiege, Ulrich and Westdickenberg, Michael},
   journal = {Information and Inference: A Journal of the IMA},
-  volume  = {11},
-  number  = {1},
-  pages   = {307--353},
-  year    = {2022},
-  eprint  = {1910.05505},
-  archivePrefix = {arXiv},
-  note    = {Factor gradient flow = Riemannian flow on the rank-$r$ manifold with an induced metric}
+  volume = {11},
+  number = {1},
+  pages = {307--353},
+  year = {2022},
+  eprint = {1910.05505},
+  archiveprefix = {arXiv},
+  note = {Factor gradient flow = Riemannian flow on the rank-$r$ manifold with an induced metric},
+  doi = {10.1093/IMAIAI/IAAA039},
 }
 
-@misc{brechet2023deep,
-  title  = {Deep orthogonal linear networks are shallow},
-  author = {Br{\'e}chet, Pierre and Papagiannouli, Katerina and An, Jing and Mont{\'u}far, Guido},
-  year   = {2023},
+@misc{ablin2020deep,
+  title = {Deep orthogonal linear networks are shallow},
+  author = {Ablin, Pierre},
+  year = {2020},
   eprint = {2011.13831},
-  archivePrefix = {arXiv},
-  note   = {VERIFY author list. Riemannian GD under orthogonality constraints is equivalent to training one layer}
+  archiveprefix = {arXiv},
+  note = {Riemannian GD under orthogonality constraints is equivalent to training one layer: no overparametrisation effect and no implicit bias in that setting},
 }
 
-@misc{wendin2025gradient,
-  title  = {Gradient Flow Equations for Deep Linear Neural Networks: A Survey from a Network Perspective},
+@article{wendin2026gradient,
+  title = {Gradient Flow Equations for Deep Linear Neural Networks: A Survey from a Network Perspective},
   author = {Wendin, Anna and Altafini, Claudio},
-  year   = {2025},
+  year = {2026},
   eprint = {2511.10362},
-  archivePrefix = {arXiv},
-  note   = {VERIFY author list}
+  archiveprefix = {arXiv},
+  journal = {SIAM Review},
+  volume = {68},
+  number = {2},
+  pages = {293--345},
+  doi = {10.1137/24m1715519},
 }
 
-% ---------------------------------------------------------------- implicit bias: the phenomenon
 @inproceedings{saxe2014exact,
-  title     = {Exact solutions to the nonlinear dynamics of learning in deep linear neural networks},
-  author    = {Saxe, Andrew M. and McClelland, James L. and Ganguli, Surya},
-  booktitle = {International Conference on Learning Representations (ICLR)},
-  year      = {2014},
-  eprint    = {1312.6120},
-  archivePrefix = {arXiv}
+  title = {Exact solutions to the nonlinear dynamics of learning in deep linear neural networks},
+  author = {Saxe, Andrew M. and McClelland, James L. and Ganguli, Surya},
+  booktitle = {International Conference on Learning Representations},
+  year = {2014},
+  eprint = {1312.6120},
+  archiveprefix = {arXiv},
 }
 
 @inproceedings{gunasekar2017implicit,
-  title     = {Implicit Regularization in Matrix Factorization},
-  author    = {Gunasekar, Suriya and Woodworth, Blake E. and Bhojanapalli, Srinadh and Neyshabur, Behnam and Srebro, Nathan},
-  booktitle = {Advances in Neural Information Processing Systems (NIPS)},
-  year      = {2017}
+  title = {Implicit Regularization in Matrix Factorization},
+  author = {Gunasekar, Suriya and Woodworth, Blake E. and Bhojanapalli, Srinadh and Neyshabur, Behnam and Srebro, Nathan},
+  booktitle = {Neural Information Processing Systems},
+  year = {2017},
+  eprint = {1705.09280},
+  archiveprefix = {arXiv},
+  note = {Canonical venue is NIPS 2017; an Information Theory and Applications Workshop version (doi 10.1109/ITA.2018.8503198) also exists},
 }
 
 @inproceedings{arora2019implicit,
-  title     = {Implicit Regularization in Deep Matrix Factorization},
-  author    = {Arora, Sanjeev and Cohen, Nadav and Hu, Wei and Luo, Yuping},
-  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
-  year      = {2019},
-  eprint    = {1905.13655},
-  archivePrefix = {arXiv}
+  title = {Implicit Regularization in Deep Matrix Factorization},
+  author = {Arora, Sanjeev and Cohen, Nadav and Hu, Wei and Luo, Yuping},
+  booktitle = {Neural Information Processing Systems},
+  year = {2019},
+  eprint = {1905.13655},
+  archiveprefix = {arXiv},
 }
 
 @inproceedings{razin2020implicit,
-  title     = {Implicit Regularization in Deep Learning May Not Be Explainable by Norms},
-  author    = {Razin, Noam and Cohen, Nadav},
-  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
-  pages     = {21174--21187},
-  year      = {2020},
-  eprint    = {2005.06398},
-  archivePrefix = {arXiv}
+  title = {Implicit Regularization in Deep Learning May Not Be Explainable by Norms},
+  author = {Razin, Noam and Cohen, Nadav},
+  booktitle = {Neural Information Processing Systems},
+  pages = {21174--21187},
+  year = {2020},
+  eprint = {2005.06398},
+  archiveprefix = {arXiv},
 }
 
 @inproceedings{li2021towards,
-  title     = {Towards Resolving the Implicit Bias of Gradient Descent for Matrix Factorization: Greedy Low-Rank Learning},
-  author    = {Li, Zhiyuan and Luo, Yuping and Lyu, Kaifeng},
-  booktitle = {International Conference on Learning Representations (ICLR)},
-  year      = {2021},
-  eprint    = {2012.09839},
-  archivePrefix = {arXiv}
+  title = {Towards Resolving the Implicit Bias of Gradient Descent for Matrix Factorization: Greedy Low-Rank Learning},
+  author = {Li, Zhiyuan and Luo, Yuping and Lyu, Kaifeng},
+  booktitle = {International Conference on Learning Representations},
+  year = {2021},
+  eprint = {2012.09839},
+  archiveprefix = {arXiv},
 }
 
 @misc{jacot2021saddle,
-  title  = {Saddle-to-Saddle Dynamics in Deep Linear Networks: Small Initialization Training, Symmetry, and Sparsity},
-  author = {Jacot, Arthur and Ged, Fran{\c c}ois and Simsek, Berfin and Hongler, Cl{\'e}ment and Gabriel, Franck},
-  year   = {2021},
+  title = {Saddle-to-Saddle Dynamics in Deep Linear Networks: Small Initialization Training, Symmetry, and Sparsity},
+  author = {Jacot, Arthur and Ged, Fran{\c c}ois and {\c S}im{\c s}ek, Berfin and Hongler, Cl{\'e}ment and Gabriel, Franck},
+  year = {2021},
   eprint = {2106.15933},
-  archivePrefix = {arXiv},
-  note   = {VERIFY author list}
+  archiveprefix = {arXiv},
 }
 
-% ---------------------------------------------------------------- unbalanced initialisation
 @inproceedings{tarmoun2021understanding,
-  title     = {Understanding the Dynamics of Gradient Flow in Overparameterized Linear Models},
-  author    = {Tarmoun, Salma and Fran{\c c}a, Guilherme and Haeffele, Benjamin D. and Vidal, Ren{\'e}},
-  booktitle = {Proceedings of the 38th International Conference on Machine Learning (ICML)},
-  year      = {2021},
-  note      = {Two-layer; exact solution via conservation laws, no balancedness assumed}
+  title = {Understanding the Dynamics of Gradient Flow in Overparameterized Linear Models},
+  author = {Tarmoun, Salma and Fran{\c c}a, Guilherme and Haeffele, Benjamin D. and Vidal, Ren{\'e}},
+  booktitle = {International Conference on Machine Learning},
+  year = {2021},
+  note = {Two-layer; exact solution via conservation laws, no balancedness assumed},
 }
 
 @inproceedings{min2021explicit,
-  title     = {On the Explicit Role of Initialization on the Convergence and Implicit Bias of Overparametrized Linear Networks},
-  author    = {Min, Hancheng and Tarmoun, Salma and Vidal, Ren{\'e} and Mallada, Enrique},
-  booktitle = {Proceedings of the 38th International Conference on Machine Learning (ICML)},
-  year      = {2021},
-  eprint    = {2105.06351},
-  archivePrefix = {arXiv}
+  title = {On the Explicit Role of Initialization on the Convergence and Implicit Bias of Overparametrized Linear Networks},
+  author = {Min, Hancheng and Tarmoun, Salma and Vidal, Ren{\'e} and Mallada, Enrique},
+  booktitle = {International Conference on Machine Learning},
+  year = {2021},
+  eprint = {2105.06351},
+  archiveprefix = {arXiv},
 }
 
-@misc{kunin2024get,
-  title  = {Get rich quick: exact solutions reveal how unbalanced initializations promote rapid feature learning},
-  author = {Kunin, Daniel and Raventos, Allan and Dominé, Cl{\'e}mentine and Chen, Feng and Klindt, David and Saxe, Andrew and Ganguli, Surya},
-  year   = {2024},
+@inproceedings{kunin2024get,
+  title = {Get rich quick: exact solutions reveal how unbalanced initializations promote rapid feature learning},
+  author = {Kunin, Daniel and Ravent{\'o}s, Allan and Domin{\'e}, Cl{\'e}mentine and Chen, Feng and Klindt, David and Saxe, Andrew M. and Ganguli, Surya},
+  booktitle = {Neural Information Processing Systems},
+  year = {2024},
+  pages = {81157--81203},
   eprint = {2406.06158},
-  archivePrefix = {arXiv},
-  note   = {VERIFY author list}
+  archiveprefix = {arXiv},
 }
 
-% ---------------------------------------------------------------- the methods we separate from
 @inproceedings{bernacchia2018exact,
-  title     = {Exact natural gradient in deep linear networks and its application to the nonlinear case},
-  author    = {Bernacchia, Alberto and Lengyel, M{\'a}t{\'e} and Hennequin, Guillaume},
-  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
-  year      = {2018},
-  note      = {Exact NGD for deep linear nets; parameterisation invariance holds to first order only}
+  title = {Exact natural gradient in deep linear networks and its application to the nonlinear case},
+  author = {Bernacchia, Alberto and Lengyel, M{\'a}t{\'e} and Hennequin, Guillaume},
+  booktitle = {Neural Information Processing Systems},
+  year = {2018},
+  note = {Exact NGD for deep linear nets; parameterisation invariance holds to first order only},
 }
 
 @misc{dufortlabbe2026layerwise,
-  title  = {Layerwise LQR for Geometry-Aware Optimization of Deep Networks},
-  author = {Dufort-Labb{\'e}, Simon and others},
-  year   = {2026},
+  title = {Layerwise LQR for Geometry-Aware Optimization of Deep Networks},
+  author = {Dufort-Labb{\'e}, Simon and Bacon, Pierre-Luc and Pascanu, Razvan and Lacoste-Julien, Simon and Baratin, Aristide},
+  year = {2026},
   eprint = {2605.04230},
-  archivePrefix = {arXiv},
-  note   = {VERIFY author list. Local quadratic model over a linearised layer recurrence; subsumes NGD/K-FAC/Shampoo}
+  archiveprefix = {arXiv},
+  note = {Local quadratic model over a linearised layer recurrence; subsumes NGD/K-FAC/Shampoo},
+  doi = {10.48550/arXiv.2605.04230},
 }
 
 @inproceedings{frerix2018proximal,
-  title     = {Proximal Backpropagation},
-  author    = {Frerix, Thomas and M{\"o}llenhoff, Thomas and Moeller, Michael and Cremers, Daniel},
-  booktitle = {International Conference on Learning Representations (ICLR)},
-  year      = {2018},
-  note      = {Layer-wise targets solved by least squares; targets are activations, set heuristically}
+  title = {Proximal Backpropagation},
+  author = {Frerix, Thomas and M{\"o}llenhoff, Thomas and Moeller, Michael and Cremers, Daniel},
+  booktitle = {International Conference on Learning Representations},
+  year = {2018},
+  note = {Layer-wise targets solved by least squares; targets are activations, set heuristically},
 }
 
 @misc{evans2026theory,
-  title  = {Theory of Minimal Weight Perturbations in Deep Networks},
+  title = {Theory of Minimal Weight Perturbations in Deep Networks},
   author = {Evans, Bethan and Tanner, Jared},
-  year   = {2026},
+  year = {2026},
   eprint = {2601.16880},
-  archivePrefix = {arXiv},
-  note   = {Closest prior work on min-norm weight perturbation: target is an OUTPUT change, multi-layer results are Lipschitz bounds}
+  archiveprefix = {arXiv},
+  note = {Closest prior work on min-norm weight perturbation: target is an OUTPUT change, multi-layer results are Lipschitz bounds},
 }
 
 @misc{rawal2026saddle,
-  title  = {A Theory of Saddle Escape in Deep Nonlinear Networks},
+  title = {A Theory of Saddle Escape in Deep Nonlinear Networks},
   author = {Rawal, Divit and DeWeese, Michael R.},
-  year   = {2026},
+  year = {2026},
   eprint = {2605.01288},
-  archivePrefix = {arXiv},
-  note   = {AM--GM on layerwise gradient mass gives the $2-2/L$ exponent; equality at the balanced ansatz}
+  archiveprefix = {arXiv},
+  note = {AM--GM on layerwise gradient mass gives the $2-2/L$ exponent; equality at the balanced ansatz},
+  doi = {10.48550/arXiv.2605.01288},
 }
 
-% ---------------------------------------------------------------- gated linear models
 @misc{gatedlinear2022implicit,
-  title  = {The Implicit Bias of Gradient Descent on Generalized Gated Linear Networks},
-  author = {VERIFY authors},
-  year   = {2022},
+  title = {The Implicit Bias of Gradient Descent on Generalized Gated Linear Networks},
+  author = {Lippl, Samuel and Abbott, L. F. and Chung, SueYeon},
+  year = {2022},
   eprint = {2202.02649},
-  archivePrefix = {arXiv},
-  note   = {VERIFY authors. Asymptotic infinite-time limit; frozen-gate ReLU nets are GLNs}
+  archiveprefix = {arXiv},
+  note = {Asymptotic infinite-time limit; frozen-gate ReLU nets are GLNs},
 }
 
 @misc{haas2026why,
-  title  = {Why Deep Jacobian Spectra Separate: Depth-Induced Scaling and Singular-Vector Alignment},
-  author = {Haas, Nathana{\"e}l and others},
-  year   = {2026},
+  title = {Why Deep Jacobian Spectra Separate: Depth-Induced Scaling and Singular-Vector Alignment},
+  author = {Haas, Nathana{\"e}l and Gatine, Fran{\c c}ois and Cosse, Augustin and Bouraoui, Zied},
+  year = {2026},
   eprint = {2602.12384},
-  archivePrefix = {arXiv},
-  note   = {VERIFY author list. Thm 6.1: spectral separation forces singular-vector alignment. Prop 4.5: balancedness preserved for masked linear networks}
+  archiveprefix = {arXiv},
+  note = {Thm 6.1: spectral separation forces singular-vector alignment. Prop 4.5: balancedness preserved for masked linear networks},
+  doi = {10.48550/arXiv.2602.12384},
 }
 
-% ---------------------------------------------------------------- Schatten / nuclear norm
 @inproceedings{srebro2005maximum,
-  title     = {Maximum-Margin Matrix Factorization},
-  author    = {Srebro, Nathan and Rennie, Jason D. M. and Jaakkola, Tommi S.},
-  booktitle = {Advances in Neural Information Processing Systems (NIPS)},
-  year      = {2005},
-  note      = {$\|X\|_* = \min_{X=UV^\top} \tfrac12(\|U\|_F^2+\|V\|_F^2)$}
+  title = {Maximum-Margin Matrix Factorization},
+  author = {Srebro, Nathan and Rennie, Jason D. M. and Jaakkola, Tommi S.},
+  booktitle = {Neural Information Processing Systems},
+  year = {2005},
+  note = {$\|X\|_* = \min_{X=UV^\top} \tfrac12(\|U\|_F^2+\|V\|_F^2)$},
 }
 
 @article{recht2010guaranteed,
-  title   = {Guaranteed Minimum-Rank Solutions of Linear Matrix Equations via Nuclear Norm Minimization},
-  author  = {Recht, Benjamin and Fazel, Maryam and Parrilo, Pablo A.},
+  title = {Guaranteed Minimum-Rank Solutions of Linear Matrix Equations via Nuclear Norm Minimization},
+  author = {Recht, Benjamin and Fazel, Maryam and Parrilo, Pablo A.},
   journal = {SIAM Review},
-  volume  = {52},
-  number  = {3},
-  pages   = {471--501},
-  year    = {2010}
+  volume = {52},
+  number = {3},
+  pages = {471--501},
+  year = {2010},
+  doi = {10.1137/070697835},
 }
 
 @inproceedings{shang2016scalable,
-  title     = {Scalable Algorithms for Tractable Schatten Quasi-Norm Minimization},
-  author    = {Shang, Fanhua and Liu, Yuanyuan and Cheng, James},
+  title = {Scalable Algorithms for Tractable Schatten Quasi-Norm Minimization},
+  author = {Shang, Fanhua and Liu, Yuanyuan and Cheng, James},
   booktitle = {AAAI Conference on Artificial Intelligence},
-  year      = {2016},
-  eprint    = {1606.01245},
-  archivePrefix = {arXiv},
-  note      = {Bilinear factor norms equal Schatten-1/2 and 2/3 quasi-norms; the general $L$-factor case is folklore}
+  year = {2016},
+  volume = {30},
+  number = {1},
+  eprint = {1606.01245},
+  archiveprefix = {arXiv},
+  note = {Bilinear factor norms equal Schatten-1/2 and 2/3 quasi-norms; the general $L$-factor case is folklore},
+  doi = {10.1609/aaai.v30i1.10266},
 }
 
-% ---------------------------------------------------------------- numerics
 @article{paige1982lsqr,
-  title   = {LSQR: An Algorithm for Sparse Linear Equations and Sparse Least Squares},
-  author  = {Paige, Christopher C. and Saunders, Michael A.},
+  title = {LSQR: An Algorithm for Sparse Linear Equations and Sparse Least Squares},
+  author = {Paige, Christopher C. and Saunders, Michael A.},
   journal = {ACM Transactions on Mathematical Software},
-  volume  = {8},
-  number  = {1},
-  pages   = {43--71},
-  year    = {1982}
+  volume = {8},
+  number = {1},
+  pages = {43--71},
+  year = {1982},
+  doi = {10.1145/355984.355989},
 }
 
-% ---------------------------------------------------------------- rank / bias in NONLINEAR nets
 @inproceedings{timor2023implicit,
-  title     = {Implicit Regularization Towards Rank Minimization in ReLU Networks},
-  author    = {Timor, Nadav and Vardi, Gal and Shamir, Ohad},
-  booktitle = {Proceedings of the 34th International Conference on Algorithmic Learning Theory (ALT)},
-  year      = {2023},
-  eprint    = {2201.12760},
-  archivePrefix = {arXiv},
-  note      = {NEGATIVE: GF on ReLU may not minimise rank, even approximately, for most datasets of size 2. POSITIVE: sufficiently deep ReLU nets are biased to low rank in several settings. Square loss, gradient flow, endpoint rank -- not rates}
+  title = {Implicit Regularization Towards Rank Minimization in ReLU Networks},
+  author = {Timor, Nadav and Vardi, Gal and Shamir, Ohad},
+  booktitle = {International Conference on Algorithmic Learning Theory},
+  year = {2023},
+  eprint = {2201.12760},
+  archiveprefix = {arXiv},
+  note = {NEGATIVE: GF on ReLU may not minimise rank, even approximately, for most datasets of size 2. POSITIVE: sufficiently deep ReLU nets are biased to low rank in several settings. Square loss, gradient flow, endpoint rank -- not rates},
 }
 
 @inproceedings{jacot2023implicit,
-  title     = {Implicit Bias of Large Depth Networks: a Notion of Rank for Nonlinear Functions},
-  author    = {Jacot, Arthur},
-  booktitle = {International Conference on Learning Representations (ICLR)},
-  year      = {2023},
-  eprint    = {2209.15055},
-  archivePrefix = {arXiv},
-  note      = {Representation cost converges as $L\to\infty$ to the bottleneck rank. Requires L2 regularisation or cross-entropy; function-space statement, infinite depth, not finite-time dynamics}
+  title = {Implicit Bias of Large Depth Networks: a Notion of Rank for Nonlinear Functions},
+  author = {Jacot, Arthur},
+  booktitle = {International Conference on Learning Representations},
+  year = {2023},
+  eprint = {2209.15055},
+  archiveprefix = {arXiv},
+  note = {Representation cost converges as $L\to\infty$ to the bottleneck rank. Requires L2 regularisation or cross-entropy; function-space statement, infinite depth, not finite-time dynamics},
 }
 
 @misc{bantzis2025saddle,
-  title  = {Saddle-To-Saddle Dynamics in Deep ReLU Networks: Low-Rank Bias in the First Saddle Escape},
+  title = {Saddle-To-Saddle Dynamics in Deep ReLU Networks: Low-Rank Bias in the First Saddle Escape},
   author = {Bantzis, Ioannis and Simon, James B. and Jacot, Arthur},
-  year   = {2025},
+  year = {2025},
   eprint = {2505.21722},
-  archivePrefix = {arXiv},
-  note   = {Optimal escape direction is low-rank in deeper layers: $\sigma_1 \gtrsim \ell^{1/4}\sigma_2$ at layer $\ell$. First escape from the origin only}
+  archiveprefix = {arXiv},
+  note = {Optimal escape direction is low-rank in deeper layers: $\sigma_1 \gtrsim \ell^{1/4}\sigma_2$ at layer $\ell$. First escape from the origin only},
+  doi = {10.48550/arXiv.2505.21722},
 }
 
 @article{radhakrishnan2024mechanism,
-  title   = {Mechanism for feature learning in neural networks and backpropagation-free machine learning models},
-  author  = {Radhakrishnan, Adityanarayanan and Beaglehole, Daniel and Pandit, Parthe and Belkin, Mikhail},
+  title = {Mechanism for feature learning in neural networks and backpropagation-free machine learning models},
+  author = {Radhakrishnan, Adityanarayanan and Beaglehole, Daniel and Pandit, Parthe and Belkin, Mikhail},
   journal = {Science},
-  year    = {2024},
-  doi     = {10.1126/science.adi5639},
-  note    = {Neural Feature Ansatz: the weight Gram matrix correlates with the average gradient outer product (AGOP) at every layer. AGOP is averaged OVER INPUTS, so this is a shared-structure statement -- directly relevant to Q2}
+  volume = {383},
+  number = {6690},
+  pages = {1461--1467},
+  year = {2024},
+  doi = {10.1126/science.adi5639},
+  note = {Neural Feature Ansatz: the weight Gram matrix correlates with the average gradient outer product (AGOP) at every layer. AGOP is averaged OVER INPUTS, so this is a shared-structure statement},
 }
 
 @inproceedings{beaglehole2024agop,
-  title     = {Average gradient outer product as a mechanism for deep neural collapse},
-  author    = {Beaglehole, Daniel and others},
-  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
-  year      = {2024},
-  eprint    = {2402.13728},
-  archivePrefix = {arXiv},
-  note      = {VERIFY author list}
+  title = {Average gradient outer product as a mechanism for deep neural collapse},
+  author = {Beaglehole, Daniel and S{\'u}ken{\'\i}k, Peter and Mondelli, Marco and Belkin, Mikhail},
+  booktitle = {Neural Information Processing Systems},
+  year = {2024},
+  pages = {130764--130796},
+  eprint = {2402.13728},
+  archiveprefix = {arXiv},
 }
 
-@misc{huh2021lowrank,
-  title  = {The Low-Rank Simplicity Bias in Deep Networks},
+@article{huh2021lowrank,
+  title = {The Low-Rank Simplicity Bias in Deep Networks},
   author = {Huh, Minyoung and Mobahi, Hossein and Zhang, Richard and Cheung, Brian and Agrawal, Pulkit and Isola, Phillip},
-  year   = {2021},
+  journal = {Transactions on Machine Learning Research},
+  year = {2023},
   eprint = {2103.10427},
-  archivePrefix = {arXiv},
-  note   = {Empirical: effective rank falls with depth, at initialisation and after training. VERIFY author list}
+  archiveprefix = {arXiv},
+  note = {Empirical: effective rank falls with depth, at initialisation and after training},
 }
 
 @inproceedings{pennington2017resurrecting,
-  title     = {Resurrecting the sigmoid in deep learning through dynamical isometry: theory and practice},
-  author    = {Pennington, Jeffrey and Schoenholz, Samuel S. and Ganguli, Surya},
-  booktitle = {Advances in Neural Information Processing Systems (NIPS)},
-  year      = {2017},
-  note      = {Free-probability computation of the Jacobian singular spectrum. ReLU networks CANNOT achieve dynamical isometry; other activations can. At initialisation, not during training}
+  title = {Resurrecting the sigmoid in deep learning through dynamical isometry: theory and practice},
+  author = {Pennington, Jeffrey and Schoenholz, Samuel S. and Ganguli, Surya},
+  booktitle = {Neural Information Processing Systems},
+  year = {2017},
+  note = {Free-probability computation of the Jacobian singular spectrum. ReLU networks CANNOT achieve dynamical isometry; other activations can. At initialisation, not during training},
 }
 
 @inproceedings{wang2016extended,
-  title     = {Analysis of Deep Neural Networks with the Extended Data Jacobian Matrix},
-  author    = {Wang, Shengjie and Mohamed, Abdel-rahman and Caruana, Rich and Bilmes, Jeff and Plilipose, Matthai and Richardson, Matthew and Geras, Krzysztof and Urban, Gregor and Aslan, Ozlem},
-  booktitle = {International Conference on Machine Learning (ICML)},
-  year      = {2016},
-  note      = {Stacks per-input Jacobians and studies the spectrum of the stack. Static analysis of trained nets, not dynamics. VERIFY author list}
+  title = {Analysis of Deep Neural Networks with the Extended Data Jacobian Matrix},
+  author = {Wang, Shengjie and Mohamed, Abdel-rahman and Caruana, Rich and Bilmes, Jeff and Philipose, Matthai and Richardson, Matthew and Geras, Krzysztof and Urban, Gregor and Aslan, {\"O}zlem},
+  booktitle = {International Conference on Machine Learning},
+  year = {2016},
+  note = {Stacks per-input Jacobians and studies the spectrum of the stack. Static analysis of trained nets, not dynamics},
 }
