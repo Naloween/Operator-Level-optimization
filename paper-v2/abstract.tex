@@ -1,0 +1,27 @@
+\begin{abstract}
+Gradient descent updates the weights of a factored network, but what it learns is governed by how
+the \emph{operator} it computes moves: the input-to-output Jacobian $P(x)$, defined by
+$f(x) = P(x)\,x$ for a bias-free MLP. For deep linear networks this induced motion is known
+exactly: under balanced initialisation the gain on singular direction $k$ is $L\,s_k^{2-2/L}$, and
+the low-rank bias, sequential mode learning and saddle-to-saddle dynamics all follow from that
+single exponent. No analogue is known once the gates depend on the input, and the results that do
+address nonlinear networks concern endpoints, infinite-depth limits, or ranks rather than
+finite-time rates.
+
+We introduce a diagnostic that measures the induced operator motion in any factored network,
+validated against the closed form to machine precision, and show that realising a prescribed
+operator step in the weights is an exactly solvable problem. Training can therefore be driven
+either by gradient descent's step or by the best reachable one, which separates what belongs to
+the architecture from what belongs to the update rule.
+
+We report three findings. \textbf{(i)} The gain law survives input-dependent gates: the exponent
+rises with depth as $2-2/L$ predicts, but at standard initialisation sits systematically below it,
+and does so almost identically for deep linear, CReLU and ReLU networks. An exact decomposition
+attributes the entire gap to singular-vector misalignment between the operator and its layer-wise
+contexts --- the correction that the balanced theory omits, and which vanishes under balanced
+initialisation. \textbf{(ii)} The tilt is a property of the update rule rather than of the
+architecture: a step realising the reachable ideal has unit gain on every singular direction.
+\textbf{(iii)} The nonlinearity leaves the exponent untouched but suppresses the gain magnitude by
+more than an order of magnitude at depth $32$, acting as a stabiliser of the spectral dynamics
+rather than a complication.
+\end{abstract}
