@@ -248,3 +248,77 @@
   pages   = {43--71},
   year    = {1982}
 }
+
+% ---------------------------------------------------------------- rank / bias in NONLINEAR nets
+@inproceedings{timor2023implicit,
+  title     = {Implicit Regularization Towards Rank Minimization in ReLU Networks},
+  author    = {Timor, Nadav and Vardi, Gal and Shamir, Ohad},
+  booktitle = {Proceedings of the 34th International Conference on Algorithmic Learning Theory (ALT)},
+  year      = {2023},
+  eprint    = {2201.12760},
+  archivePrefix = {arXiv},
+  note      = {NEGATIVE: GF on ReLU may not minimise rank, even approximately, for most datasets of size 2. POSITIVE: sufficiently deep ReLU nets are biased to low rank in several settings. Square loss, gradient flow, endpoint rank -- not rates}
+}
+
+@inproceedings{jacot2023implicit,
+  title     = {Implicit Bias of Large Depth Networks: a Notion of Rank for Nonlinear Functions},
+  author    = {Jacot, Arthur},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2023},
+  eprint    = {2209.15055},
+  archivePrefix = {arXiv},
+  note      = {Representation cost converges as $L\to\infty$ to the bottleneck rank. Requires L2 regularisation or cross-entropy; function-space statement, infinite depth, not finite-time dynamics}
+}
+
+@misc{bantzis2025saddle,
+  title  = {Saddle-To-Saddle Dynamics in Deep ReLU Networks: Low-Rank Bias in the First Saddle Escape},
+  author = {Bantzis, Ioannis and Simon, James B. and Jacot, Arthur},
+  year   = {2025},
+  eprint = {2505.21722},
+  archivePrefix = {arXiv},
+  note   = {Optimal escape direction is low-rank in deeper layers: $\sigma_1 \gtrsim \ell^{1/4}\sigma_2$ at layer $\ell$. First escape from the origin only}
+}
+
+@article{radhakrishnan2024mechanism,
+  title   = {Mechanism for feature learning in neural networks and backpropagation-free machine learning models},
+  author  = {Radhakrishnan, Adityanarayanan and Beaglehole, Daniel and Pandit, Parthe and Belkin, Mikhail},
+  journal = {Science},
+  year    = {2024},
+  doi     = {10.1126/science.adi5639},
+  note    = {Neural Feature Ansatz: the weight Gram matrix correlates with the average gradient outer product (AGOP) at every layer. AGOP is averaged OVER INPUTS, so this is a shared-structure statement -- directly relevant to Q2}
+}
+
+@inproceedings{beaglehole2024agop,
+  title     = {Average gradient outer product as a mechanism for deep neural collapse},
+  author    = {Beaglehole, Daniel and others},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2024},
+  eprint    = {2402.13728},
+  archivePrefix = {arXiv},
+  note      = {VERIFY author list}
+}
+
+@misc{huh2021lowrank,
+  title  = {The Low-Rank Simplicity Bias in Deep Networks},
+  author = {Huh, Minyoung and Mobahi, Hossein and Zhang, Richard and Cheung, Brian and Agrawal, Pulkit and Isola, Phillip},
+  year   = {2021},
+  eprint = {2103.10427},
+  archivePrefix = {arXiv},
+  note   = {Empirical: effective rank falls with depth, at initialisation and after training. VERIFY author list}
+}
+
+@inproceedings{pennington2017resurrecting,
+  title     = {Resurrecting the sigmoid in deep learning through dynamical isometry: theory and practice},
+  author    = {Pennington, Jeffrey and Schoenholz, Samuel S. and Ganguli, Surya},
+  booktitle = {Advances in Neural Information Processing Systems (NIPS)},
+  year      = {2017},
+  note      = {Free-probability computation of the Jacobian singular spectrum. ReLU networks CANNOT achieve dynamical isometry; other activations can. At initialisation, not during training}
+}
+
+@inproceedings{wang2016extended,
+  title     = {Analysis of Deep Neural Networks with the Extended Data Jacobian Matrix},
+  author    = {Wang, Shengjie and Mohamed, Abdel-rahman and Caruana, Rich and Bilmes, Jeff and Plilipose, Matthai and Richardson, Matthew and Geras, Krzysztof and Urban, Gregor and Aslan, Ozlem},
+  booktitle = {International Conference on Machine Learning (ICML)},
+  year      = {2016},
+  note      = {Stacks per-input Jacobians and studies the spectrum of the stack. Static analysis of trained nets, not dynamics. VERIFY author list}
+}

@@ -186,16 +186,82 @@ $2-2/L$ via AM--GM on layerwise gradient mass & deep nonlinear & aligned single-
 Spectral separation $\Rightarrow$ singular-vector alignment; $2-2/L$ without balancing & FGLN &
 depth-scaling and separation \emph{assumed} during training (``deliberately strong'') & \cite{haas2026why} \\
 Asymptotic implicit bias of gated linear networks & frozen-gate & infinite-time limit; homogeneous polynomials & \cite{gatedlinear2022implicit} \\
+\midrule
+\multicolumn{4}{l}{\emph{Nonlinear networks --- what is known about rank and spectra}}\\
+\midrule
+GF on ReLU \textbf{may not} minimise rank, even approximately; but deep ReLU nets \emph{are} biased to low rank in several settings & ReLU &
+square loss, gradient flow; negative result for ``most'' datasets of size 2; statement about the \emph{endpoint rank}, not rates & \cite{timor2023implicit} \\
+Representation cost $\to$ bottleneck rank & ReLU & $L\to\infty$; requires L2 regularisation or cross-entropy; function space & \cite{jacot2023implicit} \\
+First saddle escape is low-rank in deeper layers, $\sigma_1\gtrsim\ell^{1/4}\sigma_2$ & ReLU & escape from the origin only & \cite{bantzis2025saddle} \\
+Effective rank falls with depth, at init and after training & general & empirical & \cite{huh2021lowrank} \\
+\textbf{Neural Feature Ansatz}: layer weight Gram $\propto$ average gradient outer product & general &
+AGOP is averaged \emph{over inputs}, so the learned structure is shared; correlational, largely empirical & \cite{radhakrishnan2024mechanism,beaglehole2024agop} \\
+ReLU networks \textbf{cannot} achieve dynamical isometry; other activations can & general &
+free probability, wide limit, \emph{at initialisation} & \cite{pennington2017resurrecting} \\
+Spectrum of the stacked per-input Jacobian distinguishes trained networks & general & static analysis of trained nets, not dynamics & \cite{wang2016extended} \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\paragraph{Uncovered.} \NOTE{Explicitly named as open in \cite{cohen2024lectures}: \emph{unbalanced}
-initialisation beyond depth 2, and \emph{discrete} gradient descent. Not covered anywhere we
-found: \textbf{finite-time operator-level dynamics with input-dependent gates.} Every nonlinear
-result above is either asymptotic \cite{gatedlinear2022implicit}, fixed-gate
-\cite{haas2026why}, or assumes alignment \cite{rawal2026saddle}. That is the gap the diagnostic
-is built for.}
+\paragraph{Named as open in \cite{cohen2024lectures}.} Unbalanced initialisation beyond depth 2;
+discrete gradient descent.
+
+\section{The questions, and what is already known about each}\label{sec:questions}
+
+\NOTE{Checked against the literature 2026-09-18. Each question states what is settled and what is
+not, so that a result here cannot restate a known one.}
+
+\paragraph{Q1 --- Does a per-input gain law hold?}
+In DLN the entire bias reduces to one exponent: $c_k=L\,s_k^{2-2/L}$ \cite{arora2018optimization}.
+\emph{Question:} for each input $x$, does the realised gain
+$c_k(x)=\big(u_k^\top\Delta \Jop(x)v_k\big)/\big(u_k^\top G(x)v_k\big)$ obey a power law in
+$s_k(x)$, and with what exponent?
+\begin{itemize}[leftmargin=*,itemsep=0pt]
+  \item \textbf{Known.} The \emph{rank} question is settled in the negative: GF on ReLU need not
+        minimise rank even approximately \cite{timor2023implicit}, though sufficient depth does
+        induce low-rank bias in some settings. Infinite depth with regularisation gives the
+        bottleneck rank \cite{jacot2023implicit}; the first escape from the origin is low-rank in
+        deeper layers \cite{bantzis2025saddle}; effective rank falls with depth empirically
+        \cite{huh2021lowrank}. For \emph{fixed} gates, \cite{haas2026why} obtains $2-2/L$ under
+        assumptions it labels deliberately strong.
+  \item \textbf{Not known.} All of the above concern \emph{endpoints, limits, or ranks}. The
+        finite-time \emph{rate} --- the exponent governing per-input singular-value motion with
+        \emph{input-dependent} gates --- is not addressed by any of them. \textbf{Q1 must be posed
+        as a question about the exponent, not about rank}, or it restates
+        \cite{timor2023implicit}.
+\end{itemize}
+
+\paragraph{Q2 --- Is the bias shared across inputs, or per-input?}
+\emph{Question:} do the dominant subspaces of $\Jop(x)$ align across $x$ during training?
+\begin{itemize}[leftmargin=*,itemsep=0pt]
+  \item \textbf{Known, and this largely settles it.} The Neural Feature Ansatz
+        \cite{radhakrishnan2024mechanism,beaglehole2024agop} states that each layer's weight Gram
+        matrix tracks the average gradient outer product --- an average \emph{over inputs}, hence a
+        shared-structure claim, across architectures and tasks.
+        \cite{wang2016extended} already studies the spectrum of the stacked per-input Jacobian.
+  \item \textbf{Not known.} Whether the \emph{per-input operator} spectra (as opposed to the
+        weight Grams) align, and whether that alignment is the \emph{mechanism} producing the Q1
+        exponent rather than a correlate. \textbf{Demote Q2 to a check on Q1's framing; it is not
+        a contribution on its own.}
+\end{itemize}
+
+\paragraph{Q3 --- Does efficiency explain the deviation?}
+\emph{Question:} if the Q1 exponent departs from $2-2/L$, is the departure predicted by
+$\epsilon$ (Def.~\ref{def:diag})?
+\begin{itemize}[leftmargin=*,itemsep=0pt]
+  \item \textbf{Known.} Nothing found. The closest is \cite{pennington2017resurrecting}: ReLU
+        cannot achieve dynamical isometry while other activations can --- which is the same
+        phenomenon as our $\alpha$ gap, at initialisation and for $\Jop$ rather than for the step
+        map $M$. \textbf{Our $\alpha=1$ for CReLU versus $\alpha<1$ for ReLU must be presented as
+        the operator-step counterpart of that known fact, not as a discovery.}
+  \item \textbf{Not known, and this is the open one.} A quantitative bridge from the linear law to
+        the nonlinear regime through a measurable quantity. It is conditional on Q1 producing a
+        deviation to explain.
+\end{itemize}
+
+\paragraph{Consequence for the contribution.} \TD{} C5 should be Q1 (as a rate question) and Q3.
+Q2 is a validity check. Any claim about rank, or about ReLU's poor conditioning, is already in the
+literature above.
 
 % =================================================================================
 \section{The solvers}\label{sec:solver}
