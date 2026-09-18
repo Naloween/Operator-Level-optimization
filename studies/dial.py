@@ -160,7 +160,8 @@ def main():
     ap.add_argument("--n-test", type=int, default=500)
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--steps", type=int, default=300)
-    ap.add_argument("--eta", type=float, default=1.0)
+    ap.add_argument("--etas", type=float, nargs="+", default=[1.0],
+                    help="target scale for the operator arm -- swept, like lr for the baselines")
     ap.add_argument("--ks", type=int, nargs="+", default=[1, 2, 5, 15, 50, 150])
     ap.add_argument("--lrs", type=float, nargs="+", default=[0.01, 0.05, 0.2, 1.0])
     ap.add_argument("--seeds", type=int, nargs="+", default=[0])
@@ -182,11 +183,12 @@ def main():
                 print(f"[{a.task}] s={s} {arm:<5} lr={h:<6g} | train {f['train_loss']:.4f} "
                       f"test {f['test_loss']:.4f} acc {f['test_acc']:.4f} ({r['seconds']:.0f}s)",
                       flush=True)
-        for k in a.ks:
-            r = run("op", (a.eta, k), *common)
+        for eta in a.etas:
+          for k in a.ks:
+            r = run("op", (eta, k), *common)
             rows.append(r)
             f = r["final"]
-            print(f"[{a.task}] s={s} op    k={k:<6} | train {f['train_loss']:.4f} "
+            print(f"[{a.task}] s={s} op    eta={eta:<5g} k={k:<5} | train {f['train_loss']:.4f} "
                   f"test {f['test_loss']:.4f} acc {f['test_acc']:.4f} "
                   f"cos={f.get('cos_target', float('nan')):.3f} "
                   f"prog={f.get('rel_progress', float('nan')):.3f} ({r['seconds']:.0f}s)",

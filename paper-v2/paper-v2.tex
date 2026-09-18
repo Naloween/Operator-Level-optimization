@@ -1,344 +1,281 @@
 \documentclass{article}
 \usepackage{neurips_2026}
+\usepackage[utf8]{inputenc}\usepackage[T1]{fontenc}\usepackage{hyperref}\usepackage{url}
+\usepackage{booktabs}\usepackage{amsfonts}\usepackage{microtype}\usepackage{xcolor}
+\usepackage{amsmath,amssymb,amsthm}\usepackage{graphicx}\usepackage{enumitem}
 
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage{hyperref}
-\usepackage{url}
-\usepackage{booktabs}
-\usepackage{amsfonts}
-\usepackage{microtype}
-\usepackage{xcolor}
-\usepackage{amsmath,amssymb,amsthm}
-\usepackage{graphicx}
-\usepackage{enumitem}
-
-% ---------------------------------------------------------------- board machinery
-% This file is a BOARD, not a draft. Status tags make the state visible at a glance.
-\newcommand{\PROVED}{{\color{green!50!black}\textsc{[proved]}}}
-\newcommand{\MEAS}{{\color{blue!70!black}\textsc{[measured]}}}
-\newcommand{\OPEN}{{\color{orange!85!black}\textsc{[open]}}}
-\newcommand{\DEAD}{{\color{red!75!black}\textsc{[retracted]}}}
-\newcommand{\TODO}[1]{{\color{red!75!black}\textbf{TODO:} #1}}
+\newcommand{\OK}{{\color{green!50!black}\textsc{done}}}
+\newcommand{\RUN}{{\color{blue!70!black}\textsc{measured}}}
+\newcommand{\TD}{{\color{orange!85!black}\textsc{todo}}}
+\newcommand{\NO}{{\color{red!75!black}\textsc{broken}}}
 \newcommand{\NOTE}[1]{{\color{gray}\small #1}}
 
-\theoremstyle{plain}
-\newtheorem{theorem}{Theorem}
-\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{plain}\newtheorem{theorem}{Theorem}\newtheorem{lemma}[theorem]{Lemma}
 \newtheorem{proposition}[theorem]{Proposition}
-\newtheorem{corollary}[theorem]{Corollary}
-\theoremstyle{definition}
-\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{definition}\newtheorem{definition}[theorem]{Definition}
+\newcommand{\R}{\mathbb{R}}\newcommand{\dW}{\Delta W}\newcommand{\Jop}{J}
+\newcommand{\Dstar}{\Delta_\star}\newcommand{\Lam}{\Lambda}
 
-\newcommand{\R}{\mathbb{R}}
-\newcommand{\dW}{\Delta W}
-\newcommand{\Jop}{J}
-\newcommand{\Dstar}{\Delta_\star}
-\newcommand{\Lam}{\Lambda}
-
-\title{Operator-level optimisation, v2 --- working board}
-\author{}
-\date{}
-
-\begin{document}
-\maketitle
-
-\NOTE{Numbers from \texttt{runs/theory/}; planning log \texttt{theory/13-paper-plan.md};
-references in \texttt{references.bib} all read 2026-09-17.}
+\title{Diagnosing the implicit bias of gradient descent at the operator level\\{\large working draft --- structure and state, not prose}}
+\author{}\date{}
+\begin{document}\maketitle
 
 % =================================================================================
-\section{Thesis and contributions}\label{sec:contrib}
+\section{Question, and why this framing}
 
-\begin{quote}
-\emph{In a gated network the ideal operator step is \textbf{not reachable}: the gates make the
-contexts rank-deficient, so a fixed fraction of the operator gradient lies outside the reachable
-set at every step, independently of depth. Within what \emph{is} reachable, gradient descent is
-exactly \textbf{one Landweber iteration}, and it captures well under a third of the achievable
-progress. Truncated Krylov iteration interpolates continuously between gradient descent and the
-best achievable step. This gives the first direct control over the implicit bias of a
-piecewise-linear network, and we use it to separate the part of the bias that is
-\textbf{structural} (unreachable, set by the gates) from the part that is an artefact of
-\textbf{solver conditioning} (correctable).}
-\end{quote}
+\textbf{Question.} What is the implicit bias of gradient descent on a factored model, measured
+\emph{at the level of the operator the model computes}, and how does the answer change when the
+model becomes nonlinear?
 
-\begin{enumerate}[label=\textbf{C\arabic*.},leftmargin=*]
-  \item \textbf{The ideal operator step is structurally unreachable in a ReLU network.} \MEAS{} \\
-        $33$--$90\%$ of $\|\eta G\|$ lies outside $\mathrm{range}(M)$, \emph{even for a single
-        input with $8\times$ more parameters than constraints}. Mechanism: every context is
-        rank-limited by the gates. Not a depth effect --- a linear network at depth 128 realises
-        the same step to $10^{-4}$. \S\ref{sec:unreach}.
-  \item \textbf{Gradient descent is one Landweber step; the achievable ideal is the converged
-        solve.} \PROVED{} \MEAS{} \\
-        $\dW_\ell = -\mathrm{lr}\sum_x A_\ell^\top G(x) B_\ell^\top$ is exactly $M^\top$ applied
-        to the target, so the induced step is $MM^\top\Dstar$ against $\Pi\Dstar =
-        M(M^\top M)^+M^\top\Dstar$. Verified: at $k=1$, $\cos(\dW_{\mathrm{op}},-\nabla)=+1.0000$.
-        \S\ref{sec:landweber}.
-  \item \textbf{The dial.} \MEAS{} \\
-        Truncating LSQR at $k$ iterations interpolates: $k=1$ is gradient descent, $k\to\infty$ is
-        the achievable ideal. One principled parameter (Krylov regularisation), and cheap $k$ is
-        what makes the method affordable. \S\ref{sec:dial}.
-  \item \textbf{The bias decomposes into two mechanisms with different remedies.} \MEAS{} \\
-        Unreachability (structural, gate rank) dominates at $L{=}2$; transfer-operator
-        ill-conditioning (correctable) dominates at $L{=}4$, where $\mathrm{cond}(M)$ on its range
-        rises $7.8\to1.7\!\times\!10^3$. \S\ref{sec:decomp}.
-  \item \textbf{Method: minimal realisation, its certificate, and a constructive escape.}
-        \PROVED{} \\
-        Problem \eqref{eq:P}, the shared-multiplier condition \eqref{eq:kkt}, the residual $\rho$;
-        the degeneracy theorem and the exact hierarchical recursion. \S\ref{sec:method}.
-  \item \textbf{Conservation from the optimality form alone.} \PROVED{} \MEAS{} \\
-        Any step of the form \eqref{eq:kkt} with a shared $\Lam$ conserves the balancedness
-        invariant. Thm~\ref{thm:conserve}.
-  \item \textbf{Real-data study.} \OPEN{} \\
-        MNIST-1D running; full MNIST not yet feasible. \S\ref{sec:real}.
-\end{enumerate}
+\textbf{Framing.} A depth-$L$ network computes a linear operator per input,
+$f(x)=\Jop(x)x$. Gradient descent updates \emph{weights}; the operator changes as a consequence.
+We take the \textbf{operator gradient step} $-\eta G(x)$, $G=\partial\ell/\partial \Jop$, as the
+reference against which the realised change $\Delta \Jop(x)$ is measured. The bias is the
+discrepancy. This framing is useful because the reference is architecture-independent: the same
+target is defined for a linear network, a fixed-gate network, and a ReLU network, so the
+\emph{same} diagnostic runs across all three and its readings are comparable.
 
-\paragraph{Why not deep linear.} \DEAD{} Under balancedness the induced step
-$T_W(G)=\sum_j(\Jop\Jop^\top)^{\frac{L-j}{L}}G(\Jop^\top \Jop)^{\frac{j-1}{L}}$ is a function of
-$\Jop$ and $L$ alone \cite{arora2018optimization}, so the whole trajectory integrates in operator
-space with no network and no solver: the weights are bookkeeping. Every comparison we ran there
-reproduced known results \cite{saxe2014exact,gunasekar2017implicit,arora2019implicit,li2021towards}.
-The deep linear case is the \emph{method's validation setting}, not its application.
+\textbf{Programme.} (i) Validate in the deep linear case, where the answer is known in closed
+form, and require agreement. (ii) Extend to fixed gates, where the closed form still exists.
+(iii) Extend to input-dependent gates (ReLU, CReLU), where it does not, and report what the
+diagnostic finds. The contribution is what (iii) shows, not the machinery.
+
+\textbf{What is a contribution and what is not.} The solver and the certificate are tools. That
+ReLU gates reduce rank and make the target unreachable is self-evident and is used only to
+\emph{calibrate} the diagnostic. The contribution must be empirical or theoretical findings about
+the nonlinear regime that are not implied by the deep linear literature.
 
 % =================================================================================
-\section{Setup}\label{sec:setup}
+\section{Definitions}
 
-\begin{itemize}[leftmargin=*,itemsep=1pt]
-  \item \textbf{Model.} ReLU MLP without biases, $f(x)=W_L\,\mathrm{relu}(W_{L-1}\cdots
-        \mathrm{relu}(W_1x))$, hence $f(x)=\Jop(x)\,x$ with
-        $\Jop(x)=W_LD_{L-1}(x)\cdots D_1(x)W_1$, $D_\ell(x)=\mathrm{diag}(\mathbb 1[z_\ell>0])$.
-  \item \textbf{Contexts.} $\Jop(x)=A_\ell(x)W_\ell B_\ell(x)$ with
-        $B_{\ell+1}=D_\ell W_\ell B_\ell$, $A_\ell=A_{\ell+1}W_{\ell+1}D_\ell$, $B_1=I$, $A_L=I$.
-  \item \textbf{Per-sample operator gradient.} $G(x)=\partial\ell/\partial \Jop(x)$; rank one for
-        squared loss ($(f-y)x^\top$) and for cross-entropy ($(\mathrm{softmax}(f)-e_y)x^\top$).
-  \item \textbf{The reachable set.} $M(\dW) := \big(\sum_\ell A_\ell(x)\dW_\ell B_\ell(x)\big)_x$.
-        Target $\Dstar=(-\eta G(x))_x$. \textbf{Achievable ideal} $\Pi\Dstar$, the projection of
-        $\Dstar$ on $\mathrm{range}(M)$.
+\begin{definition}[model classes]\label{def:models}
+Weights $W_\ell\in\R^{n_\ell\times n_{\ell-1}}$, $\ell=1..L$.
+\begin{itemize}[leftmargin=*,itemsep=0pt]
+  \item \textbf{DLN} (deep linear): $\Jop = W_L\cdots W_1$, input-independent.
+  \item \textbf{FGLN} (fixed gates): $\Jop = W_LD_{L-1}\cdots D_1W_1$, $D_\ell$ fixed diagonal.
+  \item \textbf{ReLU MLP} (no biases): $\Jop(x)=W_LD_{L-1}(x)\cdots D_1(x)W_1$ with
+        $D_\ell(x)=\mathrm{diag}(\mathbb 1[z_\ell(x)>0])$, so $f(x)=\Jop(x)x$ exactly.
+  \item \textbf{CReLU MLP}: $c=[\mathrm{relu}(z);\mathrm{relu}(-z)]$, $W\in\R^{d\times 2d}$;
+        $D(z)=[\mathrm{diag}(\mathbb 1[z>0]);-\mathrm{diag}(\mathbb 1[z<0])]$ satisfies
+        $D^\top D=I$, so the gate is an isometry and looks-linear init gives $\Jop(x)=O_L\cdots O_1$
+        orthogonal at any depth.
 \end{itemize}
-
-% =================================================================================
-\section{The ideal step is unreachable}\label{sec:unreach}
-
-\MEAS{} \texttt{studies/nonlinear.py}, $d{=}16$, exact least squares.
-
-\begin{center}\small
-\begin{tabular}{rrrrrr}
-\toprule
-$L$ & $n$ & unknowns & constraints & floor & generic \\
-\midrule
-2 & 1 & 512 & 256 & \textbf{0.375} & 0.000 \\
-4 & 1 & 1024 & 256 & \textbf{0.501} & 0.000 \\
-8 & 1 & 2048 & 256 & \textbf{0.328} & 0.000 \\
-8 & 8 & 2048 & 2048 & 0.676 & 0.000 \\
-8 & 32 & 2048 & 8192 & 0.616 & 0.866 \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\NOTE{The $n{=}1$ rows are the point: a single input, $8\times$ more parameters than constraints,
-and a third to a half of the target is still unreachable. \emph{Mechanism:} every context is
-rank-limited by the gates ($\mathrm{rank}\lesssim d/2$); for $\ell{=}1$, $B_1=I$, so the range
-contributes $\mathrm{range}(A_1)\otimes\R^{d_{\mathrm{in}}}$ and the target's left factor
-$f(x)-y$ generically leaves it. \emph{Contrast:} a deep linear network at depth 128 with the
-operator collapsed to stable rank $1.1$ realises the same step to $1.7\times10^{-4}$.
-\textbf{It is the gates, not the depth.}}
-\TODO{Figure \texttt{images/fig-floor.pdf}: floor vs $n$, one line per $L$, with the generic
-$\sqrt{1-k/m}$ baseline.}
-
-% =================================================================================
-\section{Gradient descent is one Landweber step}\label{sec:landweber}
-
-\begin{proposition}\label{prop:landweber}\PROVED{}\MEAS{}
-$\partial\mathcal L/\partial W_\ell = \sum_x A_\ell(x)^\top G(x)B_\ell(x)^\top$, i.e.\ the
-coordinate gradient is $M^\top$ applied to the operator gradient. Hence
-\[
-  \text{GD's induced operator step} = M M^\top \Dstar,
-  \qquad
-  \text{achievable ideal} = \Pi\Dstar = M(M^\top M)^+M^\top\Dstar ,
-\]
-so the gap between them is exactly the conditioning of $MM^\top$ on its range.
-\end{proposition}
-\NOTE{Verified on MNIST-1D: the first LSQR iterate satisfies
-$\cos(\dW_{\mathrm{op}},-\nabla)=+1.0000$. App.~\ref{app:landweber}.}
-
-\paragraph{Consequence for our earlier measurements.} \DEAD{}
-\texttt{theory/12} reported $\sin\to1$ between $\Delta \Jop$ and $G$ across a 108-run grid. That
-compares against the \emph{ideal}, not the achievable ideal, and therefore forces $\sin\approx1$
-whenever most of $G$ is unreachable, independently of what GD does.
-\TODO{recompute the whole grid against $\Pi G$.}
-
-% =================================================================================
-\section{The dial}\label{sec:dial}
-
-\MEAS{} \texttt{studies/dial.py}. Truncated LSQR on $M\dW=\Dstar$; $k$ is the iteration budget.
-MNIST-1D, width 64, depth 4, batch 64:
-
-\begin{center}\small
-\begin{tabular}{rrr}
-\toprule
-$k$ & $\cos(\dW,-\nabla)$ & operator progress $\|M\dW\|/\|\Dstar\|$ \\
-\midrule
-1   & \textbf{+1.0000} & 0.248 \\
-2   & +0.788 & 0.334 \\
-5   & +0.515 & 0.491 \\
-15  & +0.332 & 0.646 \\
-50  & +0.169 & 0.776 \\
-150 & +0.087 & \textbf{0.839} \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\NOTE{Exactly calibrated at both ends. \textbf{Gradient descent realises $24.8\%$ of the ideal
-operator step against an achievable ceiling of $83.9\%$} --- under a third of what the gates
-permit.}
-\TODO{Figure \texttt{images/fig-dial.pdf}: the two curves against $k$.}
-
-% =================================================================================
-\section{Decomposition of the bias}\label{sec:decomp}
-
-\MEAS{} \texttt{studies/achievable.py}, ReLU MLP, $d{=}16$.
-
-\begin{center}\small
-\begin{tabular}{rrrrrr}
-\toprule
-$L$ & $n$ & achievable frac. & $\cos(\mathrm{GD},\text{ideal})$ & $\cos(\mathrm{GD},\text{achievable})$ & $\mathrm{cond}(M)$ \\
-\midrule
-2 & 1  & 0.864 & 0.736 & \textbf{0.852} & 5.4 \\
-2 & 16 & 0.448 & 0.367 & \textbf{0.820} & 7.8 \\
-4 & 1  & 0.631 & 0.311 & \textbf{0.493} & $1.3\!\times\!10^{2}$ \\
-4 & 16 & 0.752 & 0.418 & \textbf{0.556} & $1.7\!\times\!10^{3}$ \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\begin{enumerate}[leftmargin=*,itemsep=1pt]
-  \item \textbf{Unreachability} (gate rank). Not correctable. Dominant at $L{=}2$: correcting for
-        it moves GD from $0.367$ to $0.820$.
-  \item \textbf{Ill-conditioning of the transfer operator.} Correctable --- this is what the dial
-        buys. Dominant at $L{=}4$ ($0.418\to0.556$ only) as $\mathrm{cond}$ climbs three orders.
-\end{enumerate}
-\NOTE{The balance shifts toward the correctable mechanism with depth. This is the paper's central
-measurement.}
-\TODO{Figure \texttt{images/fig-decomposition.pdf}. Extend to $L\in\{8,16\}$ and to CReLU.}
-
-% =================================================================================
-\section{Method}\label{sec:method}
-
-\begin{definition}[(P)]
-\begin{equation}\label{eq:P}
-  \min_{\dW}\ \sum_\ell\|\dW_\ell\|_F^2 \quad\text{s.t.}\quad \prod_\ell(W_\ell+\dW_\ell)=P_\star .
-\end{equation}
 \end{definition}
 
-\begin{lemma}[shared multiplier]\label{lem:kkt}\PROVED{}
-At a regular optimum there is a single $\Lam$ with
-\begin{equation}\label{eq:kkt}
-  \dW_\ell = A'^\top_\ell\,\Lam\,B'^\top_\ell\quad\text{for every }\ell,
+\begin{definition}[contexts, target, realised step]\label{def:contexts}
+$\Jop(x)=A_\ell(x)W_\ell B_\ell(x)$ with $B_1=I$, $A_L=I$,
+$B_{\ell+1}=D_\ell W_\ell B_\ell$, $A_\ell=A_{\ell+1}W_{\ell+1}D_\ell$.
+Coordinate gradient $\partial\mathcal L/\partial W_\ell=\sum_x A_\ell(x)^\top G(x)B_\ell(x)^\top$.
+Target $\Dstar=(-\eta G(x))_x$. Reachable set at first order:
+$M(\dW)=\big(\sum_\ell A_\ell(x)\dW_\ell B_\ell(x)\big)_x$, and $\Pi$ its orthogonal projector.
+\end{definition}
+
+\begin{definition}[the three quantities the diagnostic reports]\label{def:diag}
+\begin{enumerate}[label=(D\arabic*),leftmargin=*,itemsep=0pt]
+  \item \textbf{Reachability} $\ \alpha=\|\Pi\Dstar\|/\|\Dstar\|$ --- how much of the ideal the
+        architecture admits at all. Calibration quantity, not a finding.
+  \item \textbf{Efficiency} $\ \epsilon=\cos(\Delta \Jop_{\mathrm{GD}},\,\Pi\Dstar)$ --- how much
+        of the \emph{achievable} step gradient descent takes. This is the bias, correctly
+        normalised.
+  \item \textbf{Spectral effect} --- what the difference does to $\sigma(\Jop)$: mode ordering,
+        effective rank, and the separation exponent $d\log|\dot s|/d\log s$.
+\end{enumerate}
+\NOTE{Our earlier grid reported $\cos(\Delta \Jop,G)$, i.e.\ (D2) without the projection. That
+conflates (D1) and (D2) and forces $\cos\approx0$ whenever $\alpha$ is small. Must be recomputed.}
+\end{definition}
+
+% =================================================================================
+\section{What is already known}\label{sec:sota}
+
+\NOTE{Each row: the result, the model class, and the hypotheses it actually needs. All fetched
+2026-09-17.}
+
+\begin{center}\scriptsize
+\begin{tabular}{p{3.6cm}p{1.5cm}p{4.6cm}p{3.4cm}}
+\toprule
+\textbf{Result} & \textbf{Class} & \textbf{Hypotheses} & \textbf{Source} \\
+\midrule
+Exact solution; modes learned largest-first, with plateaus & DLN &
+gradient flow; balanced \emph{and} aligned init; whitened inputs & \cite{saxe2014exact} \\
+Induced step $\dot \Jop=-\sum_j(\Jop\Jop^\top)^{\frac{L-j}{L}}G(\Jop^\top \Jop)^{\frac{j-1}{L}}$; diagonal gain $L s^{2-2/L}$ & DLN &
+gradient \emph{flow}; balanced init $W_{j+1}^\top W_{j+1}=W_jW_j^\top$ & \cite{arora2018optimization} \\
+Imbalance $W_{\ell+1}^\top W_{\ell+1}-W_\ell W_\ell^\top$ conserved & DLN, ReLU, leaky &
+gradient flow; homogeneity & \cite{du2018algorithmic} \\
+Factor flow $=$ Riemannian flow on the rank-$r$ manifold & DLN & --- & \cite{bah2022learning} \\
+Orthogonally-constrained deep linear $\equiv$ one layer & DLN & Riemannian GD on the orthogonal group & \cite{brechet2023deep} \\
+Bias $\to$ minimum nuclear norm & 2-layer & small init, small step; \emph{conjecture} & \cite{gunasekar2017implicit} \\
+Depth strengthens the low-rank bias & deep MF & matrix sensing / completion & \cite{arora2019implicit} \\
+No norm explains the bias & deep MF & specific completion instances & \cite{razin2020implicit} \\
+Flow $\equiv$ greedy low-rank learning & 2-layer & infinitesimal init & \cite{li2021towards} \\
+Saddle-to-saddle, rank increases by one per saddle & DLN & small init & \cite{jacot2021saddle} \\
+Exact natural gradient; annihilates the depth preconditioner & DLN & invertible Fisher; first-order invariance only & \cite{bernacchia2018exact} \\
+Exact dynamics without balancedness & 2-layer & conservation laws; depth 2 only & \cite{tarmoun2021understanding,min2021explicit} \\
+$2-2/L$ via AM--GM on layerwise gradient mass & deep nonlinear & aligned single-mode teacher; small-signal interval & \cite{rawal2026saddle} \\
+Spectral separation $\Rightarrow$ singular-vector alignment; $2-2/L$ without balancing & FGLN &
+depth-scaling and separation \emph{assumed} during training (``deliberately strong'') & \cite{haas2026why} \\
+Asymptotic implicit bias of gated linear networks & frozen-gate & infinite-time limit; homogeneous polynomials & \cite{gatedlinear2022implicit} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Uncovered.} \NOTE{Explicitly named as open in \cite{cohen2024lectures}: \emph{unbalanced}
+initialisation beyond depth 2, and \emph{discrete} gradient descent. Not covered anywhere we
+found: \textbf{finite-time operator-level dynamics with input-dependent gates.} Every nonlinear
+result above is either asymptotic \cite{gatedlinear2022implicit}, fixed-gate
+\cite{haas2026why}, or assumes alignment \cite{rawal2026saddle}. That is the gap the diagnostic
+is built for.}
+
+% =================================================================================
+\section{The solvers}\label{sec:solver}
+
+\NOTE{Two different solvers are implemented. They are not interchangeable and the difference
+matters; this was previously left unstated.}
+
+\paragraph{S1 --- exact minimal realisation (single target operator; DLN, FGLN).}
+Solves
+\begin{equation}\label{eq:P}
+\min_{\dW}\sum_\ell\|\dW_\ell\|_F^2 \quad\text{s.t.}\quad \prod_\ell(W_\ell+\dW_\ell)=P_\star .
 \end{equation}
-contexts taken at the \emph{updated} weights. The certificate
-$\rho(\dW)=\min_\Lam\sum_\ell\|\dW_\ell-A'^\top_\ell\Lam B'^\top_\ell\|^2/\sum_\ell\|\dW_\ell\|^2$
-tests any solver's output without knowing the optimum.
-\end{lemma}
-\NOTE{GD satisfies \eqref{eq:kkt} for the \emph{linearised} constraint with contexts at the
-\emph{current} weights. Equation \eqref{eq:kkt} is self-referential, which is why a fixed-point
-iteration from $\dW=0$ never leaves and the escape must be constructive.
-\textbf{Caveat:} necessary only at a regular optimum, and the constraint Jacobian loses rank
-exactly where the operator collapses. \TODO{characterise LICQ for (P).}}
-
-\begin{theorem}[degeneracy]\label{thm:degen}\PROVED{}\MEAS{}
-At $W=0$ the product map is homogeneous of degree $L$, so all derivatives of order $<L$ vanish and
-every null-consistent derivative-based rule of order $p<L$ returns $\dW=0$ --- including natural
-gradient \cite{bernacchia2018exact} and Layerwise LQR \cite{dufortlabbe2026layerwise}, and
-including a first-order solver applied to the exact objective.
-\end{theorem}
-
-\begin{theorem}[exact recursion]\label{thm:exact}\PROVED{}\MEAS{}
-From a degenerate base point the hierarchical recursion solves \eqref{eq:P} exactly for every $L$
-iff each split uses the depth-proportional exponent $t=a/(a+b)$; the symmetric split is exact iff
-$L$ is a power of two. Verified to $1.000000$ for $L=2\ldots128$ at $d{=}32$, in closed form,
-${<}0.05$\,s.
-\end{theorem}
-
-\begin{theorem}[conservation]\label{thm:conserve}\PROVED{}\MEAS{}
-Any flow $\dot W_\ell=A_\ell^\top\Lam B_\ell^\top$ with a \emph{shared} $\Lam$ conserves
-$W_{\ell+1}^\top W_{\ell+1}-W_\ell W_\ell^\top$. So the Du--Hu--Lee / Arora balancedness invariant
-\cite{du2018algorithmic,arora2018optimization} is a property of minimal realisations, not of
-gradient descent.
-\end{theorem}
-\NOTE{Measured: discrepancy $1.5\times10^{-15}$ for random shared $\Lam$ vs $1.4\times10^{1}$ for
-an independent per-layer step.}
-
-% =================================================================================
-\section{Real data}\label{sec:real}
-
-\OPEN{} \texttt{studies/dial.py}. MNIST-1D ($40\!\to\!10$, cross-entropy), ReLU MLP width 64,
-depth 4, 1000 train / 500 test, batch 64, 400 steps. Every arm gets a hyper-parameter grid.
-
-\NOTE{Partial, seed 0: the $k$-dial is monotone in both train and \emph{test} loss ---
-$k{=}1$: train 1.973 / test 2.077; $k{=}5$: 1.418 / 1.906; $k{=}15$: 1.068 / 1.826;
-$k{=}50$: 0.847 / 1.816. Baselines reach far lower train loss and far \emph{higher} test loss
-(GD $\mathrm{lr}{=}0.2$: 0.241 / 2.688; Adam $\mathrm{lr}{=}0.01$: 0.063 / 4.454).}
-
-\TODO{\textbf{Fairness defect, mine:} the baselines get an lr sweep while the operator arm has
-$\eta$ fixed at $1.0$. That is the same asymmetry that sank the previous submission, in reverse.
-Sweep $\eta$, and compare \emph{at matched train loss} --- the arms currently sit at very
-different points on the fitting curve, so the test-loss gap is confounded with early stopping.}
-\TODO{full MNIST ($784\!\to\!10$) is not feasible as written: a matvec is ${\sim}500$\,MFLOP at
-batch 128, so $300$ LSQR iterations is ${\sim}150$\,s \emph{per step}. Options: harder
-minibatching, small $k$, downsampling, or restructuring the solve.}
-
-% =================================================================================
-\section{Positioning, and what is not claimed}\label{sec:notclaimed}
-
-\begin{itemize}[leftmargin=*,itemsep=1pt]
-  \item \DEAD{} No new characterisation of the deep linear implicit bias
-        (\cite{arora2018optimization} Thm~1); no missing closed form for fixed-gate networks
-        (absorbing gates into $M_\ell=D_\ell W_\ell D_{\ell-1}$ makes the FGLN flow literally the
-        linear flow, so \cite{haas2026why} Prop.~4.5 is correct); $K_\ell\ge L$ is not
-        hypothesis-free (only $K_\ell\ge L(s_\ell/g)^{2/L}$); no universal benefit from removing
-        the bias --- on matrix sensing the \emph{biased} arm recovers the low-rank truth.
-  \item \textbf{Not an optimiser paper.} The method realises at best ${\sim}80\%$ of the step it
-        targets, at $10\times$ the wall clock. Benchmarking is the wrong frame; it is an
-        instrument. \emph{Training to comparable loss is a validity precondition, not a claim.}
-  \item \textbf{Prior art to position against.} $2-2/L$ by AM--GM \cite{rawal2026saddle};
-        Riemannian metric view \cite{bah2022learning}; depth removal by constrained
-        parameterisation \cite{brechet2023deep}; minimal perturbation for an output change
-        \cite{evans2026theory}; layer-wise targets \cite{frerix2018proximal}; gated linear
-        implicit bias, asymptotic \cite{gatedlinear2022implicit}.
+\emph{Algorithm} (\texttt{studies/scaling.py:dichotomy}): split the chain at its midpoint into
+sub-products $Y$ (upper, $b$ layers) and $X$ (lower, $a$ layers); solve the two-factor problem
+$\min\|Y'-Y\|^2+\|X'-X\|^2$ s.t. $Y'X'=Z$, started from the closed-form SVD split
+$Y_0=US^t,\ X_0=S^{1-t}V^\top$ with $t=a/(a+b)$; recurse into each half. At a degenerate base
+point the closed-form split \emph{is} the answer and no iteration runs.
+\begin{itemize}[leftmargin=*,itemsep=0pt]
+  \item \OK{} Exact from a degenerate base point for every $L$ with $t=a/(a+b)$ (Thm~\ref{thm:exact});
+        verified to $1.000000$, $L=2..128$, $d=32$, ${<}0.05$\,s, residual $2.3\times10^{-14}$.
+  \item \OK{} Handles $W=0$, where GD, Adam, Newton, Gauss--Newton, natural gradient and a
+        first-order solver on \eqref{eq:P} all return exactly $0$ (Thm~\ref{thm:degen}).
+  \item \OK{} Handles ill-conditioning: at Xavier depth 128 the target is reachable to
+        $1.7\times10^{-4}$.
+  \item \TD{} Away from a degenerate base point it is a heuristic: $\rho=0.05$ ($d{=}32,L{=}8$)
+        to $0.23$ ($L{=}32$), budget-saturated. A closed-form cost-to-go exists only under
+        spectral separation (ratio $1.18$--$1.36$).
 \end{itemize}
 
-% =================================================================================
-\section{Open items, ordered}\label{sec:open}
+\paragraph{S2 --- per-input least squares (ReLU, CReLU).}
+With input-dependent gates there is no single target operator, so \eqref{eq:P} has no direct
+analogue. \texttt{studies/dial.py} instead solves the first-order problem
+\begin{equation}\label{eq:Q}
+\min_{\dW}\ \big\|M(\dW)-\Dstar\big\|^2 \quad\text{by LSQR truncated at $k$ iterations.}
+\end{equation}
+\begin{itemize}[leftmargin=*,itemsep=0pt]
+  \item \OK{} $k$ is an exactly calibrated dial: $k{=}1$ gives $\cos(\dW,-\nabla)=+1.0000$
+        (Prop.~\ref{prop:landweber}), $k\to\infty$ gives the best achievable step.
+  \item \NO{} \textbf{Linearised, hence pinned at $W=0$} --- precisely the case S1 was built to
+        handle. \textbf{S2 is not robust in the regime we need robustness for.}
+  \item \TD{} No exact-constraint analogue of S1 for the per-input family: the dichotomy splits
+        \emph{one} target, and per-input intermediate targets conflict. Unsolved.
+\end{itemize}
 
-\begin{enumerate}[leftmargin=*,itemsep=1pt]
-  \item Fix the $\eta$ sweep and the matched-train-loss comparison in \S\ref{sec:real}.
-  \item Recompute the 108-run grid against $\Pi G$ instead of $G$.
-  \item Extend \S\ref{sec:decomp} to $L\in\{8,16\}$, to CReLU, and to MNIST-1D.
-  \item Make full MNIST feasible, or state why it is not and drop it.
-  \item Cost-to-go at a general base point (closes Thm~\ref{thm:exact} off the degenerate point);
-        currently only the aligned/separated-spectrum case, ratio $1.18$--$1.36$.
-  \item LICQ for (P).
+\paragraph{The gap.} \TD{} A single solver valid across all four model classes, degenerate and
+ill-conditioned included. Without it the diagnostic's readings in the nonlinear regime rest on a
+method that would fail the robustness test we set ourselves.
+
+% =================================================================================
+\section{Supporting results}\label{sec:results}
+
+\begin{proposition}[GD is one Landweber step]\label{prop:landweber}\OK{}\RUN{}
+The coordinate gradient is $M^\top\Dstar$, so GD's induced operator step is $MM^\top\Dstar$, while
+the best achievable step is $\Pi\Dstar=M(M^\top M)^+M^\top\Dstar$. The gap is the conditioning of
+$MM^\top$ on its range.
+\end{proposition}
+
+\begin{theorem}[degeneracy]\label{thm:degen}\OK{}\RUN{}
+At $W=0$ the product map is homogeneous of degree $L$; all derivatives of order $<L$ vanish, so
+every null-consistent derivative-based rule of order $p<L$ returns $\dW=0$.
+\end{theorem}
+
+\begin{theorem}[exact recursion]\label{thm:exact}\OK{}\RUN{}
+From a degenerate base point, S1 solves \eqref{eq:P} exactly for every $L$ iff each split uses
+$t=a/(a+b)$; the symmetric split $t=1/2$ is exact iff $L$ is a power of two.
+\end{theorem}
+
+\begin{theorem}[conservation]\label{thm:conserve}\OK{}\RUN{}
+Any flow $\dot W_\ell=A_\ell^\top\Lam B_\ell^\top$ with a shared $\Lam$ conserves
+$W_{\ell+1}^\top W_{\ell+1}-W_\ell W_\ell^\top$. Hence balancedness
+\cite{du2018algorithmic,arora2018optimization} is a property of minimal realisations, not of
+gradient descent specifically.
+\end{theorem}
+
+\NOTE{Also proved: FGLN gradient flow is deep-linear flow in the variables
+$M_\ell=D_\ell W_\ell D_{\ell-1}$, so \cite{arora2018optimization} Thm~1 transfers to FGLN under
+$M$-balancedness and \cite{haas2026why} Prop.~4.5 is correct. An earlier claim to the contrary is
+withdrawn.}
+
+% =================================================================================
+\section{Experiments}\label{sec:exp}
+
+\paragraph{E1 --- Validation in DLN. \TD{}}
+The diagnostic must reproduce \cite{arora2018optimization}'s $Ls^{2-2/L}$, \cite{saxe2014exact}'s
+mode ordering and \cite{jacot2021saddle}'s saddle sequence. \NOTE{Partially done: gain
+$K_\ell/L=1.000$ exactly at balanced init (six digits), $38$--$230$ at Xavier depth 128.}
+\TD{recompute the 108-run grid with $\Pi G$; report (D1)--(D3) per cell.}
+
+\paragraph{E2 --- FGLN and CReLU, well-conditioned. \TD{}}
+CReLU with looks-linear init gives an exactly orthogonal $\Jop$ at any depth, so conditioning is
+fixed by construction and (D2) is isolated from (D1). \textbf{This is the cleanest test of whether
+the nonlinearity alone biases the step.} Not yet run.
+
+\paragraph{E3 --- ReLU, input-dependent gates. \RUN{} partial}
+$d{=}16$: reachability $\alpha=0.45$--$0.86$; efficiency $\epsilon=0.85$ at $L{=}2$ but $0.49$--$0.56$
+at $L{=}4$, while $\mathrm{cond}(M)$ rises $7.8\to1.7\!\times\!10^{3}$. So the loss of efficiency
+with depth is a conditioning effect, not a reachability effect.
+\TD{extend to $L\in\{8,16\}$, to CReLU, and add (D3).}
+
+\paragraph{E4 --- Robustness of the reference. \TD{}}
+The diagnostic must give correct readings where ordinary training fails: DLN at Xavier depth 128,
+ReLU at a depth where Adam collapses, and $W=0$. \textbf{Blocked on the S1/S2 gap
+(\S\ref{sec:solver}): S2 cannot do this.}
+
+\paragraph{E5 --- Real data. \RUN{} partial}
+MNIST-1D, ReLU MLP width 64 depth 4. The $k$-dial is monotone in train \emph{and} test loss
+($k{=}1$: 1.97/2.08; $k{=}50$: 0.85/1.82), while tuned baselines reach far lower train and far
+higher test loss (Adam: 0.06/4.45). \textbf{Not yet a result}: the arms sit at different points on
+the fitting curve, so this is confounded with early stopping, and $\eta$ was not swept while lr
+was. Fair rerun in progress (matched train loss, $\eta$ swept).
+\TD{full MNIST is not feasible as written --- ${\sim}150$\,s per step at batch 128.}
+
+% =================================================================================
+\section{Where a contribution could come from}\label{sec:gap}
+
+\NOTE{Ordered by how likely they are to survive the literature.}
+\begin{enumerate}[leftmargin=*,itemsep=0pt]
+  \item \textbf{Finite-time operator dynamics with input-dependent gates} --- the gap named in
+        \S\ref{sec:sota}. Concretely: does the $2-2/L$ law hold per-input in a ReLU net, and does
+        efficiency (D2) explain the deviation? E2 and E3 are designed for this.
+  \item \textbf{Which inputs the step serves.} One update must serve $n$ conflicting per-input
+        targets; the allocation is measurable and has no analogue in the linear theory.
+  \item \textbf{Conservation (Thm~\ref{thm:conserve})} --- balancedness is a property of minimal
+        realisations, not of GD.
+  \item \textbf{The solvers} --- tools, reported as such.
 \end{enumerate}
 
-% =================================================================================
-\bibliographystyle{plain}
-\bibliography{references}
+\paragraph{Explicitly not claimed.} Gate-induced rank deficiency (self-evident); any new
+characterisation of the DLN bias (\cite{arora2018optimization}); a missing FGLN closed form
+(withdrawn); a benchmark win (the method realises ${\le}80\%$ of its target at $10\times$ the
+wall clock).
 
+% =================================================================================
+\section{Open items}\label{sec:open}
+\begin{enumerate}[leftmargin=*,itemsep=0pt]
+  \item Close the S1/S2 gap, or state the restriction honestly. Blocks E4.
+  \item Recompute the grid with $\Pi G$ (E1).
+  \item Run E2 (CReLU, well-conditioned) --- the cleanest isolation of the nonlinearity.
+  \item Fair E5: $\eta$ swept, matched train loss.
+  \item Cost-to-go at a general base point for S1.
+  \item Constraint qualification for \eqref{eq:P}.
+\end{enumerate}
+
+\bibliographystyle{plain}\bibliography{references}
 \appendix
 \section{Proofs}
-\subsection{Lemma \ref{lem:kkt}}\label{app:kkt}\TODO{three lines.}
-\subsection{Proposition \ref{prop:landweber}}\label{app:landweber}\TODO{$\partial_{W_\ell}$ of the
-per-sample loss is $A_\ell^\top G B_\ell^\top$; stack over $\ell$ and $x$.}
-\subsection{Theorem \ref{thm:degen}}\label{app:degen}\TODO{homogeneity; define null-consistency.}
-\subsection{Theorem \ref{thm:exact}}\label{app:exact}\TODO{Bellman with
-$V_a(Y)=a\sum_i\sigma_i(Y)^{2/a}$; AM--GM; power-of-two characterisation.}
-\subsection{Theorem \ref{thm:conserve}}\label{app:conserve}\TODO{$\dot W_{\ell+1}^\top W_{\ell+1}$
-and $\dot W_\ell W_\ell^\top$ are transposes.}
-
-\section{Additional measurements}
-\NOTE{ALS is not a minimal realisation ($\|\dW\|$ up to $2413\times$ the minimum, $\rho\approx1$)
---- appendix only, it explains the warm-start dependence of the previous submission. Unbalanced
-excess $K_\ell/L$: exactly $1.000$ when balanced, $38$--$230$ at Xavier depth 128. Reachability
-floor $\le1.7\times10^{-4}$ for deep linear at depth 128. The 108-run grid,
-\texttt{theory/12-grid.md}, pending recomputation against $\Pi G$.}
-
+\NOTE{\TD{} Lemma (shared multiplier); Prop.~\ref{prop:landweber}; Thms~\ref{thm:degen},
+\ref{thm:exact}, \ref{thm:conserve}. Each is short; arguments recorded in
+\texttt{theory/13-paper-plan.md}.}
+\section{Method details and additional measurements}
+\NOTE{S1 pseudocode and the certificate
+$\rho=\min_\Lam\sum_\ell\|\dW_\ell-A'^\top_\ell\Lam B'^\top_\ell\|^2/\sum_\ell\|\dW_\ell\|^2$;
+ALS is not a minimal realisation ($\rho\approx1$, up to $2413\times$ the minimal $\|\dW\|$),
+which explains the warm-start dependence of the previous submission.}
 \end{document}
