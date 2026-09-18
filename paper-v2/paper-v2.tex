@@ -392,35 +392,91 @@ withdrawn.}
 % =================================================================================
 \section{Experiments}\label{sec:exp}
 
-\paragraph{E1 --- Validation in DLN. \TD{}}
-The diagnostic must reproduce \cite{arora2018optimization}'s $Ls^{2-2/L}$, \cite{saxe2014exact}'s
-mode ordering and \cite{jacot2021saddle}'s saddle sequence. \NOTE{Partially done: gain
-$K_\ell/L=1.000$ exactly at balanced init (six digits), $38$--$230$ at Xavier depth 128.}
-\TD{recompute the 108-run grid with $\Pi G$; report (D1)--(D3) per cell.}
+\paragraph{E1 --- Validation of the instrument. \OK{}}
+\texttt{studies/gainlaw.py}. With a \emph{balanced} chain carrying a prescribed non-flat spectrum,
+the measured exponent equals $2-2/L$ and the intercept equals $L$, both to $10^{-14}$, for
+$L=2\dots32$. The same holds for a \emph{balanced CReLU} network (looks-linear blocks built from
+the same spectrum, so the gate absorbs and $\Jop$ stays non-flat). So the pipeline reproduces
+\cite{arora2018optimization} Thm~1 in the linear \emph{and} in the nonlinear implementation, and
+any deviation reported below is a property of the network, not of the measurement.
+\NOTE{Two traps, both worth stating in the paper. A \emph{orthogonal} chain is balanced but has a
+\emph{flat} spectrum, so no exponent is identifiable from it: balanced $\neq$ orthogonal. And with
+more than one input the per-input gain ratio is not $Ls^{2-2/L}$, because a single weight step
+responds to the aggregate target --- in the nonlinear setting that is the cross-input interference
+itself, so \texttt{intrinsic} (one input at a time) and \texttt{batch} are reported separately.}
 
-\paragraph{E2 --- FGLN and CReLU, well-conditioned. \TD{}}
-CReLU with looks-linear init gives an exactly orthogonal $\Jop$ at any depth, so conditioning is
-fixed by construction and (D2) is isolated from (D1). \textbf{This is the cleanest test of whether
-the nonlinearity alone biases the step.} Not yet run.
+\paragraph{E2 --- Q1: the exponent. \RUN{}}
+Xavier initialisation, 3 seeds, 24 inputs, width 24.
 
-\paragraph{E3 --- ReLU, input-dependent gates. \RUN{} partial}
-$d{=}16$: reachability $\alpha=0.45$--$0.86$; efficiency $\epsilon=0.85$ at $L{=}2$ but $0.49$--$0.56$
-at $L{=}4$, while $\mathrm{cond}(M)$ rises $7.8\to1.7\!\times\!10^{3}$. So the loss of efficiency
-with depth is a conditioning effect, not a reachability effect.
-\TD{extend to $L\in\{8,16\}$, to CReLU, and add (D3).}
+\begin{center}\small
+\begin{tabular}{rrrrr}
+\toprule
+$L$ & $2-2/L$ & DLN & CReLU & ReLU \\
+\midrule
+2  & 1.000 & 0.73 & 0.80 & 1.03 \\
+4  & 1.500 & 0.79 & 0.79 & 0.78 \\
+8  & 1.750 & 0.91 & 0.95 & 1.08 \\
+16 & 1.875 & 1.05 & 1.01 & 1.11 \\
+\bottomrule
+\end{tabular}
+\end{center}
 
-\paragraph{E4 --- Robustness of the reference. \TD{}}
-The diagnostic must give correct readings where ordinary training fails: DLN at Xavier depth 128,
-ReLU at a depth where Adam collapses, and $W=0$. \textbf{Blocked on the S1/S2 gap
-(\S\ref{sec:solver}): S2 cannot do this.}
+\textbf{The exponent does not follow $2-2/L$: it saturates near $1.0$ and stays there as depth
+grows, identically for the linear and the two nonlinear architectures.} So the $2-2/L$ law is a
+consequence of \emph{balancedness}, not of depth, and the gates contribute essentially nothing to
+the deviation.
+\TD{check whether saturation near 1 is derivable analytically for the unbalanced linear chain; if
+it is, this is a verification rather than a finding, and E3 carries the paper.}
 
-\paragraph{E5 --- Real data. \RUN{} partial}
-MNIST-1D, ReLU MLP width 64 depth 4. The $k$-dial is monotone in train \emph{and} test loss
-($k{=}1$: 1.97/2.08; $k{=}50$: 0.85/1.82), while tuned baselines reach far lower train and far
-higher test loss (Adam: 0.06/4.45). \textbf{Not yet a result}: the arms sit at different points on
-the fitting curve, so this is confounded with early stopping, and $\eta$ was not swept while lr
-was. Fair rerun in progress (matched train loss, $\eta$ swept).
-\TD{full MNIST is not feasible as written --- ${\sim}150$\,s per step at batch 128.}
+\paragraph{E3 --- Where the gates do act: the intercept. \RUN{}}
+Gain excess over $L$, same runs:
+
+\begin{center}\small
+\begin{tabular}{rrrr}
+\toprule
+$L$ & DLN/Xavier & CReLU & ReLU \\
+\midrule
+2  & 1.8 & 1.5 & 1.3 \\
+4  & 6.3 & 3.1 & 4.4 \\
+8  & 43.8 & 6.5 & 9.8 \\
+16 & \textbf{956.9} & \textbf{13.2} & \textbf{16.5} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Unbalanced deep linear blows up roughly quadratically in $L$; \textbf{the nonlinearity suppresses
+it by $\sim60\times$ at $L=16$}. The gates act on the gain \emph{magnitude}, not on the spectral
+tilt --- the reverse of the usual framing in which nonlinearity is the complication and the linear
+case the well-behaved baseline. \TD{Figure \texttt{images/fig-intercept.pdf}; extend to $L=32,64$;
+measure along training, not only at initialisation.}
+
+\paragraph{E4 --- Reachability and efficiency along training. \RUN{}}
+\texttt{studies/diagnose.py}, $L{=}8$, width 64, Xavier, MNIST-1D, 2 seeds, 300 Adam steps.
+
+\begin{center}\small
+\begin{tabular}{lrrrrr}
+\toprule
+ & step & $\alpha$ & $\epsilon$ & PR$(\Jop)$ & cond$(\Jop)$ \\
+\midrule
+CReLU & 0   & $1.0000\pm0.0000$ & $0.246\pm0.002$ & 7.30 & $1.8\times10^{1}$ \\
+CReLU & 300 & $1.0000\pm0.0000$ & $0.161\pm0.008$ & 4.53 & $8.5\times10^{1}$ \\
+ReLU  & 0   & $0.980\pm0.009$   & $0.178\pm0.010$ & 5.60 & $1.5\times10^{2}$ \\
+ReLU  & 300 & $0.924\pm0.001$   & $0.208\pm0.018$ & 2.88 & $3.0\times10^{4}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\NOTE{CReLU keeps $\alpha=1$ to four digits at every step, with LSQR converging to $10^{-9}$, so
+$\epsilon$ is measured. ReLU's LSQR does \emph{not} converge even at 3000 iterations (residual
+$0.19\to0.38$), so its $\alpha$ is a lower bound and its $\epsilon$ unreliable --- reported as
+such. That ReLU's step map resists Krylov by three orders of magnitude more than CReLU's is
+itself the comparison. Note $\alpha$ is the operator-step counterpart of the known fact that ReLU
+cannot achieve dynamical isometry \cite{pennington2017resurrecting}; it is calibration, not a
+finding.}
+
+\paragraph{E5 --- Depth limits, and real data. \TD{} in progress}
+\texttt{studies/depth.py} (Adam and GD against S2, $L\in\{4,8,16,32\}$) and the fair MNIST-1D
+comparison at matched training loss.
 
 % =================================================================================
 \section{Where a contribution could come from}\label{sec:gap}
