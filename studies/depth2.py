@@ -98,7 +98,13 @@ def train(arch, arm, hyper, data, L, width, steps, batch, seed, ckdir, resume,
         Ws, m, v, start, stop, trace = load(path)
         old = json.loads(str(np.load(path, allow_pickle=False)["cfg"]))
         if old.get("eval_n") != eval_n:
-            trace = []          # metric definition changed: keep the weights, drop the old trace
+            # The metric changed, so the old trace is not comparable AND the old stop verdict is
+            # void: "converged" was decided on the contaminated minibatch loss, where a lucky batch
+            # could end a cell that had not converged at all. Keep the weights, discard the verdict,
+            # continue. "exploded" survives -- a non-finite loss is metric-independent.
+            trace = []
+            if stop == "converged":
+                stop = "max_steps"
         if stop != "max_steps" or start >= steps:
             return {**cfg, "resumed": "skipped", "stop": stop, "steps": start,
                     "trace": trace, "final": best_of(trace)}
