@@ -424,43 +424,52 @@ $L$ & $2-2/L$ & DLN & CReLU & ReLU \\
 \textbf{The exponent does not follow $2-2/L$: it saturates near $1.0$ and stays there as depth
 grows, identically for the linear and the two nonlinear architectures.}
 
-\paragraph{E2$'$ --- and it persists through training. \RUN{}}
-\texttt{studies/q4.py}, depth 8, width 32, MNIST-1D, 2 seeds, 8 probe inputs, 150 steps. Measured
-every 25 steps along the trajectory, the gradient-descent exponent stays at
-$1.0$--$1.2$ (CReLU $1.30,1.12,1.66,1.01,1.15,1.31,1.08$ for one seed; $1.08$--$1.21$ for the
-other; ReLU $0.85$--$1.15$), never approaching $2-2/L=1.75$. \textbf{So the initialisation-time
-reading is not an artefact: the deviation from the balanced law survives training.}
-\NOTE{Per-step spread is $\pm0.29$ to $\pm0.76$ over 8 probes, so individual readings fluctuate by
-$\pm0.5$; only the trajectory mean is meaningful. An earlier single-probe reading of $1.7558$ led
-us to withdraw this result; that withdrawal was itself an error, corrected here.}
+\paragraph{E2$'$ --- it persists through training, and it is \emph{gradient descent's}, not the
+architecture's. \RUN{} \textbf{The solver is required for the second half.}}
 
-\paragraph{E2$''$ --- the achievable-ideal step has \emph{no} spectral tilt. \RUN{}
-\textbf{This is the result that requires the solver.}}
-The same experiment, with the arm driven by $k=30$ Krylov iterations instead of $k=1$:
+\texttt{studies/q4.py}: depth 8, width 32, MNIST-1D, 2 seeds, 8 probe inputs, 150 steps, measured
+every 25 steps along each trajectory. Each arm trains with its own step; $k=1$ is gradient descent
+(the first Krylov iterate is exactly the gradient direction), $k=30$ approaches the achievable
+ideal.
 
 \begin{center}\small
-\begin{tabular}{lrr}
+\begin{tabular}{llrrr}
 \toprule
-arm & exponent (mean over training) & intercept \\
+arch & arm & exponent (over the run) & intercept & final loss \\
 \midrule
-$k=1$ (gradient descent) & $1.0$ -- $1.2$ & $31$ -- $90$ \\
-$k=30$ (achievable ideal) & $\mathbf{-0.09 \ldots +0.16}$ & $\mathbf{0.94 \ldots 1.29}$ \\
+CReLU & $k=1$\ \ gradient descent   & $1.160 \pm 0.180$ & $46.7$ & $1.570$ \\
+CReLU & $k=30$ achievable ideal     & $\mathbf{-0.007 \pm 0.056}$ & $\mathbf{1.03}$ & $1.080$ \\
+ReLU  & $k=1$\ \ gradient descent   & $1.011 \pm 0.134$ & $43.2$ & $1.815$ \\
+ReLU  & $k=30$ achievable ideal     & $\mathbf{0.067 \pm 0.084}$ & $\mathbf{1.11}$ & $1.448$ \\
 \bottomrule
 \end{tabular}
 \end{center}
+($2-2/L = 1.750$ at $L=8$.)
 
-Unit gain on every singular direction, no tilt, at every step and for both architectures.
-\textbf{So the $\approx\!1$ exponent is a property of gradient descent's step, not of the
-architecture.} No measurement of a gradient-descent trajectory can establish this --- it requires
-\emph{taking the other step}, which in a network with input-dependent gates has no operator-space
-reduction and therefore no route other than the solver. This is where the method belongs in the
-contribution list rather than the appendix.
-\NOTE{Partly by construction --- realising the target gives unit gain --- but it fixes the two
-ends of the dial and shows the solver removes the spectral bias exactly. Loss at step 150 is lower
-for the unbiased arm in both architectures (CReLU $1.14$ vs $1.58$; ReLU $1.36$ vs $1.63$), which
-is suggestive but not a controlled comparison.}
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+  \item \textbf{The initialisation-time reading survives training.} Gradient descent holds
+        $1.0$--$1.2$ across both seeds and every checkpoint, never approaching $2-2/L$. E2 is not
+        an artefact of measuring at step 0.
+  \item \textbf{The exponent belongs to gradient descent, not to the architecture.} The
+        achievable-ideal step has exponent $\approx0$ and intercept $\approx1$: unit gain on every
+        singular direction, no tilt, in both architectures. \textbf{No measurement of a
+        gradient-descent trajectory can establish this} --- it requires taking the other step, and
+        with input-dependent gates there is no operator-space reduction to substitute for it.
+  \item \textbf{Tilt and amplification are separate effects.} Gradient descent carries an
+        intercept of $43$--$47$ where the ideal carries $1.0$, a $40\times$ over-amplification on
+        top of the tilt. This is the same split E3 finds at initialisation: the gates act on the
+        intercept, not the exponent.
+\end{enumerate}
+\NOTE{Two honesties. The $k=30$ exponent being $\approx0$ is \emph{partly by construction} ---
+realising the target gives unit gain by definition --- so its role is to pin the far end of the
+dial and show the solver removes the bias exactly, not to surprise. And the lower final loss for
+the unbiased arm ($1.08$ vs $1.57$; $1.45$ vs $1.81$) is \textbf{not} evidence of better
+optimisation: different hyper-parameters, same step count, no matched-loss control.
+An earlier single-probe reading of $1.7558$ prompted us to withdraw E2; that withdrawal was itself
+an error --- per-step spread is $\pm0.29$ to $\pm0.76$, so single readings move by half a unit and
+only trajectory means are meaningful.}
 \TD{what the unbiased trajectory \emph{learns} differently --- rank, mode order, test error --- at
-matched training loss. That is the open half.}
+matched training loss. That is the open half, and the paper needs it.}
 
 \paragraph{E3 --- Where the gates do act: the intercept. \RUN{}}
 Gain excess over $L$, same runs:
