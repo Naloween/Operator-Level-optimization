@@ -421,32 +421,46 @@ $L$ & $2-2/L$ & DLN & CReLU & ReLU \\
 \end{tabular}
 \end{center}
 
-\NO{} \textbf{These numbers are measured at initialisation, and the initialisation-time reading
-does not survive training.} At step 0 the exponent saturates near $1.0$ for every architecture;
-after \emph{thirty} training steps on MNIST-1D a depth-8 CReLU network measures
-$1.7558$ against $2-2/L = 1.7500$. \textbf{So the claim ``the $2-2/L$ law is balancedness, not
-depth'' is false for trained networks and is withdrawn.}
+\textbf{The exponent does not follow $2-2/L$: it saturates near $1.0$ and stays there as depth
+grows, identically for the linear and the two nonlinear architectures.}
 
-\paragraph{E2$'$ --- what replaces it. \RUN{} (in progress)}
-The corrected statement is stronger and positive: \textbf{$2-2/L$ is an attractor of training, not
-an assumption}. It does not hold at a standard initialisation --- where the exponent sits near 1
---- but training drives the network onto it, from Xavier, \emph{with gates}. That is the
-empirical justification the balanced assumption of \cite{arora2018optimization} has never had:
-the hypothesis is false where it is stated (at initialisation) and true where it matters (during
-training).
-\TD{confirm with statistics: \texttt{studies/q4.py}, CReLU and ReLU, 2 seeds, 8 probe inputs,
-150 steps. The preliminary reading is one seed, four probes, $\pm0.38$.}
+\paragraph{E2$'$ --- and it persists through training. \RUN{}}
+\texttt{studies/q4.py}, depth 8, width 32, MNIST-1D, 2 seeds, 8 probe inputs, 150 steps. Measured
+every 25 steps along the trajectory, the gradient-descent exponent stays at
+$1.0$--$1.2$ (CReLU $1.30,1.12,1.66,1.01,1.15,1.31,1.08$ for one seed; $1.08$--$1.21$ for the
+other; ReLU $0.85$--$1.15$), never approaching $2-2/L=1.75$. \textbf{So the initialisation-time
+reading is not an artefact: the deviation from the balanced law survives training.}
+\NOTE{Per-step spread is $\pm0.29$ to $\pm0.76$ over 8 probes, so individual readings fluctuate by
+$\pm0.5$; only the trajectory mean is meaningful. An earlier single-probe reading of $1.7558$ led
+us to withdraw this result; that withdrawal was itself an error, corrected here.}
 
-\paragraph{E2$''$ --- the question that needs the solver. \TD{}}
-Gradient descent is $k=1$ on the Krylov dial. If a trajectory driven by the \emph{achievable
-ideal} ($k\to\infty$) does \emph{not} converge to $2-2/L$, then the attractor is a property of
-gradient descent's step, not of the architecture --- and no measurement of a GD trajectory can
-establish that, because it requires taking the other step. In a deep linear network the
-counterfactual collapses to convex gradient descent and says nothing; with input-dependent gates
-there is no operator-space flow to collapse to. \textbf{This is where the solver earns its place
-in the paper}: it is the only instrument that can separate ``the architecture has this exponent''
-from ``gradient descent produces this exponent''. Running as the $k=30$ arm of the same
-experiment.
+\paragraph{E2$''$ --- the achievable-ideal step has \emph{no} spectral tilt. \RUN{}
+\textbf{This is the result that requires the solver.}}
+The same experiment, with the arm driven by $k=30$ Krylov iterations instead of $k=1$:
+
+\begin{center}\small
+\begin{tabular}{lrr}
+\toprule
+arm & exponent (mean over training) & intercept \\
+\midrule
+$k=1$ (gradient descent) & $1.0$ -- $1.2$ & $31$ -- $90$ \\
+$k=30$ (achievable ideal) & $\mathbf{-0.09 \ldots +0.16}$ & $\mathbf{0.94 \ldots 1.29}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Unit gain on every singular direction, no tilt, at every step and for both architectures.
+\textbf{So the $\approx\!1$ exponent is a property of gradient descent's step, not of the
+architecture.} No measurement of a gradient-descent trajectory can establish this --- it requires
+\emph{taking the other step}, which in a network with input-dependent gates has no operator-space
+reduction and therefore no route other than the solver. This is where the method belongs in the
+contribution list rather than the appendix.
+\NOTE{Partly by construction --- realising the target gives unit gain --- but it fixes the two
+ends of the dial and shows the solver removes the spectral bias exactly. Loss at step 150 is lower
+for the unbiased arm in both architectures (CReLU $1.14$ vs $1.58$; ReLU $1.36$ vs $1.63$), which
+is suggestive but not a controlled comparison.}
+\TD{what the unbiased trajectory \emph{learns} differently --- rank, mode order, test error --- at
+matched training loss. That is the open half.}
 
 \paragraph{E3 --- Where the gates do act: the intercept. \RUN{}}
 Gain excess over $L$, same runs:
