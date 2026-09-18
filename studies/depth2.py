@@ -80,18 +80,25 @@ def step_dW(mod, Ws, Xb, Rm, arm, hyper, m, v, step, L):
 
 
 def train(arch, arm, hyper, data, L, width, steps, batch, seed, ckdir, resume,
-          patience, tol, every):
+          patience, tol, every, eval_n):
     Xtr, Ytr, Xte, Yte = data
+    # Fixed subset for the reported training loss. Recording the CURRENT MINIBATCH loss and then
+    # taking the minimum over evaluations selects the luckiest batch and biases the number low --
+    # that flaw contaminated the previous grid's train-loss column.
+    Xev, Yev = Xtr[:eval_n], Ytr[:eval_n]
     mod = MODS[arch]
     path = Path(ckdir) / (tag(arch, L, arm, hyper, seed) + ".npz")
     cfg = {"arch": arch, "arm": arm, "hyper": hyper, "L": L, "width": width,
-           "batch": batch, "seed": seed}
+           "batch": batch, "seed": seed, "eval_n": eval_n}
     rng = np.random.default_rng(seed)
     d_in, d_out = Xtr.shape[1], int(Ytr.max()) + 1
 
     start, trace, stop = 0, [], "max_steps"
     if resume and path.exists():
         Ws, m, v, start, stop, trace = load(path)
+        old = json.loads(str(np.load(path, allow_pickle=False)["cfg"]))
+        if old.get("eval_n") != eval_n:
+            trace = []          # metric definition changed: keep the weights, drop the old trace
         if stop != "max_steps" or start >= steps:
             return {**cfg, "resumed": "skipped", "stop": stop, "steps": start,
                     "trace": trace, "final": best_of(trace)}
@@ -105,13 +112,15 @@ def train(arch, arm, hyper, data, L, width, steps, batch, seed, ckdir, resume,
         idx = rng.choice(Xtr.shape[0], size=min(batch, Xtr.shape[0]), replace=False)
         Xb, Yb = Xtr[idx], Ytr[idx]
         out, _ = mod.forward(Ws, Xb)
-        loss, Rm, _ = softmax_grad(out, Yb)
-        if not np.isfinite(loss) or loss > 50:
+        bloss, Rm, _ = softmax_grad(out, Yb)          # minibatch loss: drives the step only
+        if not np.isfinite(bloss) or bloss > 50:
             stop = "exploded"; break
         if step % every == 0 or step == steps:
+            oev, _ = mod.forward(Ws, Xev)
+            loss, _, tra = softmax_grad(oev, Yev)     # reported train loss: fixed subset
             ote, _ = mod.forward(Ws, Xte)
             tl, _, ta = softmax_grad(ote, Yte)
-            trace.append({"step": step, "train": loss, "test": tl, "acc": ta})
+            trace.append({"step": step, "train": loss, "train_acc": tra, "test": tl, "acc": ta})
             if loss < best * (1 - tol):
                 best, bad = loss, 0
             else:
@@ -142,8 +151,10 @@ def main():
     ap.add_argument("--every", type=int, default=10)
     ap.add_argument("--patience", type=int, default=8, help="evals without improvement -> stop")
     ap.add_argument("--tol", type=float, default=1e-3, help="relative improvement that counts")
-    ap.add_argument("--lrs", type=float, nargs="+",
-                    default=[1e-5, 1e-4, 1e-3, 5e-3, 2e-2, 1e-1])
+    ap.add_argument("--lrs-gd", type=float, nargs="+", default=[2e-2, 1e-1])
+    ap.add_argument("--lrs-adam", type=float, nargs="+", default=[1e-4, 1e-3, 5e-3])
+    ap.add_argument("--eval-n", type=int, default=256,
+                    help="fixed training subset used for the REPORTED train loss")
     ap.add_argument("--etas", type=float, nargs="+", default=[0.5, 2.0])
     ap.add_argument("--ks", type=int, nargs="+", default=[20, 60])
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
@@ -161,11 +172,11 @@ def main():
                 t.Xte.numpy().astype(float), t.yte.numpy().astype(int))
         for arch in a.archs:
             for L in a.depths:
-                jobs = ([("gd", lr) for lr in a.lrs] + [("adam", lr) for lr in a.lrs]
+                jobs = ([("gd", lr) for lr in a.lrs_gd] + [("adam", lr) for lr in a.lrs_adam]
                         + [("op", (e, k)) for e in a.etas for k in a.ks])
                 for arm, h in jobs:
                     r = train(arch, arm, h, data, L, a.width, a.steps, a.batch, s,
-                              a.ckdir, a.resume, a.patience, a.tol, a.every)
+                              a.ckdir, a.resume, a.patience, a.tol, a.every, a.eval_n)
                     rows.append(r)
                     f = r.get("final") or {}
                     print(f"{arch:<5} L={L:<3} {arm:<5} {str(h):<12} s={s} | "
