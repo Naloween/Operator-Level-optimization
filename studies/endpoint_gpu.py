@@ -64,15 +64,35 @@ def probes(Ws, Xpr, arch, gen):
     return pr, (float(np.mean(exps)) if exps else float("nan"))
 
 
-def run(arch, arm, hyper, data, L, width, batch, steps, every, seed, dev):
+def tag(arch, arm, hyper, L, seed):
+    h = ("%g" % hyper) if not isinstance(hyper, (tuple, list)) else "e%g_k%d" % tuple(hyper)
+    return f"{arch}__{arm}__{h}__L{L}__s{seed}"
+
+
+def run(arch, arm, hyper, data, L, width, batch, steps, every, seed, dev,
+        ckdir=None, resume=False, target=1e-4, patience=12):
     Xtr, Ytr, Xte, Yte = data
-    Ws = gpu.init_net(Xtr.shape[1], width, int(Ytr.max()) + 1, L, arch, seed, dev)
-    m = [torch.zeros_like(w) for w in Ws]; v = [torch.zeros_like(w) for w in Ws]
+    path = Path(ckdir) / (tag(arch, arm, hyper, L, seed) + ".pt") if ckdir else None
+    start, trace, stop = 0, [], "max_steps"
+    if resume and path is not None and path.exists():
+        ck = torch.load(path, map_location=dev, weights_only=False)
+        Ws = [w.to(dev) for w in ck["Ws"]]
+        m = [w.to(dev) for w in ck["m"]]; v = [w.to(dev) for w in ck["v"]]
+        start, stop, trace = ck["step"], ck["stop"], ck["trace"]
+        if stop != "max_steps" or start >= steps:
+            b = min(trace, key=lambda z: z["train"]) if trace else None
+            return {"arch": arch, "arm": arm, "hyper": hyper, "L": L, "seed": seed,
+                    "stop": stop, "steps": start, "resumed": "skipped",
+                    "seconds": 0.0, "best": b, "final": trace[-1] if trace else None,
+                    "trace": trace}
+    else:
+        Ws = gpu.init_net(Xtr.shape[1], width, int(Ytr.max()) + 1, L, arch, seed, dev)
+        m = [torch.zeros_like(w) for w in Ws]; v = [torch.zeros_like(w) for w in Ws]
     g = torch.Generator().manual_seed(seed)
     gpr = torch.Generator().manual_seed(3)
     Xpr = Xtr[:8]
-    trace, t0, stop = [], time.time(), "max_steps"
-    for step in range(steps + 1):
+    t0, best_seen, bad = time.time(), float("inf"), 0
+    for step in range(start, steps + 1):
         if step % every == 0 or step == steps:
             with torch.no_grad():
                 o, _ = gpu.forward(Ws, Xtr, arch); trl, _, tra = softmax_grad(o, Ytr)
@@ -82,6 +102,14 @@ def run(arch, arm, hyper, data, L, width, batch, steps, every, seed, dev):
                           "test_acc": tea, "pr": pr, "exponent": ex})
             if not np.isfinite(trl) or trl > 50:
                 stop = "exploded"; break
+            if trl <= target:
+                stop = "target"; break
+            if trl < best_seen * (1 - 1e-3):
+                best_seen, bad = trl, 0
+            else:
+                bad += 1
+                if bad >= patience:
+                    stop = "plateau"; break
         if step == steps:
             break
         idx = torch.randint(0, Xtr.shape[0], (batch,), generator=g).to(dev)
@@ -108,9 +136,15 @@ def run(arch, arm, hyper, data, L, width, batch, steps, every, seed, dev):
             Ws = [w + dw for w, dw in zip(Ws, dWs)]
         if not all(torch.isfinite(w).all() for w in Ws):
             stop = "exploded"; break
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({"Ws": [w.cpu() for w in Ws], "m": [x.cpu() for x in m],
+                    "v": [x.cpu() for x in v], "step": step, "stop": stop, "trace": trace},
+                   path)
     b = min(trace, key=lambda z: z["train"])
     return {"arch": arch, "arm": arm, "hyper": hyper, "L": L, "width": width, "seed": seed,
-            "stop": stop, "seconds": time.time() - t0, "best": b, "trace": trace}
+            "stop": stop, "steps": step, "resumed": "ran", "seconds": time.time() - t0,
+            "best": b, "final": trace[-1], "trace": trace}
 
 
 def main():
@@ -125,6 +159,12 @@ def main():
     ap.add_argument("--etas", type=float, nargs="+", default=[8.0, 32.0])
     ap.add_argument("--k", type=int, default=50)
     ap.add_argument("--seeds", type=int, nargs="+", default=[0])
+    ap.add_argument("--ckdir", default="runs/theory/endpoint_ckpt")
+    ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--target", type=float, default=1e-4,
+                    help="training loss counted as converged")
+    ap.add_argument("--patience", type=int, default=12,
+                    help="evals without relative improvement before declaring a plateau")
     ap.add_argument("--out", default="runs/theory/endpoint_gpu.json")
     a = ap.parse_args()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -137,11 +177,14 @@ def main():
         for arch in a.archs:
             jobs = [("adam", lr) for lr in a.adam_lrs] + [("op", (e, a.k)) for e in a.etas]
             for arm, h in jobs:
-                r = run(arch, arm, h, data, a.depth, a.width, a.batch, a.steps, a.every, s, dev)
+                r = run(arch, arm, h, data, a.depth, a.width, a.batch, a.steps, a.every, s, dev,
+                        a.ckdir, a.resume, a.target, a.patience)
                 rows.append(r); b = r["best"]
-                print(f"{arch:<5}{arm:<5}{str(h):<12}s={s} | train {b['train']:.4f} "
-                      f"test {b['test']:.3f}/{b['test_acc']:.3f} | PR {b['pr']:.2f} "
-                      f"exp {b['exponent']:+.3f} | {r['stop']:<9} {r['seconds']:.0f}s", flush=True)
+                f = r["final"] or b
+                print(f"{arch:<5}{arm:<5}{str(h):<12}s={s} | train {f['train']:.2e} "
+                      f"test {f['test']:.3f}/{f['test_acc']:.3f} | PR {f['pr']:.2f} "
+                      f"exp {f['exponent']:+.3f} | {r['stop']:<8}@{r['steps']:<6} "
+                      f"{r['resumed']} {r['seconds']:.0f}s", flush=True)
                 Path(a.out).parent.mkdir(parents=True, exist_ok=True)
                 Path(a.out).write_text(json.dumps({"args": vars(a), "rows": rows}, indent=1))
     print(f"wrote {a.out}")
