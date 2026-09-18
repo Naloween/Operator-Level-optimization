@@ -40,10 +40,32 @@ form, and require agreement. (ii) Extend to fixed gates, where the closed form s
 (iii) Extend to input-dependent gates (ReLU, CReLU), where it does not, and report what the
 diagnostic finds. The contribution is what (iii) shows, not the machinery.
 
-\textbf{What is a contribution and what is not.} The solver and the certificate are tools. That
-ReLU gates reduce rank and make the target unreachable is self-evident and is used only to
-\emph{calibrate} the diagnostic. The contribution must be empirical or theoretical findings about
-the nonlinear regime that are not implied by the deep linear literature.
+\paragraph{Contributions.} \NOTE{Methods count as contributions where they are new, but their
+weight depends on what they show; C5 is what the rest is for.}
+\begin{enumerate}[label=\textbf{C\arabic*.},leftmargin=*,itemsep=1pt]
+  \item \textbf{An operator-level diagnostic with the correct normalisation}, valid unchanged
+        across DLN, FGLN, ReLU and CReLU: reachability $\alpha$, efficiency $\epsilon$, spectral
+        effect (Def.~\ref{def:diag}). Separating $\alpha$ from $\epsilon$ is what makes readings
+        comparable across architectures; the unnormalised version conflates them.
+        \OK{} \RUN{}
+  \item \textbf{Gradient descent is exactly one Landweber step} of the operator least-squares
+        problem, and truncated Krylov iteration is a calibrated dial between it and the best
+        achievable step (Prop.~\ref{prop:landweber}, \S\ref{sec:solver} S2). Verified:
+        $\cos(\dW^{(1)},-\nabla\mathcal L)=+1.0000$. \OK{} \RUN{}
+  \item \textbf{Balancedness is a property of minimal realisations, not of gradient descent}
+        (Thm~\ref{thm:conserve}): any step of the shared-multiplier form conserves the Du--Hu--Lee
+        invariant. \OK{} \RUN{}
+  \item \textbf{A constructive solver for the exact realisation problem} that works where every
+        derivative-based method provably cannot move, with an exactness characterisation: the
+        hierarchical recursion is exact for every $L$ iff each split uses the depth-proportional
+        exponent (Thms~\ref{thm:degen}, \ref{thm:exact}). \OK{} \RUN{}
+  \item \textbf{What the diagnostic finds in the nonlinear regime.} \TD{} The gap named in
+        \S\ref{sec:sota}. This is the contribution the others exist to support;
+        \S\ref{sec:exp} E2--E3.
+\end{enumerate}
+
+\NOTE{Not claimed: gate-induced rank deficiency (self-evident, used only to calibrate $\alpha$);
+any new characterisation of the DLN bias; a benchmark win.}
 
 % =================================================================================
 \section{Notation}\label{sec:notation}
@@ -248,11 +270,21 @@ the residual decreases roughly like $\big(\frac{\kappa-1}{\kappa+1}\big)^k$.
   \item \NO{} \textbf{Degenerate $W=0$: fails.} Then $M\equiv0$, so $\mathcal K_k=\{0\}$ and
         $\dW^{(k)}=0$ for every $k$ --- the case Thm~\ref{thm:degen} describes and S1 was built
         for.
-  \item \TD{} \textbf{Proposed fix (hybrid).} At a degenerate point all $\Jop(x)$ coincide (they
-        are $0$) and so do all gates, so there is \emph{no per-input structure to preserve}. The
-        aggregate target $P_\star=\arg\min_P\sum_x\|P-(\Dstar)_x\|^2=\frac1n\sum_x(\Dstar)_x$ is then
-        the right object, and S1 realises it exactly by the balanced chain. Use S1 for the escape
-        and S2 thereafter. Small change; not yet implemented or tested.
+  \item \TD{} \textbf{What robustness actually requires.} The exactly-degenerate point is a
+        measure-zero corner; the case that matters in practice is a \emph{very deep network at a
+        standard initialisation}, where the operator has collapsed but no layer is zero, so $M$ is
+        severely ill-conditioned rather than null. There S2 is well posed and truncation is the
+        right regulariser. An earlier draft proposed detecting degeneracy and switching to an
+        aggregate target; that is wrong twice over --- it assumes all gates coincide, which is
+        false when the layers are nonzero, and it requires knowing in advance which regime one is
+        in.
+  \item \TD{} \textbf{Generic proposal, untested.} Enrich the search space rather than
+        special-case it: augment $\mathcal K_k$ with a constructive direction (the balanced-chain
+        perturbation for the aggregate target), and choose the coefficients by the \emph{true}
+        operator change $\|\prod(W_\ell+\dW_\ell)-\ \cdot\ \|$ evaluated by a forward pass, not by
+        the linearised residual. When $M$ is well conditioned the extra direction gets weight
+        $\approx0$ and nothing changes; when $M$ degenerates it is the only direction that moves.
+        No detection, no exception. This is subspace enrichment in the sense of AMEn.
 \end{itemize}
 
 \paragraph{The gap.} \TD{} S1 solves an exact nonlinear constraint for a single target; S2 solves
