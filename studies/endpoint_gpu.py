@@ -91,7 +91,11 @@ def run(arch, arm, hyper, data, L, width, batch, steps, every, seed, dev):
             _, R, _ = softmax_grad(o, Yb)
             if arm == "op":
                 eta, k = hyper
-                dWs = gpu.op_step(Ws, Xb, R, eta, int(k), arch)
+                # `softmax_grad` returns the residual divided by the batch, which is what the
+                # WEIGHT gradient needs. The per-sample OPERATOR target must not carry that 1/n:
+                # eta is the operator step size, so it should be read directly as a fraction of
+                # ||P(x)||, not as n times it. Undo the division here.
+                dWs = gpu.op_step(Ws, Xb, R * batch, eta, int(k), arch)
             else:
                 gg = gpu.coord_grad(Ws, Xb, R, arch)
                 b1, b2, e = 0.9, 0.999, 1e-8
