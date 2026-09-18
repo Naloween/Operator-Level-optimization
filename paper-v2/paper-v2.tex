@@ -421,12 +421,32 @@ $L$ & $2-2/L$ & DLN & CReLU & ReLU \\
 \end{tabular}
 \end{center}
 
-\textbf{The exponent does not follow $2-2/L$: it saturates near $1.0$ and stays there as depth
-grows, identically for the linear and the two nonlinear architectures.} So the $2-2/L$ law is a
-consequence of \emph{balancedness}, not of depth, and the gates contribute essentially nothing to
-the deviation.
-\TD{check whether saturation near 1 is derivable analytically for the unbalanced linear chain; if
-it is, this is a verification rather than a finding, and E3 carries the paper.}
+\NO{} \textbf{These numbers are measured at initialisation, and the initialisation-time reading
+does not survive training.} At step 0 the exponent saturates near $1.0$ for every architecture;
+after \emph{thirty} training steps on MNIST-1D a depth-8 CReLU network measures
+$1.7558$ against $2-2/L = 1.7500$. \textbf{So the claim ``the $2-2/L$ law is balancedness, not
+depth'' is false for trained networks and is withdrawn.}
+
+\paragraph{E2$'$ --- what replaces it. \RUN{} (in progress)}
+The corrected statement is stronger and positive: \textbf{$2-2/L$ is an attractor of training, not
+an assumption}. It does not hold at a standard initialisation --- where the exponent sits near 1
+--- but training drives the network onto it, from Xavier, \emph{with gates}. That is the
+empirical justification the balanced assumption of \cite{arora2018optimization} has never had:
+the hypothesis is false where it is stated (at initialisation) and true where it matters (during
+training).
+\TD{confirm with statistics: \texttt{studies/q4.py}, CReLU and ReLU, 2 seeds, 8 probe inputs,
+150 steps. The preliminary reading is one seed, four probes, $\pm0.38$.}
+
+\paragraph{E2$''$ --- the question that needs the solver. \TD{}}
+Gradient descent is $k=1$ on the Krylov dial. If a trajectory driven by the \emph{achievable
+ideal} ($k\to\infty$) does \emph{not} converge to $2-2/L$, then the attractor is a property of
+gradient descent's step, not of the architecture --- and no measurement of a GD trajectory can
+establish that, because it requires taking the other step. In a deep linear network the
+counterfactual collapses to convex gradient descent and says nothing; with input-dependent gates
+there is no operator-space flow to collapse to. \textbf{This is where the solver earns its place
+in the paper}: it is the only instrument that can separate ``the architecture has this exponent''
+from ``gradient descent produces this exponent''. Running as the $k=30$ arm of the same
+experiment.
 
 \paragraph{E3 --- Where the gates do act: the intercept. \RUN{}}
 Gain excess over $L$, same runs:
