@@ -16,3 +16,5 @@ paper-v2/*.out
 paper-v2/*.bbl
 paper-v2/*.blg
 paper-v2/*.pdf
+runs/theory/*_ck/
+runs/theory/*_ckpt/
