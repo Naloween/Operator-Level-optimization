@@ -21,31 +21,36 @@
 \begin{document}\maketitle
 
 \begin{abstract}
-Gradient descent updates the weights of a factored network, but what it learns is governed by how
-the \emph{operator} it computes moves: the input-to-output Jacobian $P(x)$, defined by
-$f(x) = P(x)\,x$ for a bias-free MLP. For deep linear networks this induced motion is known
-exactly: under balanced initialisation the gain on singular direction $k$ is $L\,s_k^{2-2/L}$, and
-the low-rank bias, sequential mode learning and saddle-to-saddle dynamics all follow from that
-single exponent. No analogue is known once the gates depend on the input, and the results that do
-address nonlinear networks concern endpoints, infinite-depth limits, or ranks rather than
-finite-time rates.
+Gradient descent updates the weights of a factored network, but what the network learns is
+governed by how the \emph{operator} it computes moves: the input-to-output Jacobian $P(x)$,
+defined by $f(x) = P(x)\,x$ for a bias-free MLP. For deep linear networks this induced motion is
+known exactly --- under balanced initialisation the gain on singular direction $k$ is
+$L\,s_k^{2-2/L}$, and the low-rank bias, sequential mode learning and saddle-to-saddle dynamics
+all follow from that single exponent. Balancedness does not hold at the initialisations used in
+practice, however, and no analogue of the law is known once the gates depend on the input; the
+results that do address nonlinear networks concern endpoints, infinite-depth limits or ranks
+rather than finite-time rates.
 
-We introduce a diagnostic that measures the induced operator motion in any factored network,
-validated against the closed form to machine precision, and show that realising a prescribed
-operator step in the weights is an exactly solvable problem. Training can therefore be driven
-either by gradient descent's step or by the best reachable one, which separates what belongs to
-the architecture from what belongs to the update rule.
+We introduce a diagnostic that measures this induced motion in any factored network --- deep
+linear, fixed-gate, ReLU and CReLU alike --- and that reproduces the balanced closed form to
+machine precision, so that any departure from it is a property of the network rather than of the
+measurement. The measurement admits an exact decomposition: the gain exponent equals $2$ plus the
+rate at which a singular-vector misalignment between the operator and its layer-wise contexts
+grows as the singular value shrinks. Under balanced initialisation that rate is exactly $-2/L$,
+which is precisely what produces $2-2/L$; away from balance it is steeper, and the shortfall in
+the exponent is exactly the excess. We further show that realising a prescribed operator step in
+the weights is an exactly solvable problem --- including from degenerate points at which every
+derivative-based method is stationary --- so that training may be driven either by gradient
+descent's own step or by the best reachable one.
 
-We report three findings. \textbf{(i)} The gain law survives input-dependent gates: the exponent
-rises with depth as $2-2/L$ predicts, but at standard initialisation sits systematically below it,
-and does so almost identically for deep linear, CReLU and ReLU networks. An exact decomposition
-attributes the entire gap to singular-vector misalignment between the operator and its layer-wise
-contexts --- the correction that the balanced theory omits, and which vanishes under balanced
-initialisation. \textbf{(ii)} The tilt is a property of the update rule rather than of the
-architecture: a step realising the reachable ideal has unit gain on every singular direction.
-\textbf{(iii)} The nonlinearity leaves the exponent untouched but suppresses the gain magnitude by
-more than an order of magnitude at depth $32$, acting as a stabiliser of the spectral dynamics
-rather than a complication.
+This apparatus is built to settle three questions, on which we report measurements in progress.
+Does the gain law survive input-dependent gates, and with what exponent? At standard
+initialisations we measure exponents that fall systematically short of $2-2/L$, and that are
+nearly identical for deep linear, CReLU and ReLU networks, which suggests the shortfall is a
+property of the initialisation rather than of the nonlinearity. Is the exponent a property of the
+architecture or of the update rule, a question that cannot be settled from gradient-descent
+trajectories alone and that the solvable step is designed to answer? And when does a difference
+in the training dynamics become a difference in what is finally learned?
 \end{abstract}
 
 % =================================================================================
