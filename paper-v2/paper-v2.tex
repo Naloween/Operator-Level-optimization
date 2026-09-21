@@ -29,23 +29,40 @@ was read rather than inferred.}
 % =================================================================================
 \section{Contributions}\label{sec:contrib}
 
+\NOTE{The paper is in two parts. \textbf{Part I, deep linear}, introduces the reference step and
+validates it against a known closed form. \textbf{Part II, nonlinear}, carries the same objects to
+ReLU and CReLU networks, where the reference step is no longer exactly realisable and the
+comparison becomes substantive. Each part carries its own solver.}
+
 \begin{enumerate}[label=\textbf{C\arabic*.},leftmargin=*,itemsep=2pt]
-  \item \textbf{An operator-level diagnostic}, valid unchanged across deep linear, fixed-gate,
-        ReLU and CReLU networks, which reproduces the balanced closed form of
-        \cite{arora2018optimization} to $10^{-14}$ (\S\ref{sec:diag}, \S\ref{sec:valid}).
-        \OK{}\RUN{}
-  \item \textbf{An exact accounting of the deviation from $2-2/L$} (\S\ref{sec:decomp}): the gain
-        factorises as $c_k = s_k^2 R_k$, so the exponent is $2$ plus the log--log slope of $R$.
-        Balanced initialisation makes that slope exactly $-2/L$; standard initialisations make it
-        steeper, and the shortfall is exactly the excess. \OK{}\RUN{}
+  \item \textbf{A reference step.} Given a prescribed operator change, the minimum-norm weight
+        update that realises it: exactly for deep linear chains (S1, \S\ref{sec:solver}), and up to
+        the architecture's reachable set for gated networks (S2). This supplies the thing the field
+        has lacked --- a canonical answer to ``what \emph{should} this step have been'' --- against
+        which any optimiser's step can be scored. \OK{}\RUN{}
+  \item \textbf{A hyperparameter-free comparison protocol} (\S\ref{sec:protocol}). Every optimiser
+        is scored from the \emph{same} weights against the same reference, and the directional
+        scores are cosines, hence invariant to the learning rate. A comparison that does not depend
+        on tuning cannot be dismissed as mis-tuned --- which is the objection that sank the previous
+        submission. \RUN{}
   \item \textbf{A constructive solver for the prescribed-step problem}, exact from degenerate
         points at which every derivative-based method is stationary (\S\ref{sec:solver},
         Thms~\ref{thm:degen}--\ref{thm:exact}). \OK{}\RUN{}
   \item \textbf{Balancedness is a property of minimal realisations, not of gradient descent}
         (Thm~\ref{thm:conserve}). \OK{}\RUN{}
-  \item \textbf{What the diagnostic finds}: \S\ref{sec:exp}. Initialisation-time measurements are
-        in; the training-time and endpoint questions are open. \TD{}
+  \item \textbf{What the comparison finds}: trajectories and endpoints under gradient descent,
+        Adam and the reference, across models, initialisations and tasks (\S\ref{sec:exp}). \TD{}
 \end{enumerate}
+
+\NOTE{\textbf{Demoted, deliberately.} The gain exponent was previously listed as a contribution. It
+is a function of the current weights alone, so two optimisers evaluated at the same point give the
+same exponent: it cannot discriminate between update rules, and our own measurements show it barely
+discriminates between architectures either ($1.318/1.309/1.319$ for linear/CReLU/ReLU at $L{=}8$).
+It is retained where it is genuinely strong --- as \emph{validation}, since reproducing
+\cite{arora2018optimization} to $10^{-14}$ is the best evidence the machinery is correct, and as
+\emph{motivation}, since the departure from $2-2/L$ at standard initialisation is what says there
+is distortion worth correcting. The exact accounting $c_k=s_k^2R_k$ (\S\ref{sec:decomp}) stands,
+but as an explanation of that departure, not as a finding about optimisers.}
 
 % =================================================================================
 \section{Notation}\label{sec:notation}
@@ -191,7 +208,7 @@ $s_k(x)$, and with what exponent?
 
 \paragraph{Q3 --- Does efficiency explain the deviation?}
 \emph{Question:} if the Q1 exponent departs from $2-2/L$, is the departure predicted by
-$\epsilon$ (Def.~\ref{def:diag})?
+$\epsilon$ (\S\ref{sec:diag})?
 \begin{itemize}[leftmargin=*,itemsep=0pt]
   \item \textbf{Known.} Nothing found. The closest is \cite{pennington2017resurrecting}: ReLU
         cannot achieve dynamical isometry while other activations can --- which is the same
@@ -295,6 +312,73 @@ batch $256$, $k{=}100$ --- $32.5$\,s to $0.8$\,s per step. The gain grows with s
 GPU is launch-bound at these shapes.
 
 % =================================================================================
+\section{The comparison protocol}\label{sec:protocol}
+
+Having a reference step makes a comparison possible that endpoint studies cannot make. The two
+modes answer different questions and both are needed.
+
+\paragraph{Mode A --- one trajectory, every step scored.}
+A single optimiser drives the trajectory. At probe steps we stop and, \emph{from those weights},
+ask what each candidate would do. With $M$, $\Dstar$ and $\Pi$ as in N4, write
+$\dW_{\mathrm{id}}:=M^{+}\Dstar$ for the minimum-norm weight update realising the reachable ideal
+$\Pi\Dstar=M\dW_{\mathrm{id}}$. For a candidate step $\dW_m$ we record
+\begin{align*}
+  \cos_{\mathrm{op}} &= \cos\!\big(M(\dW_m),\ \Pi\Dstar\big),
+  &\cos_{\mathrm{w}} &= \cos\!\big(\dW_m,\ \dW_{\mathrm{id}}\big),\\
+  \mathrm{ratio}_{\mathrm{op}} &= \|M(\dW_m)\|/\|\Pi\Dstar\|,
+  &\mathrm{ratio}_{\mathrm{w}} &= \|\dW_m\|/\|\dW_{\mathrm{id}}\|.
+\end{align*}
+Nothing differs between candidates except the update rule --- same weights, same batch, same
+target. \textbf{The two cosines are scale-invariant, so they do not depend on the learning rate at
+all}; only the ratios do, which is why they are reported separately. Adam is stateful, so its
+moments are carried along the reference trajectory at every step and ``Adam'' here means what Adam
+would do having followed this path --- exactly the real thing when Adam is the reference.
+
+\paragraph{Fidelity is not quality --- and must be said before the numbers.}
+$\Dstar=-\eta\,\partial\mathcal L/\partial P$ is \emph{steepest descent in operator space}. On an
+anisotropic loss steepest descent is an indirect route: it removes the steep direction first and
+then crawls along the valley. So a method that scores \emph{lower} on $\cos_{\mathrm{op}}$ can
+reach the optimum \emph{sooner} --- and Adam does, in E8, because per-coordinate normalisation
+approximates a whitened step. $\cos_{\mathrm{op}}$ measures how far the factorisation deflects the
+step the loss asked for; it is not an optimiser ranking, and must not be read as one.
+\NOTE{Measured, so the claim is not rhetorical: in E8 at $L{=}32$ Adam reaches
+$\|P-P^\star\|=0.0000$ against the reference's $0.1437$ while scoring a mean alignment of $+0.44$
+against the reference's $+0.99$.}
+
+\paragraph{The deflection is signed, and Adam's changes sign.} Measuring
+$\cos(\Delta P,\,-\partial\mathcal L/\partial P)$ at every step of E8, Adam moves the operator
+\emph{against} the direction the loss asked on $6\%$ of steps at $L{=}2$ and $19$--$28\%$ at
+$L{=}32$, reaching $-0.999$; gradient descent and the reference never do. Depth makes it worse.
+\NOTE{The reference is faithful to $+0.999$ once $\eta\le0.02$; at $\eta=0.06$ it reads $0.975$
+purely because the step leaves the linear regime, not because it is less faithful. Mode A avoids
+this confound entirely by scoring the first-order $M(\dW)$ rather than the realised $\Delta P$.}
+
+\paragraph{Mode B --- free-running.} Each optimiser takes its own course; endpoints are compared at
+matched training loss on loss, accuracy, and the effective rank of $P(x)$. This is what E4 does.
+Mode B alone cannot attribute a difference to the update rule, because by any late step the arms
+sit at different weights; Mode A supplies that attribution.
+
+\NOTE{\textbf{Implementation note that cost real time.} $\dW_{\mathrm{id}}$ needs a converged
+least-squares solve, and LSQR on these step maps \emph{diverges once it has converged} --- on a
+depth-4 ReLU net the iterate reaches $10^{16}$ by $k{=}2000$ having converged by $k{\approx}200$.
+Two natural stopping tests both fail: LSQR's internal \texttt{phibar} is monotonically
+non-increasing by construction and never signals anything, and $\|M\dW-\Dstar\|$ is blind to the
+iterate drifting into $\ker M$ (measured: $\|\dW\|=2.9\cdot10^9$ with the residual unchanged to
+seven digits). The normal-equation residual $\|M^\top(M\dW-\Dstar)\|$ detects both and is the
+stopping rule used; it is non-monotone, so the best iterate is retained rather than the last. Its
+achieved value is recorded at every probe, because every number in Mode A is measured against
+$\dW_{\mathrm{id}}$ and is meaningless if that solve is bad.}
+
+\NOTE{\textbf{Depth limitation, measured.} $\cos_{\mathrm{op}}$ is reliable at every depth tested;
+$\cos_{\mathrm{w}}$ is not. At $L{=}16$ two solves realising the same operator change to
+$\cos 0.976$--$0.997$ can have near-orthogonal weight vectors (deep linear, $L{=}16$:
+$\cos_{\mathrm{w}}=0.045$) --- they are both valid, differing by an element of $\ker M$, so the
+comparison is between arbitrary choices inside the solution set rather than between methods. This
+is \emph{not} caught by the solve-quality flag: that cell has a normal-equation residual of
+$2.8\cdot10^{-9}$. At $L\in\{4,8\}$ all four architectures give $\cos_{\mathrm{w}}=1.000000$.
+Accordingly the E7 grid reports $\cos_{\mathrm{op}}$ as the directional result and restricts
+$\cos_{\mathrm{w}}$ to shallow depth.}
+
 \section{Supporting results}\label{sec:thms}
 
 \begin{theorem}[degeneracy]\label{thm:degen}\OK{}\RUN{}
@@ -323,6 +407,8 @@ $M$-balancedness and \cite{haas2026why} Prop.~4.5 is correct.}
 
 % =================================================================================
 \section{Experiments}\label{sec:exp}
+
+\subsection*{Part I --- deep linear: the framework and its validation}
 
 \paragraph{E1 --- Validation. \OK{}\RUN{}}
 With a \emph{balanced} chain carrying a prescribed non-flat spectrum, the measured exponent equals
@@ -358,6 +444,8 @@ By \eqref{eq:slope} the shortfall is exactly the excess steepness of $d\log R/d\
 \TD{re-measure along training with the rank-one probe --- the existing training-time numbers used
 the random probe and are void.}
 
+\subsection*{Part II --- nonlinear: what changes when the ideal is not reachable}
+
 \paragraph{E3 --- Reachability and efficiency. \RUN{}}
 $L{=}8$, width 64, MNIST-1D, 2 seeds, 300 Adam steps. CReLU holds $\alpha=1.0000\pm0.0000$ at
 every step with LSQR converging to $10^{-9}$; ReLU falls from $0.980$ to $0.924$ and its LSQR does
@@ -367,13 +455,106 @@ and its $\epsilon$ unreliable.
 dynamical isometry \cite{pennington2017resurrecting}: calibration, not a finding. That ReLU's step
 map resists Krylov by three orders of magnitude more than CReLU's is the substantive contrast.}
 
-\paragraph{E4 --- Endpoints. \TD{} running}
-Adam at the reference MNIST-1D recipe (4000/1000 split, batch 100, 6000 steps, lr swept around
-$10^{-2}$) against the reachable ideal ($k{=}50$, $\eta\in\{0.03,0.1,0.3\}$), CReLU and ReLU at
-$L{=}8$, compared \emph{at matched training loss} from the recorded trajectories.
-\NOTE{A pilot at $n_{\mathrm{train}}{=}200$ showed effective rank rising with $k$ ($4.76\to6.45$
-against $4.2$--$4.5$ for Adam), but the arms were not loss-matched and test accuracy sat near
-chance, so it settles nothing.}
+\paragraph{E4 --- Endpoints. \RUN{} seed 2 running}
+Adam at the reference MNIST-1D recipe ($L{=}8$, width 32, 4000/1000 split, batch 100,
+lr$\,\in\{3\cdot10^{-3},10^{-2}\}$) against the reachable ideal ($k{=}50$,
+$\eta\in\{0.1,0.3,0.5\}$), compared \emph{at matched training loss} from the recorded
+trajectories. Effective rank is the participation ratio $(\sum_i\sigma_i)^2/\sum_i\sigma_i^2$ of
+$P(x)$, averaged over inputs; accuracy is at the same matched loss.
+
+\begin{center}\small
+\begin{tabular}{llrrrr}
+\toprule
+ & & \multicolumn{2}{c}{Adam} & \multicolumn{2}{c}{reachable ideal} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+arch & seed & rank & acc & rank & acc \\
+\midrule
+CReLU & 0 & 5.19 & 0.550 & 7.23 & 0.540 \\
+CReLU & 1 & 5.15 & 0.533 & 6.93 & 0.551 \\
+ReLU  & 0 & 3.24 & 0.455 & 5.48 & 0.465 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{At matched training loss the two arms reach the same accuracy but systematically different
+effective rank}, the operator arm higher by $1.7$--$2.2$, replicated across seeds and both
+architectures. Everything but the update rule is held fixed, so this is a controlled counterfactual
+rather than the usual correlational read across depth, width or initialisation.
+\NOTE{Direction confirmatory --- that gradient descent is low-rank biased is established
+\cite{arora2019implicit,gunasekar2017implicit}. What is new here is only the control. Also: no
+dose--response in $\eta$; the ReLU ordering reverses ($5.69/4.91/3.90$ for
+$\eta{=}0.1/0.3/0.5$), so $\eta$ is not a monotone dial on the bias and must not be sold as one.}
+
+\NOTE{\TD{}\textbf{LR fairness --- not yet satisfied, and this is the table's weak point.} The grid
+was lr$\,\in\{3\cdot10^{-3},10^{-2}\}$, and $10^{-2}$ plateaus above the matched-loss threshold
+(train $0.345$), so \emph{every Adam entry above is $3\cdot10^{-3}$}: the baseline is effectively
+untuned, at one learning rate, and neither $10^{-3}$ nor $10^{-4}$ --- the conventional choices ---
+was run. This is the same objection that the previous submission was rejected on (a baseline at
+$10^{-3}$ against the method at lr $1.0$), so it must be closed before the rank gap is claimed.
+Extension to lr$\,\in\{10^{-4},3\cdot10^{-4},10^{-3}\}$ at all three seeds is queued; Adam cells
+cost ${\sim}15$\,s each, so there is no excuse for the omission.}
+
+\paragraph{E6 --- Does the bias ever pay? \NO{} withdrawn}
+The design was sound and the answer is negative. Teacher $y=W_2\,\mathrm{relu}(W_1x)$ with
+$W_1\in\R^{r\times32}$, so the target Jacobian has rank at most $r$; student a ReLU MLP at $L{=}8$;
+arms compared at matched training loss. A first pass showed the operator arm generalising
+$3.7\times$ better at $r{=}1$, decaying to parity by $r{=}8$. Two controls removed it.
+
+\emph{The Adam grid was truncated above.} Adam's best learning rate was the largest one tried at
+every $r$, which is the signature of a grid that has not bracketed its optimum. Extending it to
+$\{3\cdot10^{-2},10^{-1}\}$ erases the effect where it was largest: at $r{=}1$ the ratio falls from
+$3.72$ to $0.82$ and at $r{=}2$ from $3.07$ to $1.04$ --- Adam at lr $0.1$ is slightly \emph{ahead}.
+
+\emph{And the rest is seed noise.} Across seeds $0/1/2$ the ratio at $r{=}1$ is $3.72/0.82/0.12$
+and at $r{=}4$ is $1.64/1.33/0.84$: both flip sign, the first across a factor of $30$. Only
+$r{=}2$ replicated ($3.07/2.65/2.26$), and that is precisely the point the extended grid drops to
+parity.
+
+\NOTE{Two things are worth keeping from the wreckage. First, the hypothesis that a \emph{smaller}
+Adam learning rate would stabilise and close the gap is refuted, not merely untested: at $10\times$
+the budget (40k steps) lr $\in\{10^{-4},3\cdot10^{-4},10^{-3}\}$ give $0.341/0.262/0.187$ at
+$r{=}1$ against $0.052$ for lr $10^{-2}$ at 4k steps --- monotonically worse, not better. Second,
+an optimisation gap does survive and is large: at $r{=}16$ and $r{=}32$ Adam stalls at train
+$0.242$ and $1.520$ within 4000 steps while the operator arm reaches $0.018$ and $0.586$
+($13.6\times$ and $2.6\times$ lower). That is a statement about fitting, not generalisation, and
+belongs in Part II as such.}
+
+\NOTE{\textbf{Procedural lesson, applies to E4 as well.} Both failures here --- a best-over-grid
+statistic read before the grid was complete, and a best-over-grid statistic read from a grid that
+never bracketed the baseline's optimum --- are failures of the \emph{protocol}, not of the
+measurement. E4 currently rests on an Adam grid whose only surviving point is lr $3\cdot10^{-3}$;
+until the extended grid returns, its rank gap must be treated as provisional for exactly the reason
+E6 fell.}
+
+\paragraph{E7 --- The Mode A grid. \TD{} prober written and validated, not yet run}
+The measurement the new framing is built around (\S\ref{sec:protocol}), over
+models $\times$ initialisations $\times$ optimisers: deep linear, FGLN, ReLU and CReLU;
+Xavier (random, ill-conditioned at depth) and orthogonal (looks-linear for CReLU, which is the
+reason that architecture is in the paper at all --- it gives a \emph{nonlinear} network that is
+perfectly conditioned at any depth, so conditioning and gating can be varied independently);
+gradient descent, Adam, and the reference at several truncation levels $k$. Endpoints additionally
+report train/test loss, train/test accuracy and the effective rank of $P(x)$.
+\NOTE{Validated in \texttt{studies/probe\_steps.py}: the $k{=}1$ reference step is parallel to the
+gradient step to $10^{-6}$ for all four architectures (it must be --- both are $M^\top\Dstar$),
+large $k$ reproduces $\dW_{\mathrm{id}}$ and $\Pi\Dstar$, and $\Dstar-\Pi\Dstar\perp\Pi\Dstar$
+confirms $\Pi$ is the projector. \TD{} FGLN still needs a fixed-gate path in
+\texttt{studies/gpu.py}; the other three are in.}
+
+\paragraph{E8 --- Operator-space trajectories. \RUN{}}
+A deep linear chain $W_L\cdots W_1=P\in\R^{1\times2}$ on a two-feature regression, so the operator
+has exactly two components and its trajectory is \emph{drawn}, not projected, while the weight
+space stays large ($1944$ parameters at $L{=}32$, $h{=}8$). The loss is quadratic in $P$, so the
+contours are exact and $P^\star$ is the OLS solution. Gradient descent, Adam, ALS and the minimal
+reference, at $L{=}2$ and $L{=}32$. Every arm descends the \emph{same} quadratic in $P$; all that
+differs is how the factorisation turns a weight step into an operator step, so every separation
+visible is attributable to the parameterisation rather than to the objective.
+\NOTE{\textbf{The plane matters, and the obvious choice is wrong.} A model whose \emph{weight}
+space is two-dimensional (a scalar two-layer chain) has a rank-one step map $M=[w_2,w_1]$, so
+$M^{+}\propto M^\top$ and gradient descent and the minimal reference are collinear --- measured at
+$\cos=1.0000000000$. Such a figure cannot show a direction difference at all. The previous
+submission's figure separated because it plotted the \emph{operator}, where $M$ has rank two.
+Separately: ALS needs ridge damping here; an undamped per-layer exact sweep is anti-aligned with
+the operator gradient on $100\%$ of steps at $L{=}2$ and diverges to $\|P-P^\star\|=154$.}
 
 \paragraph{E5 --- Depth. \TD{} paused, checkpointed}
 Adam and gradient descent against S2 at $L\in\{4,\dots,64\}$; 23 of 70 cells done, fully
@@ -414,8 +595,25 @@ $32$\,s per step.}
 \begin{enumerate}[leftmargin=*,itemsep=0pt]
   \item Re-measure the exponent \emph{along training} with the rank-one probe (voids the current
         training-time numbers). Blocks the first question of the abstract.
-  \item Finish E4 and decide the third question; a null result needs more evidence than a positive
-        one.
+  \item \textbf{Tune the Adam baseline in E4 before claiming the rank gap.} Every Adam entry is
+        currently one learning rate, $3\cdot10^{-3}$; $\{10^{-4},3\cdot10^{-4},10^{-3}\}$ are
+        queued. If the rank gap shrinks at the conventional learning rates, E4 is not a result.
+        Same discipline everywhere: report the grid, and say which point in it each number came
+        from.
+  \item Finish E4 (seed 2). The rank gap is replicated and the accuracy null is stable; a null
+        needs more evidence than a positive, so the third seed decides how it is stated.
+  \item Finish E6 ($r\in\{16,32\}$, then seeds 1--2), and settle the two grid objections: extend
+        Adam to $\{10^{-4},3\cdot10^{-4}\}$ at a $40$k-step horizon (the small-lr hypothesis) and
+        to $\{3\cdot10^{-2},10^{-1}\}$ (the grid is truncated above). Until then the crossover is
+        an observation, not a result.
+  \item \NO{} E6 is withdrawn (truncated grid + seed noise); the leaky-ReLU mechanism run behind it
+        is now moot as a mechanism study, though its ReLU arm is still a useful control. The
+        surviving question from that line is the \emph{optimisation} gap at high target rank.
+  \item [superseded] Explain E6's mechanism or drop it. The gap is not rank and not early stopping; gate death
+        is the current suspect and is only a correlation. The real-data counterpart (MNIST-1D
+        denoising onto a rank-$r$ PCA target, \texttt{studies/rank\_sweep.py --task mnist1d}) is
+        written but unlaunched, and may be near-linear enough that both arms agree --- which would
+        be the mechanism predicting its own boundary, not a null.
   \item Re-verify the $k\to\infty$ exponent with the rank-one probe (second question).
   \item Port E5 to the GPU path and extend to $L=64$ with seeds.
   \item Close the S1/S2 gap, or state the restriction.

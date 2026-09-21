@@ -1,0 +1,1207 @@
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2027_conference,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+
+% --- added for this draft -------------------------------------------------
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+% -------------------------------------------------------------------------
+
+\title{Diagnosing the implicit bias of gradient descent at the operator level}
+
+\author{}
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+%\iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+\end{abstract}
+
+% =========================================================================
+\section{Introduction}
+\label{sec:intro}
+
+A deep network trained by gradient descent does not merely reach \emph{a} minimiser of its
+training loss; on an over-parameterised model it reaches a particular one, and which one it
+reaches is a property of the optimiser rather than of the objective. This selection effect is
+usually called the \emph{implicit bias} of the optimiser, and for factored linear models it is by
+now well characterised: depth drives the solution toward low rank, and the effect strengthens as
+layers are added \citep{gunasekar2017implicit,arora2019implicit,li2021towards}.
+
+Almost all of that characterisation is obtained by looking at \emph{endpoints}. One trains to
+convergence, inspects the solution, and repeats the experiment with a different depth, width, or
+initialisation; the optimiser's preference is then inferred from how the endpoint moves. This is
+an indirect instrument, for a reason that is structural rather than practical: the comparison has
+no reference point. To say that gradient descent's step is biased, one would have to say what an
+unbiased step would have been, and in weight space there is no canonical answer --- the loss
+supplies a gradient, and the gradient is precisely the object whose bias is in question.
+
+This paper supplies the missing reference by changing the space in which the question is asked.
+For a bias-free network built from linear maps and positively homogeneous gates, the function
+computed at an input $x$ factors through a matrix,
+\begin{equation}
+  f(x) = P(x)\,x ,
+  \label{eq:fx}
+\end{equation}
+where $P(x)$ is the input--output Jacobian at $x$ (defined precisely in
+Section~\ref{sec:setup}). In this \emph{operator} view the loss has a direct opinion about what
+should happen: it asks the operator to move along $-\partial \ell/\partial P(x)$. That request is
+well defined, it does not mention the parameterisation, and every optimiser can be measured
+against it.
+
+What a weight update actually does to the operator is a different matter. The update $\Delta W$ is
+applied to the factors, and the factorisation converts it into an operator change through a linear
+map $M$ that depends on the current weights. Two questions then become separable, and both are
+measurable:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt,topsep=3pt]
+  \item \textbf{How much of what the loss asked for is achievable at all?} The range of $M$ may
+        not contain the requested operator change. This is a property of the architecture and the
+        current weights, and \emph{no} optimiser can do better than it.
+  \item \textbf{Of the achievable part, how much does a given optimiser take?} Gradient descent,
+        Adam, or any other rule produces some $\Delta W$; the operator change it induces can be
+        compared in direction and magnitude with the best achievable one. This is a property of
+        the update rule.
+\end{enumerate}
+
+Separating these two is the contribution of this paper. It requires being able to compute, at any
+point in training, the weight update that realises a prescribed operator change as exactly as the
+architecture permits and with the smallest possible norm --- what we call the \emph{reference
+step}. We give solvers for it in two regimes: exactly, in closed form, for deep linear chains
+(Section~\ref{sec:linear}), and as a least-squares problem on the step map for gated networks
+(Section~\ref{sec:nonlinear}).
+
+\paragraph{Contributions.}
+\begin{enumerate}[label=\textbf{C\arabic*.},leftmargin=*,itemsep=3pt,topsep=3pt]
+  \item \textbf{A reference step targeting the operator.} Given a prescribed change of the
+        operator, we compute the minimum-norm weight update realising it, up to the reachable set.
+        The construction is a preconditioned gradient step (Remark~\ref{rem:precond}) and we do not
+        claim the family as new: on a deep linear network with whitened inputs it reduces exactly to
+        the natural gradient of \citet{bernacchia2018exact}. What is new is the target. Prescribing
+        an operator change constrains the full Jacobian at every input, where prescribing an output
+        change --- as in the closest prior formulation, \citet{evans2026theory} --- constrains only
+        its action along that input; the two separate precisely when the network is gated or the
+        inputs are not whitened (Sections~\ref{sec:setup}, \ref{sec:nonlinear}).
+  \item \textbf{An exact solution of the prescribed-step problem at depth.} Realising a target
+        operator exactly through $L$ factors, with minimal total norm, is a different problem from
+        the linearised step above, and we solve it in closed form for deep linear chains
+        (Section~\ref{sec:s1}). \citet{evans2026theory} solve the single-layer case exactly and
+        bound the multi-layer case by Lipschitz arguments.
+  \item \textbf{A decomposition of the bias into an architectural and an algorithmic part.}
+        Reachability measures what the architecture forbids; deflection measures what the
+        optimiser gives up within what is allowed. The first is optimiser-independent, the second
+        is scale-invariant and therefore independent of the learning rate
+        (Section~\ref{sec:diagnostics}).
+  \item \textbf{A solver that is exact from degenerate points.} The prescribed-step problem admits
+        an exact recursive solution even at parameter values where every derivative-based method
+        is stationary, such as an all-zero chain or a deep chain whose product has underflowed
+        (Section~\ref{sec:s1}).
+  \item \textbf{Balancedness as a property of minimal realisations.} The layer-wise balance
+        condition that underlies the classical deep linear analysis follows from minimality of the
+        realisation alone, without invoking gradient flow (Section~\ref{sec:conserve}).
+  \item \textbf{Measurements.} What the decomposition finds across model classes,
+        initialisations, and optimisers (Sections~\ref{sec:linear-exp}, \ref{sec:nonlinear-exp}).
+\end{enumerate}
+
+% =========================================================================
+\section{Setup: factored models, the operator, and the reference step}
+\label{sec:setup}
+
+This section defines every object used later, in order of dependence. Nothing here is specific to
+a particular nonlinearity: the same definitions serve the deep linear networks of
+Section~\ref{sec:linear} and the gated networks of Section~\ref{sec:nonlinear}, which is what
+makes the diagnostics of Section~\ref{sec:diagnostics} comparable across model classes.
+
+\subsection{Factored models}
+\label{sec:models}
+
+Throughout, a model has $L$ weight matrices $W_\ell \in \mathbb{R}^{n_\ell \times n_{\ell-1}}$ for
+$\ell = 1,\dots,L$, and no bias terms. We write $W = (W_1,\dots,W_L)$ for the collection and
+$\Delta W = (\Delta W_1,\dots,\Delta W_L)$ for an update. Between consecutive weight matrices sits
+a \emph{gate} $D_\ell$, a matrix that may depend on the input. We consider four instances.
+
+\begin{description}[leftmargin=*,itemsep=2pt,topsep=3pt]
+  \item[Deep linear network (DLN).] $D_\ell = I$ for all $\ell$.
+  \item[Fixed-gate linear network (FGLN).] $D_\ell$ is a fixed diagonal matrix, the same for every
+        input. This interpolates between the linear and the gated case: the contexts below become
+        input-dependent in form but not in value.
+  \item[ReLU multilayer perceptron.] $D_\ell(x) = \mathrm{diag}\big(\mathbf{1}[z_\ell(x) > 0]\big)$,
+        where $z_\ell(x)$ is the pre-activation at layer $\ell$.
+  \item[CReLU multilayer perceptron.] The concatenated rectifier doubles the feature dimension,
+        $c = [\,\mathrm{relu}(z)\,;\,\mathrm{relu}(-z)\,]$, which can be written $c = D(z)\,z$ with
+        the rectangular gate
+        \begin{equation}
+          D(z) \;=\; \begin{bmatrix} \mathrm{diag}(\mathbf{1}[z>0]) \\[2pt]
+                                     -\,\mathrm{diag}(\mathbf{1}[z<0]) \end{bmatrix}
+          \in \mathbb{R}^{2d \times d},
+          \qquad D(z)^\top D(z) = I .
+          \label{eq:crelu}
+        \end{equation}
+        The isometry $D^\top D = I$ is what makes this architecture useful to us, for reasons
+        given in Section~\ref{sec:lookslinear}.
+\end{description}
+
+All four gates are positively homogeneous of degree zero in the pre-activation, so the network is
+positively homogeneous of degree one and \eqref{eq:fx} holds exactly rather than approximately.
+
+\subsection{The operator and its contexts}
+\label{sec:contexts}
+
+\begin{definition}[Operator]
+The \emph{operator} at input $x$ is
+\begin{equation}
+  P(x) \;=\; W_L\, D_{L-1}(x)\, W_{L-1} \cdots D_1(x)\, W_1
+  \;\in\; \mathbb{R}^{n_L \times n_0},
+  \label{eq:P}
+\end{equation}
+so that $f(x) = P(x)\,x$. Where the gates are input-independent (DLN, FGLN) we write $P$ without
+the argument, and $P$ is then shared by all inputs.
+\end{definition}
+
+For a gated network $P(x)$ is the Jacobian $\partial f/\partial x$ almost everywhere, so
+\eqref{eq:P} is not a new object but the familiar one, written in a form that exposes how each
+layer enters.
+
+\begin{definition}[Contexts]
+The \emph{right contexts} and \emph{left contexts} are defined by the recursions
+\begin{equation}
+  B_1 = I, \qquad B_{\ell+1} = D_\ell W_\ell B_\ell,
+  \qquad\qquad
+  A_L = I, \qquad A_\ell = A_{\ell+1} W_{\ell+1} D_\ell .
+  \label{eq:contexts}
+\end{equation}
+\end{definition}
+
+They are exactly the parts of the chain to the right and to the left of a given layer, and by
+construction
+\begin{equation}
+  P(x) \;=\; A_\ell(x)\, W_\ell\, B_\ell(x)
+  \qquad \text{for every } \ell = 1,\dots,L .
+  \label{eq:AWB}
+\end{equation}
+Equation~\eqref{eq:AWB} is the only structural fact we use, and it holds verbatim for all four
+model classes of Section~\ref{sec:models}; only the value of $D_\ell$ changes. This is why a
+single implementation and a single set of diagnostics cover the whole family.
+
+\subsection{What the loss asks of the operator}
+\label{sec:target}
+
+Let $\ell(\cdot)$ be a per-example loss and $\mathcal{L}$ the average over a batch. Because
+$f(x) = P(x)x$, the loss can be differentiated with respect to the operator directly.
+
+\begin{definition}[Operator gradient]
+$G(x) \;:=\; \partial \ell / \partial P(x) \in \mathbb{R}^{n_L \times n_0}$.
+\end{definition}
+
+For the two losses used in this paper $G$ is rank one:
+\begin{equation}
+  G(x) = \big(f(x) - y\big)\,x^\top \quad\text{(squared loss)},
+  \qquad
+  G(x) = \big(\mathrm{softmax}(f(x)) - e_y\big)\,x^\top \quad\text{(cross-entropy)} .
+  \label{eq:G}
+\end{equation}
+Combining \eqref{eq:AWB} with the chain rule gives the familiar backpropagated gradient in the
+notation above,
+\begin{equation}
+  \frac{\partial \mathcal{L}}{\partial W_\ell}
+  \;=\; \sum_x A_\ell(x)^\top\, G(x)\, B_\ell(x)^\top .
+  \label{eq:backprop}
+\end{equation}
+
+\begin{definition}[Target]
+Given a step size $\eta > 0$, the \emph{target} is the collection of operator changes the loss
+requests, one per input:
+\begin{equation}
+  \Delta_\star \;:=\; \big(-\eta\, G(x)\big)_x .
+  \label{eq:target}
+\end{equation}
+\end{definition}
+
+The target is defined without reference to the parameterisation. It is the statement ``move the
+operator this way'', and it is the reference against which everything below is measured.
+
+\subsection{The step map and the reference step}
+\label{sec:stepmap}
+
+An update $\Delta W$ changes the operator. To first order, substituting into \eqref{eq:P} and
+collecting the terms linear in $\Delta W$,
+\begin{equation}
+  P\big(x;\, W + \Delta W\big) - P\big(x;\, W\big)
+  \;=\; \sum_{\ell=1}^{L} A_\ell(x)\, \Delta W_\ell\, B_\ell(x) \;+\; O\!\left(\|\Delta W\|^2\right).
+  \label{eq:firstorder}
+\end{equation}
+
+\begin{definition}[Step map]
+The \emph{step map} is the linear operator sending a weight update to the collection of induced
+operator changes,
+\begin{equation}
+  M(\Delta W) \;:=\; \Big( \textstyle\sum_{\ell} A_\ell(x)\, \Delta W_\ell\, B_\ell(x) \Big)_x ,
+  \label{eq:M}
+\end{equation}
+with adjoint $\;(M^\top H)_\ell = \sum_x A_\ell(x)^\top H_x B_\ell(x)^\top$. We write $\Pi$ for the
+orthogonal projector onto $\mathrm{range}(M)$.
+\end{definition}
+
+Comparing the adjoint with \eqref{eq:backprop} shows that gradient descent's weight step is
+$\Delta W^{\mathrm{GD}} \propto M^\top \Delta_\star$. It is the adjoint applied to the target, not
+the solution of any equation involving the target.
+
+The gated architectures do not, in general, admit every requested operator change: $\Delta_\star$
+need not lie in $\mathrm{range}(M)$. The best available request is therefore its projection, and
+the reference step is the smallest update realising it.
+
+\begin{definition}[Reference step]
+\label{def:ref}
+The \emph{reference step} is
+\begin{equation}
+  \Delta W^{\mathrm{ref}}
+  \;=\; \arg\min \; \|\Delta W\|_F
+  \quad \text{subject to} \quad
+  M(\Delta W) = \Pi\,\Delta_\star ,
+  \qquad\text{equivalently}\qquad
+  \Delta W^{\mathrm{ref}} = M^{+} \Delta_\star ,
+  \label{eq:ref}
+\end{equation}
+where $M^{+}$ is the Moore--Penrose pseudo-inverse and $\|\cdot\|_F$ is the Euclidean norm on the
+concatenated update.
+\end{definition}
+
+Minimum norm is not an arbitrary tie-break. The constraint in \eqref{eq:ref} fixes only the
+first-order effect on the operator; any element of $\ker M$ may be added without changing it, and
+such an addition moves the weights while leaving the function unchanged to first order. Requiring
+the smallest update is what makes the reference a statement about the operator alone. It also has
+a consequence for the classical theory, developed in Section~\ref{sec:conserve}.
+
+\begin{remark}[The reference step is a preconditioned gradient step]
+\label{rem:precond}
+Since $M^{+} = (M^\top M)^{+} M^\top$ and $M^\top \Delta_\star = -\eta\,\nabla_W \mathcal{L}$ by
+\eqref{eq:backprop}, Definition~\ref{def:ref} is equivalent to
+\begin{equation}
+  \Delta W^{\mathrm{ref}} \;=\; -\eta\,\big(M^\top M\big)^{+}\,\nabla_W \mathcal{L} .
+  \label{eq:precond}
+\end{equation}
+The reference step is therefore a preconditioned gradient step, with the preconditioner given by
+the pseudo-inverse of the Gram of the operator Jacobian. It belongs to the Gauss--Newton and
+natural-gradient family, and we state this plainly rather than presenting it as a separate
+construction. What distinguishes it is \emph{which} metric is pulled back. Gauss--Newton uses the
+Jacobian of the \emph{outputs}; \eqref{eq:precond} uses the Jacobian of the \emph{operator}. These
+coincide exactly for a deep linear network on whitened inputs --- there
+$\sum_i x_i x_i^\top \propto I$ makes the two Gram matrices proportional, and the reference step
+reduces to the exact natural gradient of \citet{bernacchia2018exact} --- and separate otherwise.
+Measured on a depth-3 network, the cosine between the two steps is $1.000$ for deep linear with
+whitened inputs, $0.881$ for deep linear with raw inputs, and $0.690$ and $0.388$ for ReLU with and
+without whitening. The separation has a clear cause: prescribing $\Delta P(x)$ constrains the whole
+Jacobian at each input, whereas prescribing $\Delta f(x)$ constrains only its action along $x$.
+\end{remark}
+
+\subsection{What we measure}
+\label{sec:diagnostics}
+
+\begin{definition}[Reachability]
+\begin{equation}
+  \alpha \;:=\; \frac{\|\Pi \Delta_\star\|}{\|\Delta_\star\|} \;\in\; [0,1].
+\end{equation}
+\end{definition}
+$\alpha$ is the fraction of the requested operator change that the architecture admits at the
+current weights. It depends on the model and the point, \emph{not} on the optimiser: no update
+rule can realise more than $\alpha$. For a deep linear network with a single shared target,
+$\alpha = 1$ generically; for gated networks $\alpha < 1$, and Section~\ref{sec:nonlinear-exp}
+measures it.
+
+\begin{definition}[Deflection]
+Let $\Delta W_m$ be the update some optimiser would take from the current weights. We compare it
+with the reference in each of the two spaces:
+\begin{equation}
+  \underbrace{\cos_{\mathrm{op}} \;=\; \cos\!\big(\,\overbrace{M(\Delta W_m)}^{\text{operator change it causes}},\
+      \overbrace{\Pi \Delta_\star}^{\text{best available}}\,\big)}_{\text{operator space}},
+  \qquad
+  \underbrace{\cos_{\mathrm{w}} \;=\; \cos\!\big(\,\overbrace{\Delta W_m}^{\text{step it takes}},\
+      \overbrace{\Delta W^{\mathrm{ref}}}^{\text{step it should have taken}}\,\big)}_{\text{weight space}},
+\end{equation}
+together with the corresponding norm ratios $\|M(\Delta W_m)\|/\|\Pi\Delta_\star\|$ and
+$\|\Delta W_m\|/\|\Delta W^{\mathrm{ref}}\|$.
+\end{definition}
+
+In words, there are only three objects and each is the answer to a plain question.
+$\Delta_\star$ is \emph{what the loss asked the operator to do}. $\Pi\Delta_\star$ is \emph{how much
+of that the architecture can actually deliver} --- and when the model is over-parameterised
+relative to the batch, $M$ is surjective, $\Pi\Delta_\star=\Delta_\star$, $\alpha=1$, and this
+distinction disappears entirely. $\Delta W^{\mathrm{ref}}$ is \emph{the weight update that delivers
+it}, at least norm.
+
+\textbf{Why both spaces.} The two cosines can disagree, and the disagreement is exactly what the
+reference makes visible. Any element of $\ker M$ may be added to a weight update without changing
+the operator at all, so a high $\cos_{\mathrm{op}}$ beside a low $\cos_{\mathrm{w}}$ says an
+optimiser reached roughly the right operator motion \emph{by a different route through weight
+space}. Asking that question requires a reference that is itself a weight update, which is what
+distinguishes this construction from a purely functional comparison.
+
+Both are cosines, hence invariant to the scale of $\Delta W_m$ and therefore \textbf{independent of
+the learning rate}; only the norm ratios carry one, which is why they are reported separately. This
+matters for the evidential status of the comparison: a claim expressed in these quantities cannot
+be answered by asserting that a baseline was mis-tuned.
+
+\begin{remark}[Fidelity is not quality]
+\label{rem:fidelity}
+$\Delta_\star = -\eta\,\partial\mathcal{L}/\partial P$ is steepest descent \emph{in operator
+space}. On an anisotropic loss, steepest descent is itself an indirect route to the minimiser: it
+removes the steep directions first and then advances slowly along the flat ones. Consequently an
+optimiser may score \emph{lower} on $\cos_{\mathrm{op}}$ and still reach the optimum \emph{sooner}
+--- a method whose step approximates a whitened or second-order direction will do exactly that.
+$\cos_{\mathrm{op}}$ quantifies how far the factorisation deflects the step the loss asked for. It
+is not a ranking of optimisers and must not be read as one.
+\end{remark}
+
+\begin{remark}[$\eta$ is an operator step, not a learning rate]
+The target \eqref{eq:target} asks the operator to move by $\eta\|G\|$, so $\eta$ reads directly as
+a fraction of $\|P(x)\|$ and is comparable across depths and architectures. A learning rate is not:
+the same numerical value means different things at different depths because the map from weights
+to operator changes with depth.
+\end{remark}
+
+\begin{remark}[Gradient descent as a truncation]
+\label{rem:krylov}
+Solving \eqref{eq:ref} with a Krylov least-squares method started from zero, the first iterate is
+proportional to $M^\top \Delta_\star$, which by \eqref{eq:backprop} is exactly the gradient descent
+direction. The reference step is what the same solve returns on convergence. This is a convenient
+implementation fact --- it means one routine produces both arms, and a truncation parameter
+interpolates between them --- and we use it in Section~\ref{sec:s2}. We draw no further conclusion
+from it.
+\end{remark}
+
+% =========================================================================
+\section{What is already known}
+\label{sec:sota}
+
+\subsection{Dynamics and implicit bias in deep linear models}
+
+The deep linear network is the standard setting in which implicit bias can be analysed rather than
+only observed, because the function computed is a single matrix while the optimisation remains
+non-convex. \citet{saxe2014exact} obtained exact solutions of the learning dynamics under gradient
+flow from balanced and aligned initialisation with whitened inputs, exhibiting the sequential,
+mode-by-mode learning that has since organised much of the field.
+\citet{arora2018optimization} showed that over-parameterisation by depth acts as a preconditioner:
+under gradient flow with a balanced initialisation, $W_{j+1}^\top W_{j+1} = W_j W_j^\top$, the
+induced motion of the end-to-end matrix is
+\begin{equation}
+  \dot P \;=\; -\sum_{j=1}^{L}\big(PP^\top\big)^{\frac{L-j}{L}}\,G\,\big(P^\top P\big)^{\frac{j-1}{L}} ,
+  \label{eq:arora}
+\end{equation}
+which on the singular values of $P$ reduces to a per-mode gain $L\,s^{2-2/L}$. Both hypotheses are
+essential and neither is generic: \eqref{eq:arora} is a statement about gradient \emph{flow} from a
+\emph{balanced} initialisation.
+
+\citet{du2018algorithmic} showed that the layer-wise imbalance
+$W_{\ell+1}^\top W_{\ell+1} - W_\ell W_\ell^\top$ is conserved under gradient flow for homogeneous
+models, which is what makes balancedness a persistent property rather than an initial one, and
+extends beyond the linear case. \citet{bah2022learning} identified the factor flow with a
+Riemannian gradient flow on the manifold of fixed-rank matrices, and \citet{ablin2020deep} showed
+that a deep \emph{orthogonally constrained} linear network is equivalent to a single layer, which
+delimits how much of the depth effect survives when the factors are restricted.
+\citet{wendin2026gradient} survey the gradient-flow equations for these models, and
+\citet{cohen2024lectures} give a consolidated account of the area together with a list of
+questions that remain open --- among them the behaviour of unbalanced initialisation beyond depth
+two, which is the regime the reference step of Section~\ref{sec:stepmap} is designed to reach.
+
+On the bias itself, \citet{gunasekar2017implicit} conjectured that gradient descent on a two-layer
+factorisation with small initialisation and small steps converges to the minimum nuclear norm
+solution, connecting the dynamics to the classical convex surrogate for rank
+\citep{srebro2005maximum,recht2010guaranteed}. \citet{arora2019implicit} showed that depth
+strengthens the tendency toward low rank in deep matrix factorisation, and
+\citet{razin2020implicit} then showed that no norm --- nuclear or otherwise --- can explain the
+bias in general, which redirected the field from characterising the endpoint by a penalty toward
+characterising the trajectory. \citet{li2021towards} showed that the flow from infinitesimal
+initialisation performs a greedy low-rank search, and \citet{jacot2021saddle} described the
+saddle-to-saddle dynamics in which the effective rank increases by one at each saddle escape.
+\citet{tarmoun2021understanding}, \citet{min2021explicit} and \citet{kunin2024get} analysed how the
+initialisation --- in particular its imbalance --- controls both the convergence rate and the
+resulting bias, showing that unbalanced initialisation is not a perturbation of the balanced theory
+but a qualitatively different regime.
+
+\subsection{Beyond the linear case}
+
+For nonlinear networks the picture is less complete. \citet{timor2023implicit} established
+regularisation toward rank minimisation in ReLU networks under stated conditions, and
+\citet{jacot2023implicit} introduced a notion of rank for nonlinear functions under which large
+depth induces a bias toward low rank. \citet{bantzis2025saddle} extended the saddle-escape analysis
+to deep ReLU networks, finding a low-rank bias at the first escape, and \citet{rawal2026saddle} give
+a theory of saddle escape in deep nonlinear networks. \citet{gatedlinear2022implicit} analysed
+generalized gated linear networks, which is the closest published setting to the FGLN model of
+Section~\ref{sec:models}. \citet{huh2021lowrank} documented the low-rank simplicity bias
+empirically across architectures. A separate line studies the average gradient outer product as the
+mechanism of feature learning \citep{radhakrishnan2024mechanism,beaglehole2024agop}.
+
+Two further results bear directly on the objects we measure. \citet{pennington2017resurrecting}
+showed that ReLU networks cannot achieve dynamical isometry --- the input--output Jacobian cannot
+have a well-conditioned spectrum at depth --- which is why the reachability $\alpha$ of
+Section~\ref{sec:diagnostics} cannot be expected to equal one for ReLU, and why a nonlinear
+architecture that \emph{is} conditioned by construction (Section~\ref{sec:lookslinear}) is needed as
+a control. \citet{wang2016extended} proposed the extended data Jacobian matrix as a diagnostic,
+which is an operator-level measurement in our sense, though used for model comparison rather than
+for scoring update rules. \citet{haas2026why} analyse how the Jacobian spectra of deep networks
+separate with depth, and establish the conservation of the gate-absorbed imbalance that
+Section~\ref{sec:conserve} recovers from minimality.
+
+\subsection{Geometry-aware and second-order optimisation}
+
+The reference step of Definition~\ref{def:ref} is a preconditioned gradient step
+(Remark~\ref{rem:precond}), so it belongs squarely to this literature and we position it there
+rather than apart from it. \citet{bernacchia2018exact} computed the exact natural gradient for deep
+linear networks and observed that it annihilates precisely the depth-induced preconditioner in
+\eqref{eq:arora}. That is the closest relation, and it is an identity rather than an analogy: on a
+deep linear network with whitened inputs the reference step \emph{is} their natural gradient, since
+the operator and output Gram matrices are then proportional. It separates from Gauss--Newton and
+from natural gradient once the inputs are not whitened or the gates are input-dependent, because
+prescribing $\Delta P(x)$ constrains the entire Jacobian at $x$ while prescribing $\Delta f(x)$
+constrains only its action along $x$.
+
+\citet{evans2026theory} give the closest published formulation of the underlying problem: they
+derive minimal-norm weight perturbations achieving a specified change in \emph{output}, exactly for
+a single layer, and compare against Lipschitz-based bounds for the multi-layer case; their purpose
+is robustness certification rather than optimiser analysis. The two differences from our setting are
+the target --- output versus operator --- and the treatment of depth, where we solve the multi-layer
+prescribed-step problem exactly (Section~\ref{sec:s1}). \citet{frerix2018proximal} recast
+backpropagation as a sequence of proximal steps, and \citet{dufortlabbe2026layerwise} develop a
+layerwise LQR view of geometry-aware optimisation. The distinction of purpose is worth stating
+once: all of these are optimisation methods proposed to train faster, whereas we use the algebra as
+a \emph{measuring instrument}, and Remark~\ref{rem:fidelity} explains why the two goals must not be
+conflated.
+
+\subsection{The gap}
+
+Across this literature the bias is inferred from endpoints, and its architectural and algorithmic
+components are not separated. Statements of the form ``depth strengthens the low-rank bias'' are
+established by varying depth and observing the endpoint; they do not distinguish a change in what
+the architecture \emph{permits} from a change in what the optimiser \emph{does} within what is
+permitted. The reference step makes that separation computable, and the two diagnostics of
+Section~\ref{sec:diagnostics} report the two halves.
+
+\begin{table}[t]
+\caption{Results we rely on or measure against, with the hypotheses each actually requires.}
+\label{tab:sota}
+\begin{center}
+\small
+\begin{tabular}{p{4.0cm}p{1.6cm}p{5.0cm}p{2.2cm}}
+\toprule
+\textbf{Result} & \textbf{Model} & \textbf{Hypotheses required} & \textbf{Source} \\
+\midrule
+Exact dynamics; modes learned largest-first & DLN &
+gradient flow; balanced \emph{and} aligned init; whitened inputs & \citet{saxe2014exact} \\
+Induced step \eqref{eq:arora}; per-mode gain $L s^{2-2/L}$ & DLN &
+gradient \emph{flow}; balanced init & \citet{arora2018optimization} \\
+Layer imbalance conserved & homogeneous &
+gradient flow; homogeneity & \citet{du2018algorithmic} \\
+Factor flow $=$ Riemannian flow on fixed-rank manifold & DLN & --- & \citet{bah2022learning} \\
+Deep orthogonal linear $\equiv$ one layer & DLN & orthogonality constraint & \citet{ablin2020deep} \\
+Bias toward minimum nuclear norm & 2-layer & small init and step; \emph{conjecture} & \citet{gunasekar2017implicit} \\
+Depth strengthens the low-rank bias & deep MF & matrix sensing / completion & \citet{arora2019implicit} \\
+No norm explains the bias & deep MF & specific instances & \citet{razin2020implicit} \\
+Flow $\equiv$ greedy low-rank learning & 2-layer & infinitesimal init & \citet{li2021towards} \\
+Saddle-to-saddle; rank $+1$ per escape & DLN & small init & \citet{jacot2021saddle} \\
+Rank minimisation in ReLU networks & ReLU & stated conditions & \citet{timor2023implicit} \\
+Large depth induces low nonlinear rank & nonlinear & notion of rank defined therein & \citet{jacot2023implicit} \\
+ReLU cannot achieve dynamical isometry & ReLU & random init, large width & \citet{pennington2017resurrecting} \\
+Exact natural gradient; cancels the depth preconditioner & DLN & invertible Fisher & \citet{bernacchia2018exact} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+% =========================================================================
+\section{Part I --- Deep linear networks}
+\label{sec:linear}
+
+In a deep linear network the gates are the identity, so $P = W_L \cdots W_1$ is a single matrix
+shared by every input. The target reduces to one matrix, $\Delta_\star = -\eta\,
+\partial\mathcal{L}/\partial P$, and the step map \eqref{eq:M} maps weight updates into the space
+of $n_L \times n_0$ matrices. This is the regime in which the reference step can be computed
+exactly and in closed form, and in which the classical theory of Section~\ref{sec:sota} gives us
+something to validate against.
+
+\subsection{The prescribed-step problem}
+\label{sec:prescribed}
+
+Rather than solving \eqref{eq:ref} in its linearised form, in the linear case we can pose and
+solve the exact, non-linearised problem.
+
+\begin{definition}[Prescribed-step problem]
+\label{def:prescribed}
+Given a target matrix $P^\star$ and a depth $L$, find factors minimising the total squared norm
+subject to realising the target exactly:
+\begin{equation}
+  \min_{W_1,\dots,W_L} \; \sum_{\ell=1}^{L} \|W_\ell\|_F^2
+  \qquad \text{subject to} \qquad
+  W_L W_{L-1} \cdots W_1 \;=\; P^\star .
+  \label{eq:prescribed}
+\end{equation}
+\end{definition}
+
+The solution is classical in form and is governed by a Schatten quasi-norm. Writing
+$\|\cdot\|_{S_p}$ for the Schatten-$p$ quasi-norm, $\|A\|_{S_p} = (\sum_k \sigma_k(A)^p)^{1/p}$:
+
+\begin{proposition}[Minimal realisation]
+\label{prop:minimal}
+The optimum of \eqref{eq:prescribed} equals $L \, \|P^\star\|_{S_{2/L}}^{2/L}$, and is attained by
+any factorisation whose factors share the singular vectors of $P^\star$ in the chain and distribute
+its singular values as $\sigma_k^{1/L}$ in every factor. In particular the optimal factorisation is
+\emph{balanced}: $W_{\ell+1}^\top W_{\ell+1} = W_\ell W_\ell^\top$ for all $\ell$.
+\end{proposition}
+
+The proof is by a Bellman recursion over the depth with value function
+$V_a(Y) = a\|Y\|_{S_{2/a}}^{2/a}$ for a sub-chain of depth $a$, together with the arithmetic
+mean--geometric mean inequality to establish that the per-mode split is the equalising one; it is
+given in Appendix~\ref{app:proofs}. The quasi-norm appearing here is the same object that arises
+as a non-convex surrogate for rank, and whose direct minimisation is studied algorithmically by
+\citet{shang2016scalable}; the difference is that it emerges for us as the value of
+\eqref{eq:prescribed} rather than being imposed as a penalty.
+
+Proposition~\ref{prop:minimal} already says something about the literature. Balancedness enters the
+classical analysis as a hypothesis on the \emph{initialisation}, preserved thereafter by the
+conservation law of \citet{du2018algorithmic}. Here it appears instead as a consequence of
+minimality, with no dynamics involved. We return to this in Section~\ref{sec:conserve}.
+
+\subsection{Degeneracy: where derivative-based methods stop and the prescribed step does not}
+\label{sec:degeneracy}
+
+The practically important feature of \eqref{eq:prescribed} is that it remains solvable at parameter
+values where gradient information vanishes entirely.
+
+\begin{definition}[Degenerate point]
+A parameter value $W$ is \emph{degenerate} if $P = 0$ and all contexts vanish, i.e.\ $A_\ell = 0$
+or $B_\ell = 0$ for every $\ell$.
+\end{definition}
+
+\begin{proposition}[Exactness from degeneracy]
+\label{prop:degen}
+At a degenerate point, $\partial \mathcal{L}/\partial W_\ell = 0$ for every $\ell$, so every
+method whose update is a function of the gradient --- gradient descent, momentum, Adam, and any
+preconditioned variant --- is stationary. The prescribed-step problem \eqref{eq:prescribed}
+nevertheless has a solution for every $P^\star$ and every $L$, and the construction of
+Section~\ref{sec:s1} attains it.
+\end{proposition}
+
+\begin{remark}[Why this is not a statement about the reference step]
+\label{rem:twoproblems}
+The distinction matters and is easy to lose. At a degenerate point $M = 0$, so the linearised
+reference step \eqref{eq:precond} vanishes along with the gradient: as a preconditioned gradient
+method it is stationary there too. Proposition~\ref{prop:degen} is a statement about the
+\emph{exact} problem \eqref{eq:prescribed}, which asks for factors whose product equals a target
+rather than for a small update whose first-order effect matches a requested change. That problem
+does not reference the gradient at all, which is why it remains solvable where every gradient-based
+method --- ours included --- stops.
+\end{remark}
+
+The all-zero chain is the extreme case, but the situation it models is not exotic. In a deep chain
+under a standard random initialisation the product $W_L\cdots W_1$ has a spectrum that contracts
+geometrically with depth; past a moderate $L$ the contexts are numerically indistinguishable from
+zero in the directions that matter, and the gradient carries no usable signal even though it is not
+formally zero. The degenerate point is the idealisation of that regime, and a construction that is
+exact there is well defined throughout it.
+
+\subsection{Minimality implies balancedness}
+\label{sec:conserve}
+
+The minimum-norm condition in Definition~\ref{def:ref} has a consequence that recovers, from a
+different premise, the structure the classical analysis assumes.
+
+\begin{proposition}[Conservation from minimality]
+\label{prop:conserve}
+Let $\Delta W$ solve \eqref{eq:ref}. Then there exists a single matrix $\Lambda$, the Lagrange
+multiplier of the constraint, such that
+\begin{equation}
+  \Delta W_\ell \;=\; A_\ell^\top\, \Lambda\, B_\ell^\top
+  \qquad \text{for every } \ell .
+  \label{eq:kkt}
+\end{equation}
+Consequently $\Delta W_{\ell+1}^\top W_{\ell+1}$ and $\Delta W_\ell W_\ell^\top$ are transposes of
+one another, and the imbalance $W_{\ell+1}^\top W_{\ell+1} - W_\ell W_\ell^\top$ is unchanged to
+first order in the step.
+\end{proposition}
+
+The content of Proposition~\ref{prop:conserve} is that the shared multiplier in \eqref{eq:kkt} ---
+one $\Lambda$ for all layers --- is forced by minimality, and the balance property follows from
+that form alone. It requires neither gradient flow nor a balanced initialisation. Since gradient
+descent's step $M^\top \Delta_\star$ is of the same form with $\Lambda = \Delta_\star$, the
+classical conservation law is recovered as the special case in which the multiplier is the target
+itself.
+
+\subsection{Solver S1: exact minimal realisation by recursive splitting}
+\label{sec:s1}
+
+We solve \eqref{eq:prescribed} by recursion on the depth. Suppose the chain of depth $L$ is split
+into a lower part of depth $a$ and an upper part of depth $b$, with $a + b = L$, so that
+$P^\star = Y X$ where $X$ is realised by the lower $a$ factors and $Y$ by the upper $b$. Taking the
+singular value decomposition $P^\star = U \Sigma V^\top$, we set
+\begin{equation}
+  Y_0 \;=\; U\, \Sigma^{\,t} , \qquad
+  X_0 \;=\; \Sigma^{\,1-t}\, V^\top , \qquad
+  t \;=\; \frac{b}{a+b} ,
+  \label{eq:split}
+\end{equation}
+and recurse on $X_0$ with depth $a$ and on $Y_0$ with depth $b$. The exponent in \eqref{eq:split}
+is \emph{depth-proportional}: each half receives the share of the singular values corresponding to
+the number of factors it must still produce. An even split $t = 1/2$ is correct only when
+$a = b$, and using it in general is what breaks exactness at odd depths.
+
+The recursion bottoms out at $L = 1$, where the factor is the target itself. It never queries a
+gradient, so it applies unchanged at a degenerate point, which establishes
+Proposition~\ref{prop:degen}. The cost is that of one singular value decomposition per split,
+$O(L)$ of them in total.
+
+\begin{remark}[Relation to alternating least squares]
+An obvious alternative is to solve for one factor at a time holding the others fixed, which is
+block coordinate descent, or alternating least squares. That procedure converges to a realisation
+of the target but not to the \emph{minimal} one: each sweep solves an exactly determined
+sub-problem and has no reason to respect the global norm budget of
+Proposition~\ref{prop:minimal}. We report the resulting gap in Appendix~\ref{app:als}.
+\end{remark}
+
+\subsection{Experiments}
+\label{sec:linear-exp}
+
+Each experiment below states its motivation, its exact configuration, the quantity measured with
+its formula, its current status, the numbers obtained, and what may and may not be concluded from
+them. Status is one of \textsc{done}, \textsc{partial} or \textsc{todo}.
+
+\subsubsection{E1 --- Validating the machinery against a known closed form}
+
+\paragraph{Motivation.}
+Every later measurement is computed from the contexts \eqref{eq:contexts} and the step map
+\eqref{eq:M}. Before any of them can be believed, the implementation must reproduce a result that
+is known analytically. The per-mode gain of \citet{arora2018optimization} provides one, with the
+advantage that it is exact rather than asymptotic, so agreement can be demanded to machine
+precision rather than to within noise.
+
+\paragraph{Setup.}
+A balanced chain carrying a prescribed non-flat spectrum, $L \in \{2,4,8,16,32\}$, in both the deep
+linear and the CReLU implementation (looks-linear blocks built from the same spectrum, so the gate
+absorbs and $P$ remains non-flat). All diagnostics in float64 on CPU.
+
+\paragraph{Measurement.}
+With the transfer operator $T(H) := \sum_\ell A_\ell A_\ell^\top H\, B_\ell^\top B_\ell$, so that
+the induced operator change is $-\eta\,T(G) + O(\eta^2)$, and the singular value decomposition
+$P = \sum_k s_k u_k v_k^\top$, the \emph{mode gain} is
+\begin{equation}
+  c_k \;:=\; \big\langle u_k,\ T(u_k v_k^\top)\, v_k \big\rangle
+      \;=\; \sum_{\ell} \big\| A_\ell^\top u_k \big\|^2 \, \big\| B_\ell v_k \big\|^2 .
+  \label{eq:gain}
+\end{equation}
+We fit $\log c_k$ against $\log s_k$ and compare the slope with $2 - 2/L$ and the intercept
+with $L$, which is what \eqref{eq:arora} predicts under balancedness.
+
+\paragraph{Status.} \textsc{done}.
+
+\paragraph{Results.}
+The measured slope equals $2 - 2/L$ and the intercept equals $L$ to $10^{-14}$ for every depth
+tested, in both implementations.
+
+\paragraph{Conclusions.}
+The contexts, the transfer operator and the gain measurement are correct as implemented, in the
+gated as well as the ungated case. Two implementation traps are worth recording because each
+produces a qualitatively wrong exponent rather than a noisy one. First, $c_k$ must be probed with
+the rank-one direction $u_k v_k^\top$; probing with a random $H$ and forming
+$\langle u_k, T(H) v_k\rangle / \langle u_k, H v_k\rangle$ equals $c_k$ only when the context Gram
+matrices are diagonalised by the singular vectors of $P$, which holds under balancedness and fails
+otherwise. Second, a balanced chain is not an orthogonal one: an orthogonal chain is balanced but
+has a flat spectrum, from which no exponent is identifiable at all.
+
+This experiment validates the instrument. It is not evidence about optimisers, and the gain
+exponent is not used as a comparison metric anywhere in this paper: being a function of the current
+weights alone, it takes the same value for two optimisers evaluated at the same point.
+
+\subsubsection{E2 --- Operator-space trajectories}
+
+\paragraph{Motivation.}
+The diagnostics of Section~\ref{sec:diagnostics} are per-step scalars. This experiment shows the
+same phenomenon as a picture, in a setting where the operator is two-dimensional so the trajectory
+can be drawn exactly rather than projected, and where the loss is exactly quadratic so the geometry
+is not in question.
+
+\paragraph{Setup.}
+A deep linear chain $W_L \cdots W_1 = P \in \mathbb{R}^{1 \times 2}$ on a two-feature regression:
+$X \in \mathbb{R}^{256 \times 2}$ with feature scales $(1.0, 0.35)$ so the loss is anisotropic,
+$y = Xw$ with $w$ drawn once per seed, hidden width $8$, $L \in \{2, 8, 32\}$, $5$ seeds,
+$400$ steps, float64 on CPU. Arms: gradient descent and damped alternating least squares at
+learning rate $0.06$, Adam at $0.015$ (Adam requires its own step size; at the gradient descent
+value it oscillates, which would make the figure about mis-tuning rather than about geometry), and
+the reference step at $\eta = 0.06$. The weight space has $1944$ parameters at $L = 32$; only the
+operator is two-dimensional.
+
+\paragraph{Measurement.}
+At each step we record the realised operator change $\Delta P$ and its \emph{alignment} with what
+the loss requested,
+\begin{equation}
+  \mathrm{align} \;:=\; \cos\!\Big(\Delta P,\ -\tfrac{\partial \mathcal{L}}{\partial P}\Big),
+  \label{eq:align}
+\end{equation}
+together with the final distance $\|P - P^\star\|$ to the ordinary least squares solution. We
+report the mean alignment, its minimum, and the fraction of steps on which it is negative --- that
+is, on which the step moved the operator \emph{against} the direction the loss asked for.
+
+\paragraph{Status.} \textsc{done}.
+
+\paragraph{Results.}
+Percentage of steps with negative alignment, mean over $5$ seeds with the per-seed range in
+brackets. Runs that diverged are excluded and counted separately; a diverging run contributes an
+alignment statistic computed from a handful of blown-up steps, which is not a property of the
+method.
+
+\begin{center}\small
+\begin{tabular}{lccc}
+\toprule
+depth & gradient descent & Adam & reference \\
+\midrule
+$L=2$  & $0.3\%$ $[0,2]$ & $9.3\%$ $[0,22]$  & $0.0\%$ \\
+$L=8$  & $1.0\%$ $[0,3]$ & $33.0\%$ $[28,37]$ & $0.0\%$ \\
+$L=32$ & $0.0\%$ $[0,0]$ & $26.9\%$ $[15,37]$ & $0.1\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Conclusions.}
+Adam moves the operator against the requested direction on a substantial fraction of steps at
+depth, in every seed --- the per-seed range never approaches zero --- while gradient descent and the
+reference essentially never do. The effect rises sharply from $L=2$ and then plateaus; with five
+seeds the difference between $L=8$ and $L=32$ lies within the spread, so we claim a rise and a
+plateau rather than a monotone law in depth.
+
+Two cautions attach to this figure. It must be drawn in operator space: a model whose \emph{weight}
+space is two-dimensional has a rank-one step map $M = [\,w_2\ \ w_1\,]$, whence $M^{+} \propto
+M^\top$ and gradient descent coincides with the reference exactly, measured at
+$\cos = 1.0000000000$. And alternating least squares requires ridge damping here; undamped, it is
+anti-aligned on $100\%$ of steps at $L=2$ and diverges to $\|P - P^\star\| = 154$.
+
+Finally, Remark~\ref{rem:fidelity} is visible in the numbers: at $L = 32$ Adam reaches
+$\|P - P^\star\| = 0.0000$ while the reference reaches $0.1437$. Adam is the worse-aligned method
+and the faster one. Alignment is fidelity to the operator gradient, not optimisation quality.
+
+% =========================================================================
+\section{Part II --- Gated networks}
+\label{sec:nonlinear}
+
+\subsection{What changes}
+\label{sec:whatchanges}
+
+Three things change at once when the gates become input-dependent, and it is worth separating
+them.
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt,topsep=3pt]
+  \item \textbf{The operator is no longer shared.} Each input has its own $P(x)$, and the target
+        \eqref{eq:target} asks for a different operator change at each one. A single weight update
+        must serve all of these requests simultaneously.
+  \item \textbf{The requests are not jointly realisable.} Since one $\Delta W$ produces the whole
+        collection $M(\Delta W)$, and the collection has far more degrees of freedom than
+        $\Delta W$, in general $\Delta_\star \notin \mathrm{range}(M)$ and $\alpha < 1$. The
+        reference step realises the projection $\Pi \Delta_\star$, which is the most any optimiser
+        can do.
+  \item \textbf{Each sample constrains only a rank-one slice of its own operator.} Fitting the
+        data requires $P(x_i) x_i = y_i$, which fixes the action of $P(x_i)$ along $x_i$ and leaves
+        the remaining directions free. This is why gated networks can exhibit genuine differences
+        between optimisers at the same training loss, while a deep linear network with enough
+        samples cannot: there the single shared $P$ is pinned by the data, and all methods that fit
+        must agree.
+\end{enumerate}
+
+Point 3 is the reason the endpoint comparisons of Section~\ref{sec:nonlinear-exp} are posed for
+gated networks and not for deep linear ones.
+
+\subsection{CReLU and looks-linear initialisation: a conditioned nonlinear control}
+\label{sec:lookslinear}
+
+The ReLU network confounds two effects that we wish to separate: it is nonlinear, and at depth it
+is ill-conditioned, necessarily so \citep{pennington2017resurrecting}. To vary gating and
+conditioning independently we need a network that is genuinely nonlinear yet perfectly conditioned
+by construction. The concatenated rectifier of \eqref{eq:crelu} provides one.
+
+Write the layer weight in block form $W = [\,O \mid -O\,]$ with $O$ orthogonal --- the
+\emph{looks-linear} initialisation. Then for every $z$,
+\begin{equation}
+  W D(z) \;=\; O\,\mathrm{diag}(\mathbf{1}[z>0]) \;+\; O\,\mathrm{diag}(\mathbf{1}[z<0]) \;=\; O ,
+\end{equation}
+because the two indicator masks are complementary. Hence $P(x) = O_L \cdots O_1$ is orthogonal, at
+every input and at \emph{any} depth: all singular values equal one, and the operator is identical
+across inputs at initialisation. The network is nonetheless a genuine CReLU network --- the gates
+are real, they differ between inputs as soon as training moves the weights away from the
+looks-linear point, and no reparameterisation makes it linear.
+
+This gives the control the rest of Part II requires: CReLU with looks-linear initialisation is
+nonlinear and perfectly conditioned; ReLU with a standard random initialisation is nonlinear and
+ill-conditioned at depth; the deep linear network of Part I is linear. Differences attributed to
+gating can then be distinguished from differences attributable to conditioning.
+
+\subsection{Solver S2: least squares on the step map}
+\label{sec:s2}
+
+For gated networks we solve \eqref{eq:ref} directly as a least-squares problem,
+\begin{equation}
+  \Delta W^{\mathrm{ref}} \;=\; \arg\min_{\Delta W} \; \big\|M(\Delta W) - \Delta_\star\big\|^2 ,
+  \qquad \text{minimum-norm solution},
+\end{equation}
+using LSQR \citep{paige1982lsqr}, which requires only products with $M$ and $M^\top$ and never
+forms the matrix. By \eqref{eq:M} and its adjoint, both products are batched matrix
+multiplications over layers and inputs, so the solve costs $O(k)$ applications of the forward and
+backward context products for $k$ iterations. By Remark~\ref{rem:krylov}, $k = 1$ returns the
+gradient descent direction and large $k$ returns the reference step, so a single routine produces
+both arms.
+
+\paragraph{A numerical caveat that must not be skipped.}
+On these step maps, LSQR \emph{diverges after it has converged}: the Lanczos basis loses
+orthogonality, and the iterate grows without bound while the least-squares residual remains at its
+converged value. Running to a fixed large iteration count therefore returns a meaningless result
+with no error raised. Two natural stopping tests do not detect this. The quantity $\bar\phi$
+maintained internally by the LSQR recursion is monotonically non-increasing by construction and so
+never signals anything. The residual $\|M(\Delta W) - \Delta_\star\|$ is blind to the component of
+the failure that lies in $\ker M$, which is precisely where the iterate grows. The normal-equation
+residual $\|M^\top(M(\Delta W) - \Delta_\star)\|$ detects both, and is the stopping rule we use; it
+is not monotone, so the best iterate is retained rather than the last, and its attained value is
+recorded alongside every measurement. We report quantitative diagnostics in
+Appendix~\ref{app:numerics}.
+
+\subsection{Experiments}
+\label{sec:nonlinear-exp}
+
+\subsubsection{E3 --- How much of the request is reachable at all}
+
+\paragraph{Motivation.}
+Reachability is the ceiling: it is a property of the architecture and the current weights, and no
+optimiser can exceed it. It must therefore be measured before any optimiser is scored, since a low
+score against a low ceiling means something different from a low score against a high one.
+
+\paragraph{Setup.}
+Teacher--student regression, input dimension $32$, $2000$ training and $1000$ test points, batch
+$100$; student of depth $L = 8$ and width $32$; architectures $\{$deep linear, FGLN, ReLU,
+CReLU$\}$ $\times$ initialisations $\{$Xavier, orthogonal$\}$, with looks-linear substituted for
+orthogonal in the CReLU case. Probes every $100$ steps along a $1000$-step trajectory, $11$ probes
+per cell, $8$ cells. Diagnostics in float64.
+
+\paragraph{Measurement.}
+$\alpha := \|\Pi \Delta_\star\| / \|\Delta_\star\| \in [0,1]$, with $\Pi \Delta_\star$ obtained
+from the damped solve of Section~\ref{sec:s2}. We also record the solve quality
+\begin{equation}
+  \mathrm{ne} \;:=\; \frac{\big\|M^\top\big(M(\Delta W^{\mathrm{ref}}) - \Delta_\star\big)\big\|}
+                          {\big\|M^\top \Delta_\star\big\|},
+  \label{eq:ne}
+\end{equation}
+the relative normal-equation residual, at every probe, and discard any probe with
+$\mathrm{ne} > 10^{-2}$. Since $\alpha$ is a projection ratio, $\alpha > 1$ is impossible and
+serves as an independent check on the solve.
+
+\paragraph{Status.} \textsc{done}. $44/44$ probes valid after the fix described below.
+
+\paragraph{Results.}
+$\alpha$ ranges from $0.089$ to $0.438$ across the eight cells: $0.089$ (FGLN, both
+initialisations), $0.109$--$0.113$ (deep linear), $0.224$--$0.251$ (ReLU), $0.375$--$0.438$
+(CReLU).
+
+\paragraph{Conclusions.}
+Only $9$--$44\%$ of what the loss asks of the operator is achievable by any weight update. The
+ordering is explained by the rank of the step map. Measured at $L=6$, width $8$, the nullity of
+$M$ is $19\%$ for CReLU, $53\%$ for ReLU, $83\%$ for deep linear and $93\%$ for FGLN: where the
+gates are input-independent every layer moves the \emph{same} shared operator, so
+$\mathrm{rank}(M) \le n_L n_0$ however many parameters the model has, and the fixed gates of FGLN
+reduce it further. Reachability is therefore highest for the most expressive gating, which is the
+opposite of the naive expectation that nonlinearity should obstruct the operator step.
+
+\paragraph{A solver failure, and its resolution.}
+Initially three of eight cells returned $\alpha > 1$ --- impossible --- with $\mathrm{ne}$ of
+$28$, $54$ and $552$ instead of ${\sim}10^{-4}$. The cause was the failure mode described in
+Section~\ref{sec:s2}: the undamped iterate drifts into $\ker M$, and it does so most where the
+null space is largest, which is precisely the deep linear and FGLN cells. Tikhonov damping, for
+which $\ker$ is trivial, together with float64 diagnostics, removed it: all $44$ probes now satisfy
+$\alpha \le 1$ with residuals ${\sim}10^{-10}$. We record this because it is the reverse of the
+natural suspicion --- the solve is least reliable on the \emph{simplest} models, and the
+architectures the rest of Part II rests on are the best conditioned of the four.
+
+\subsubsection{E4 --- What each optimiser does with the reachable part}
+
+\paragraph{Motivation.}
+This is the measurement the framework exists to make, and the one that endpoint studies cannot
+make. Comparing optimisers by where they end confounds the quality of a step with the fact that
+the arms have drifted to different points. Scoring every candidate from the \emph{same} weights
+removes that confound entirely.
+
+\paragraph{Setup.}
+As in E3. A single optimiser (Adam, $\mathrm{lr} = 3\cdot10^{-3}$) drives the trajectory; at each
+probe we stop and, from those weights and that batch, form the step each candidate would take.
+Candidates: gradient descent; Adam; and the reference truncated at $k \in \{1,5,20,50\}$. Adam is
+stateful, so its moments are carried along the driving trajectory at every step and ``Adam'' means
+what Adam would do having followed this path --- which is exactly what it does, since Adam drives.
+The probe at step $0$ is excluded because Adam's step is then identically zero and its cosine
+undefined.
+
+\paragraph{Measurement.}
+$\cos_{\mathrm{op}}$ and $\cos_{\mathrm{w}}$ of Definition~\ref{def:ref} and the two norm ratios,
+for every candidate, at every probe. Both cosines are scale-invariant and therefore carry no
+learning rate. The table below reports $\cos_{\mathrm{op}}$; the weight-space comparison is
+reported in E7, where the arms run freely and the two can be read against each other.
+
+\paragraph{Status.} \textsc{done}, one seed, $8/8$ cells valid.
+
+\paragraph{Results.}
+
+\begin{center}\small
+\begin{tabular}{llcccccc}
+\toprule
+arch & init & $\alpha$ & gd & Adam & $k{=}5$ & $k{=}20$ & $k{=}50$ \\
+\midrule
+CReLU  & looks-linear & 0.438 & 0.358 & $-0.070$ & 0.555 & 0.745 & 0.871 \\
+CReLU  & Xavier       & 0.375 & 0.284 & $-0.087$ & 0.508 & 0.752 & 0.876 \\
+FGLN   & orthogonal   & 0.089 & 0.444 & $\phantom{-}0.010$ & 0.808 & 0.927 & 0.938 \\
+FGLN   & Xavier       & 0.089 & 0.412 & $\phantom{-}0.007$ & 0.769 & 0.875 & 0.896 \\
+linear & orthogonal   & 0.109 & 0.583 & $-0.032$ & 0.896 & 0.994 & 0.999 \\
+linear & Xavier       & 0.113 & 0.515 & $-0.025$ & 0.815 & 0.943 & 0.964 \\
+ReLU   & orthogonal   & 0.251 & 0.410 & $-0.239$ & 0.582 & 0.815 & 0.913 \\
+ReLU   & Xavier       & 0.224 & 0.323 & $-0.127$ & 0.530 & 0.799 & 0.903 \\
+\midrule
+\multicolumn{2}{l}{mean} & & 0.416 & $-0.070$ & 0.683 & 0.856 & 0.920 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Conclusions.}
+Three statements hold across every architecture and initialisation, and none of them involves a
+learning rate.
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt,topsep=3pt]
+  \item \textbf{Gradient descent is partially aligned}: it realises about $0.42$ of the reachable
+        ideal direction on average, positive in $8/8$ cells and never close to $1$. It is moving
+        the operator the way the loss asked, but inefficiently.
+  \item \textbf{Adam is not aligned at all}: its mean $\cos_{\mathrm{op}}$ is negative in $6/8$
+        cells and approximately zero in the other two. On average its step does not move the
+        operator toward what the loss asked of it.
+  \item \textbf{The truncation parameter recovers the ideal}: $0.68 \to 0.86 \to 0.92$ for
+        $k = 5, 20, 50$, reaching $0.999$ for the deep linear orthogonal cell, where the reference
+        step should be essentially exact and is.
+\end{enumerate}
+
+The consequence is the organising observation of this paper. \textbf{Adam trains these models at
+least as well as gradient descent while doing something that is, at the operator level, close to
+orthogonal to what the loss requests.} Two mechanisms must therefore be distinguished: motion of
+the operator, and motion of everything else the parameterisation contains --- in a gated network,
+the gate configuration. E5--E7 are designed to separate them.
+
+\paragraph{Limitations.} One seed, one driving optimiser, one task, one depth. Whether the
+conclusion depends on which optimiser drives the trajectory is not yet tested; see E7.
+
+\subsubsection{E5 --- A reference configuration in which the task is actually learned}
+
+\paragraph{Motivation.}
+An endpoint comparison between two optimisers is meaningful only if both have learned the task. If
+neither has, the comparison is between two failures and no conclusion about implicit bias survives
+it. This experiment establishes the operating point, and exists because an earlier version of E6
+did not have one.
+
+\paragraph{Setup.}
+MNIST-1D, $4000$ training, $1000$ validation, $1000$ test points, cross-entropy, batch $100$,
+$12000$ steps. Bias-free networks, as \eqref{eq:fx} requires. Grid: architecture
+$\in \{$CReLU, ReLU$\}$, depth $\in \{4, 8\}$, width $\in \{32, 64, 128\}$, Adam learning rate
+$\in \{3\cdot10^{-3}, 10^{-2}, 3\cdot10^{-2}\}$; $36$ cells. Selection is on validation accuracy
+and the test accuracy is reported \emph{at the selected step}, not as a maximum over the
+trajectory.
+
+\paragraph{Status.} \textsc{done} for the Adam arm; \textsc{todo} for the operator arm.
+
+\paragraph{Results.}
+Width is the binding constraint. At width $32$ the best test accuracy is $0.594$; at width $128$ it
+is $0.695$. The best cell by validation is CReLU, $L=4$, width $128$, $\mathrm{lr} = 10^{-2}$, at
+test $0.688$; the best cell that \emph{also} fits the training set is CReLU, $L=8$, width $128$,
+$\mathrm{lr} = 3\cdot10^{-3}$, at test $0.653$ with training loss $0.055$. For ReLU the
+corresponding cell is $L=8$, width $128$, $\mathrm{lr} = 10^{-2}$, at test $0.660$ with training
+loss $0.05$. For reference, logistic regression on MNIST-1D reaches ${\sim}0.32$ and a
+one-hidden-layer MLP ${\sim}0.68$.
+
+\paragraph{Conclusions.}
+The bias-free constraint costs little once the network is wide enough: at width $128$ these models
+reach the accuracy expected of an MLP on this task. The configuration $L = 8$, width $128$ is
+adopted as the reference operating point for E6, being the deepest setting in which both fitting
+and generalisation are achieved.
+
+This experiment also invalidates an earlier endpoint comparison conducted at width $32$, where the
+best accuracy reached was $0.66$ and every configuration that drove the training loss to $10^{-4}$
+reached only $0.44$--$0.57$. Worse, the single configuration that generalised acceptably never
+reached the matched training loss and was therefore excluded from the comparison by construction.
+Any rank gap measured there describes two over-fitted runs.
+
+\subsubsection{E6 --- Endpoints at a configuration that learns}
+
+\paragraph{Motivation.}
+Given that Adam's step is unaligned at the operator level (E4) yet trains well (E5), the question
+is whether the per-step difference accumulates into a different solution, and in what respect.
+
+\paragraph{Setup.}
+MNIST-1D at the reference configuration of E5: $L = 8$, width $128$, batch $100$, CReLU and ReLU,
+$3$ seeds. Adam over a learning-rate grid spanning at least two orders of magnitude, against the
+reference step at $k = 50$ and $\eta \in \{0.1, 0.3, 0.5\}$. Arms are compared \emph{at matched
+training loss} rather than at a matched step count, which would measure optimisation speed instead.
+
+\paragraph{Measurements.}
+Test accuracy and test loss at matched training loss; and the effective rank of the operator, taken
+as the participation ratio of its singular values averaged over inputs,
+\begin{equation}
+  \mathrm{PR}(x) \;=\; \frac{\big(\sum_i \sigma_i(P(x))\big)^2}{\sum_i \sigma_i(P(x))^2},
+  \qquad
+  \mathrm{PR} \;=\; \mathbb{E}_x\big[\mathrm{PR}(x)\big],
+  \label{eq:pr}
+\end{equation}
+excluding inputs with $P(x) = 0$ and reporting their fraction separately, since such inputs carry
+no spectrum and averaging their zero in drags the mean below the value $\mathrm{PR}$ takes on a
+rank-one operator.
+
+\paragraph{Status.} \textsc{todo} at the reference configuration. A previous run at width $32$ is
+superseded for the reason given in E5.
+
+\paragraph{Results.} \emph{[To be inserted.]}
+At width $32$ the operator arm reached an effective rank higher by $+1.8$ to $+2.3$ in all six
+cells, with Adam's rank flat across a five-point learning-rate grid, so the gap was not a tuning
+artefact. Whether it survives at a configuration that learns the task is open.
+
+\paragraph{Protocol.}
+Two failure modes have already occurred in this project and are guarded against explicitly. A
+best-over-grid statistic must not be read before every cell of the grid has completed; and the grid
+must \emph{bracket} each method's optimum, since a method whose best value sits at the edge of its
+grid has not been tuned. We report the full grid rather than the selected point, and seed-level
+values rather than pooled means.
+
+\subsubsection{E7 --- What Adam is doing instead: gates, dynamics and overfitting}
+
+\paragraph{Motivation.}
+E4 establishes that Adam's step is close to orthogonal to the operator request, and E5 that it
+nonetheless learns the task. Something other than the operator is therefore being optimised. In a
+gated network the natural candidate is the gate configuration: the operator $P(x)$ is what the
+network computes \emph{given} a gate pattern, while the pattern itself is the combinatorial part of
+the model and is invisible to $\Delta_\star$, which asks only that $P$ move.
+
+\paragraph{Setup.}
+The reference configuration of E5, with gradient descent, Adam and the reference step each running
+freely, $3$ seeds, both architectures.
+
+\paragraph{Measurements.} At each probe:
+\begin{enumerate}[leftmargin=*,itemsep=2pt,topsep=3pt]
+  \item \textbf{Gate occupancy.} Density $\rho = \mathbb{E}_{x,\ell,i}\big[\mathbf{1}[z_{\ell,i}(x) > 0]\big]$,
+        and the dead-unit fraction, the proportion of hidden units inactive for every input.
+  \item \textbf{Pattern diversity.} The mean normalised Hamming distance between the gate patterns
+        of two independently drawn inputs, which measures how much of the network's behaviour is
+        input-dependent at all.
+  \item \textbf{Pattern churn.} The fraction of gates that flip between consecutive probes,
+        separating motion of the gates from motion of the weights within a fixed pattern.
+  \item \textbf{Operator rank.} \eqref{eq:pr}, as in E6.
+  \item \textbf{Dynamics.} Training and test loss and accuracy against step, giving convergence
+        speed and the point at which test loss begins to rise.
+\end{enumerate}
+
+\paragraph{Status.} \textsc{todo}.
+
+\paragraph{Hypothesis under test.}
+If Adam's advantage is gate reorganisation rather than operator motion, then relative to gradient
+descent it should show higher pattern churn and greater pattern diversity while scoring lower on
+$\cos_{\mathrm{op}}$; and the reference step, which optimises the operator directly, should show
+the opposite. A null result --- indistinguishable gate statistics --- would mean the alignment gap
+of E4 does not translate into any observable difference in what is learned, which would bound the
+significance of E4 and must be reported as such.
+
+% =========================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+Implicit bias is usually studied through the solutions an optimiser reaches. We have argued that it
+can be studied through the steps it takes, provided one is willing to compute, at each point, the
+weight update that would have realised what the loss asked of the operator. That reference step is
+available in closed form for deep linear chains, where it is exact even at parameter values that
+stop every derivative-based method, and as a least-squares solve for gated networks, where the
+request is no longer fully realisable and the shortfall is itself a measurable property of the
+architecture.
+
+The resulting decomposition separates two things that endpoint studies necessarily conflate: what
+the architecture permits, and what the optimiser does within what is permitted. The first is
+optimiser-independent; the second is scale-invariant, and therefore free of the tuning objections
+that comparisons between optimisers usually attract.
+
+\emph{[Summary of findings to be inserted once the measurements of
+Sections~\ref{sec:linear-exp} and \ref{sec:nonlinear-exp} are complete.]}
+
+\paragraph{Limitations.}
+The reference step is defined by a first-order model of how weights move the operator, and is
+therefore meaningful only for steps small enough to stay in that regime; we report the step sizes
+at which this holds. The least-squares solve becomes ill-conditioned with depth, and the
+weight-space diagnostic $\cos_{\mathrm{w}}$ in particular is reliable only where the solve attains
+the minimum-norm solution, which we verify per measurement rather than assume. Finally,
+Remark~\ref{rem:fidelity} bears repeating: the diagnostics measure fidelity to the operator
+gradient, which is not the same as optimisation quality, and nothing here should be read as a claim
+that the reference step is a better training algorithm.
+
+\newpage
+\subsection*{AI use statement}
+
+(This section is \textbf{required} and does not count toward the page limit.)
+
+In this work, we used generative AI tools for [tasks with required disclosure].
+We have not used generative AI tools for [other tasks with required disclosure],
+and [the rest of the required disclosure tasks] are not applicable to this work.
+Additionally, we used generative AI tools for [tasks with recommended
+disclosure]. We have reviewed all AI-assisted work. [Elaborate. For example, “we
+checked LLM-generated research ideas for potential plagiarism through a manual
+literature survey”, “LLM-generated code was verified and tested for correctness
+by 2 authors”, etc.]. We take responsibility for the final content of this work,
+including text, claims or artifacts produced with the aid of generative AI.
+
+See the ICLR 2027 AI Policy for Authors for more details. This statement should
+not be more than 1 page.
+
+\subsection*{Ethics statement}
+
+\subsection*{Reproducibility statement}
+
+\subsubsection*{Author Contributions}
+
+\subsubsection*{Acknowledgments}
+
+\bibliography{references}
+\bibliographystyle{iclr2027_conference}
+
+\appendix
+\section{Appendix}
+
+\section{Proofs}
+\label{app:proofs}
+
+\emph{[Proof of Proposition~\ref{prop:minimal}: Bellman recursion over depth with value function
+$V_a(Y) = a\|Y\|_{S_{2/a}}^{2/a}$, and the arithmetic mean--geometric mean inequality for the
+per-mode split. Proof of Proposition~\ref{prop:degen}: homogeneity and null-consistency of the
+recursive construction. Proof of Proposition~\ref{prop:conserve}: the KKT conditions of
+\eqref{eq:ref} give the shared multiplier \eqref{eq:kkt}, from which
+$\Delta W_{\ell+1}^\top W_{\ell+1}$ and $\Delta W_\ell W_\ell^\top$ are transposes.]}
+
+\section{Numerical behaviour of the least-squares solve}
+\label{app:numerics}
+
+\emph{[Divergence of LSQR past convergence on these step maps; failure of the two natural stopping
+tests; the normal-equation stopping rule and the attained residuals by depth and architecture.]}
+
+\section{Alternating least squares is not a minimal realisation}
+\label{app:als}
+
+\emph{[Measured ratio between the alternating-least-squares realisation and the minimal one, and
+its consequences.]}
+
+\end{document}
