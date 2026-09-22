@@ -47,14 +47,14 @@ import gpu
 # size says nothing about the rule, only about the tuning, and the arms differ in natural scale by
 # orders of magnitude (the reference has no learning rate at all, it has a target size eta).
 ARMS = {
-    "gd":        [1e-4, 1e-3, 0.003, 0.01, 0.03, 0.1, 0.3],
-    "adam":      [1e-4, 3e-4, 0.001, 0.003, 0.01, 0.03, 0.1],
-    "op":        [0.1, 0.3, 1.0],
-    "muon":      [3e-4, 0.001, 0.003, 0.01, 0.03, 0.1],
-    "shampoo":   [3e-4, 0.001, 0.003, 0.01, 0.03, 0.1],
-    "soap":      [1e-4, 3e-4, 0.001, 0.003, 0.01, 0.03],
-    "kfac":      [0.0003, 0.001, 0.003, 0.01, 0.03],
-    "heavyball": [0.0003, 0.001, 0.003, 0.01, 0.03],
+    "gd":        [1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 0.01, 0.03, 0.1],
+    "adam":      [1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 0.01, 0.03],
+    "op":        [0.03, 0.1, 0.3, 1.0],
+    "muon":      [1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 0.01, 0.03],
+    "shampoo":   [1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 0.01, 0.03],
+    "soap":      [1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 0.01],
+    "kfac":      [1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 0.01],
+    "heavyball": [1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 0.01],
 }
 LABEL = {"gd": "gradient descent", "adam": "Adam", "op": "reference (operator)", "muon": "Muon",
          "shampoo": "Shampoo", "soap": "SOAP", "kfac": "K-FAC", "heavyball": "heavy ball"}
@@ -98,50 +98,86 @@ def op_loss(P, X, y):
 
 
 def run(arch, init, arm, hyper, depth, hidden, seed, X, y, steps, dev):
-    """One trajectory: the mean operator at every step, plus the pointwise spread."""
+    """One trajectory: the mean operator at each step, the pointwise spread, and the MODEL loss.
+
+    The model loss is `mean((f(x) - y)^2)` from an actual forward pass, and it is the only
+    trustworthy scoring signal here. An earlier version scored the loss of the *mean* operator
+    E_x[P(x)], which for a nonlinear architecture is not the model: runs whose per-sample
+    operators exploded to 1e74 had means that cancelled back to near P*, so they scored well and
+    were plotted. Divergence is likewise detected on the per-sample operators, not on their mean.
+    """
     Ws = gpu.init_net(2, hidden, 1, depth, arch, seed, dev, dtype=torch.float64, init=init)
     state = {"m": [torch.zeros_like(w) for w in Ws], "v": [torch.zeros_like(w) for w in Ws]}
-    path, spread = [], []
+    path, spread, losses = [], [], []
     n = X.shape[0]
     for t in range(steps):
         P = operators(Ws, X, arch)
-        mean = P.mean(0).reshape(2)
-        path.append(mean.detach().cpu().numpy().copy())
-        spread.append(float(P.reshape(-1, 2).std(0).norm()))
         pred = (X.unsqueeze(1) @ P.transpose(1, 2)).reshape(-1)
+        loss = float(((pred - y) ** 2).mean())
+        if not np.isfinite(loss) or loss > 1e8:
+            break
+        if not torch.isfinite(P).all() or float(P.abs().max()) > 1e6:
+            break
+        path.append(P.mean(0).reshape(2).detach().cpu().numpy().copy())
+        spread.append(float(P.reshape(-1, 2).std(0).norm()))
+        losses.append(loss)
         R = (2.0 * (pred - y)).reshape(n, 1)
-        h = hyper if arm != "op" else (hyper, 50)
-        # Deliberately not wrapped in try/except: a rule that raises is a bug to see, not a short
-        # trajectory to plot. Divergence is caught below by the finiteness and magnitude checks.
-        d = exp.step_for(arm, Ws, X, R, h, arch, state, t)
+        if arm == "op":
+            # The reference here is the EXACT minimal realisation: the damped minimum-norm solve,
+            # not the k-truncated Krylov step used as a practical solver elsewhere. On a deep
+            # linear chain the step map is ~83% null, and an undamped truncated solve drifts into
+            # that null space rather than converging -- so the truncation is a property of the
+            # solver, not of the rule, and a figure about the rule should not inherit it.
+            _, gs = gpu.forward(Ws, X, arch)
+            A, B = gpu.contexts(Ws, gs, X, arch)
+            M = gpu.StepMap(A, B, [tuple(w.shape) for w in Ws])
+            G = R.unsqueeze(2) * X.unsqueeze(1)
+            x = gpu.solve_min_norm(M, (-hyper * G).reshape(-1), iters=400, lam_rel=1e-7, stall=1e-10)
+            d = [x[M.offs[l]:M.offs[l + 1]].view(Ws[l].shape) for l in range(len(Ws))]
+        else:
+            # Deliberately not wrapped in try/except: a rule that raises is a bug to see, not a
+            # short trajectory to plot. Divergence is caught per learning rate in `best_for`.
+            d = exp.step_for(arm, Ws, X, R, hyper, arch, state, t)
         Ws = [w + dw for w, dw in zip(Ws, d)]
         if not all(torch.isfinite(w).all() for w in Ws):
             break
-        if abs(float(mean.abs().max())) > 1e4:
-            break
-    return np.array(path), np.array(spread)
+    return np.array(path), np.array(spread), np.array(losses)
 
 
-def best_for(arch, init, arm, depth, hidden, seed, X, y, steps, dev):
-    """Sweep the arm's learning rates, keep the trajectory that ends at the lowest loss."""
-    best = None
+def best_for(arch, init, arm, depth, hidden, seed, X, y, steps, dev, wander=5.0, slack=2.0):
+    """Sweep the arm's learning rates; keep the run that descends most SMOOTHLY among those that
+    converge.
+
+    Selecting purely by lowest loss picks, for several of these rules, a step size that overshoots
+    and oscillates across the optimum: it lands low, and its path is a zigzag that says nothing
+    about the rule while inflating the panel's extent enough to flatten the loss contours into
+    stripes. So we keep every run whose tail loss is within `slack` of the best for that arm, then
+    among those choose the shortest path --- the same destination, reached most directly.
+    """
+    Pstar = np.linalg.lstsq(X.cpu().numpy(), y.cpu().numpy(), rcond=None)[0]
+    cands = []
     for lr in ARMS[arm]:
-        # Divergence is an expected outcome of sweeping learning rates, and at depth 32 most of
-        # each grid diverges. It is caught HERE, per learning rate, and never inside `run`: a rule
-        # that raises mid-trajectory for any other reason is a bug that must surface.
         try:
-            p, s = run(arch, init, arm, lr, depth, hidden, seed, X, y, steps, dev)
+            p, sp, ls = run(arch, init, arm, lr, depth, hidden, seed, X, y, steps, dev)
         except (ValueError, RuntimeError, torch._C._LinAlgError) as exc:
             print(f"    {arch}/{init}/{arm} lr={lr:g} diverged ({type(exc).__name__})", flush=True)
             continue
-        if len(p) < 2:
+        if len(p) < 2 or len(ls) < 2 or not np.isfinite(ls[-1]):
             continue
-        end = op_loss(p[-1], X.cpu(), y.cpu())
-        if not np.isfinite(end):
+        scale = max(np.linalg.norm(p[0] - Pstar), 1e-6)
+        if np.abs(p - Pstar).max() > wander * scale:
             continue
-        if best is None or end < best[0]:
-            best = (end, lr, p, s)
-    return best
+        tail = float(np.mean(ls[max(1, int(len(ls) * 0.9)):]))
+        if not np.isfinite(tail) or tail >= ls[0]:
+            continue
+        cands.append((tail, float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum()), lr, p, sp,
+                      float(ls[0])))
+    if not cands:
+        return None
+    floor = min(c[0] for c in cands)
+    good = [c for c in cands if c[0] <= floor * slack or c[0] <= floor + 1e-12]
+    tail, _, lr, p, sp, start = min(good, key=lambda c: c[1])
+    return (tail, lr, p, sp, start)
 
 
 def build(depth=8, hidden=32, n=128, seed=0, steps=300, dev=None, archs=None, inits=None,
@@ -174,8 +210,8 @@ def build(depth=8, hidden=32, n=128, seed=0, steps=300, dev=None, archs=None, in
                     continue
                 b = best_for(arch, init, arm, depth, hidden, seed, X, y, steps, dev)
                 if b is not None:
-                    end, lr, p, sp = b
-                    out[(arch, init, arm)] = dict(lr=lr, end=end, path=p, spread=sp)
+                    end, lr, p, sp, start = b
+                    out[(arch, init, arm)] = dict(lr=lr, end=end, path=p, spread=sp, start=start)
                 if cache is not None:
                     cache.write_bytes(pickle.dumps(out))
             print(f"  {arch}/{init} done ({len(out)} cells, "
@@ -187,65 +223,66 @@ def build(depth=8, hidden=32, n=128, seed=0, steps=300, dev=None, archs=None, in
 
 
 def figure(data, Pstar, X, y, depth, hidden, archs=None, inits=None):
-    """One panel per (architecture, initialisation); one coloured path per optimiser."""
+    """One panel per (architecture, initialisation); one coloured path per optimiser.
+
+    Axes are scaled PER PANEL. A shared frame is unreadable here: at depth 32 the initial operator
+    ranges over six orders of magnitude across panels (1.1e+04 for linear/he down to 1.1e-07 for
+    fgln/orthogonal), so any global window either clips the large panels or compresses every small
+    one into the marker at the origin. The contours are redrawn per panel for the same reason.
+    """
     import matplotlib.pyplot as plt
     archs = archs or ARCHS
     inits = inits or INITS
-    fig, axes = plt.subplots(len(archs), len(inits),
-                             figsize=(3.5 * len(inits), 3.2 * len(archs)), squeeze=False)
     scales = data.get("_scales", {})
-    paths = [d["path"] for k, d in data.items() if k != "_scales"]
-    pts = np.concatenate(paths) if paths else np.zeros((1, 2))
-    lo = np.minimum(pts.min(0), Pstar) - 0.4
-    hi = np.maximum(pts.max(0), Pstar) + 0.4
-    lo = np.maximum(lo, Pstar - 4.0)
-    hi = np.minimum(hi, Pstar + 4.0)
-    gx, gy = np.meshgrid(np.linspace(lo[0], hi[0], 160), np.linspace(lo[1], hi[1], 160))
-    Z = np.stack([((X @ np.array([a, b]) - y) ** 2).mean()
-                  for a, b in zip(gx.ravel(), gy.ravel())]).reshape(gx.shape)
+    fig, axes = plt.subplots(len(archs), len(inits),
+                             figsize=(3.6 * len(inits), 3.3 * len(archs)), squeeze=False)
     for r, arch in enumerate(archs):
         for c, init in enumerate(inits):
             ax = axes[r][c]
-            ax.contour(gx, gy, Z, levels=np.logspace(np.log10(max(Z.min(), 1e-6) + 1e-9),
-                                                     np.log10(Z.max()), 12),
-                       colors="#cccccc", linewidths=0.6, zorder=0)
-            ax.plot(*Pstar, "k*", ms=11, zorder=5, label="$P^\\star$ (OLS)" if r == c == 0 else None)
-            for arm in ARMS:
-                d = data.get((arch, init, arm))
-                if d is None:
-                    continue
-                p = d["path"]
-                ax.plot(p[:, 0], p[:, 1], "-", color=COLOR[arm], lw=1.4, alpha=0.9,
-                        label=f"{LABEL[arm]}" if r == 0 and c == 0 else None, zorder=3)
-                ax.plot(p[0, 0], p[0, 1], "o", color=COLOR[arm], ms=3.5, zorder=4)
             drawn = [m for m in ARMS if (arch, init, m) in data]
             sc = scales.get((arch, init))
             note = f"$\\|P\\|_\\infty$ at init: {sc:.1e}" if sc is not None else ""
             if not drawn:
-                # An empty panel is a result, not a gap: at this depth the initialisation itself
-                # puts the operator so far from O(1) that no learning rate in the grid recovers.
                 ax.text(0.5, 0.55, "no optimiser converged", transform=ax.transAxes,
                         ha="center", fontsize=8, color="#b03030")
                 ax.text(0.5, 0.45, note, transform=ax.transAxes, ha="center",
                         fontsize=7, color="#b03030")
-            else:
-                if arch not in ("linear", "fgln"):
-                    sp = [data[(arch, init, m)]["spread"][-1] for m in drawn]
-                    note += f"\nspread of $P(x)$: {min(sp):.1e}-{max(sp):.1e}"
-                ax.text(0.03, 0.03, note, transform=ax.transAxes, fontsize=6.5, color="#555555")
+                ax.set_xticks([]); ax.set_yticks([])
+                ax.set_title(f"{arch} / {init}", fontsize=9)
+                continue
+            pts = np.concatenate([data[(arch, init, m)]["path"] for m in drawn])
+            pts = np.vstack([pts, Pstar])
+            lo, hi = pts.min(0), pts.max(0)
+            pad = np.maximum((hi - lo) * 0.15, np.maximum(np.abs(hi), 1e-3) * 0.05)
+            lo, hi = lo - pad, hi + pad
+            gx, gy = np.meshgrid(np.linspace(lo[0], hi[0], 120), np.linspace(lo[1], hi[1], 120))
+            Z = np.stack([((X @ np.array([a, b]) - y) ** 2).mean()
+                          for a, b in zip(gx.ravel(), gy.ravel())]).reshape(gx.shape)
+            ax.contour(gx, gy, Z, levels=12, colors="#d0d0d0", linewidths=0.6, zorder=0)
+            for arm in drawn:
+                d = data[(arch, init, arm)]
+                p = d["path"]
+                ax.plot(p[:, 0], p[:, 1], "-", color=COLOR[arm], lw=1.3, alpha=0.85,
+                        label=LABEL[arm] if r == 0 and c == 1 else None, zorder=3)
+                ax.plot(p[0, 0], p[0, 1], "o", color=COLOR[arm], ms=3.5, zorder=4)
+            ax.plot(*Pstar, "k*", ms=12, zorder=5)
+            if arch not in ("linear", "fgln"):
+                sp = [data[(arch, init, m)]["spread"][-1] for m in drawn]
+                note += f"\nspread of $P(x)$: {min(sp):.1e}-{max(sp):.1e}"
+            ax.text(0.03, 0.03, note, transform=ax.transAxes, fontsize=6.5, color="#555555")
             ax.set_xlim(lo[0], hi[0]); ax.set_ylim(lo[1], hi[1])
-            ax.set_title(f"{arch} / {init}", fontsize=9)
+            ax.set_title(f"{arch} / {init}  ({len(drawn)}/{len(ARMS)} arms)", fontsize=9)
+            ax.tick_params(labelsize=6.5)
             if r == len(archs) - 1:
                 ax.set_xlabel("$P_1$")
             if c == 0:
                 ax.set_ylabel("$P_2$")
-            ax.tick_params(labelsize=7)
-    axes[0][0].legend(fontsize=7, frameon=False, loc="best")
+    axes[0][1].legend(fontsize=6.5, frameon=False, loc="best", ncol=2)
     fig.suptitle(f"Operator-space trajectories, depth {depth}, width {hidden}. "
-                 f"Solid dot = initialisation, star = OLS solution. "
+                 f"Dot = initialisation, star = OLS solution; axes scale per panel. "
                  f"For relu / leaky / crelu the path is the data-averaged operator.",
                  fontsize=10)
-    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    fig.tight_layout(rect=(0, 0, 1, 0.985))
     return fig
 
 
@@ -273,3 +310,83 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def build_depths(arch="linear", depths=(2, 32), hidden=32, n=128, seed=0, steps=300,
+                 dev=None, inits=("xavier", "orthogonal"), cache=None):
+    """The same sweep for one architecture at several depths, for a depth-contrast figure."""
+    import pickle
+    dev = dev or "cpu"
+    X, y = dataset(n, seed, dev)
+    Xc, yc = X.cpu(), y.cpu()
+    Pstar = torch.linalg.lstsq(Xc, yc.unsqueeze(1)).solution.reshape(2).numpy()
+    cache = Path(cache) if cache else None
+    out = pickle.loads(cache.read_bytes()) if (cache and cache.exists()) else {}
+    scales = out.setdefault("_scales", {})
+    for depth in depths:
+        for init in (inits or INITS):
+            Ws = gpu.init_net(2, hidden, 1, depth, arch, seed, dev, dtype=torch.float64, init=init)
+            scales[(depth, init)] = float(operators(Ws, X, arch).abs().max())
+            for arm in ARMS:
+                if (depth, init, arm) in out:
+                    continue
+                b = best_for(arch, init, arm, depth, hidden, seed, X, y, steps, dev)
+                if b is not None:
+                    end, lr, p, sp, start = b
+                    out[(depth, init, arm)] = dict(lr=lr, end=end, path=p, spread=sp, start=start)
+                if cache is not None:
+                    cache.write_bytes(pickle.dumps(out))
+            print(f"  L={depth} {init}: {sum(1 for k in out if k != '_scales' and k[0]==depth and k[1]==init)}"
+                  f"/{len(ARMS)} arms, |P| at init = {scales[(depth, init)]:.1e}", flush=True)
+    return out, Pstar, Xc.numpy(), yc.numpy()
+
+
+def figure_depths(data, Pstar, X, y, arch="linear", depths=(2, 32),
+                  inits=("xavier", "orthogonal")):
+    """Rows are depths, columns are initialisations; one coloured path per optimiser."""
+    import matplotlib.pyplot as plt
+    inits = inits or INITS
+    scales = data.get("_scales", {})
+    fig, axes = plt.subplots(len(depths), len(inits),
+                             figsize=(3.6 * len(inits), 3.3 * len(depths)), squeeze=False)
+    for r, depth in enumerate(depths):
+        for c, init in enumerate(inits):
+            ax = axes[r][c]
+            drawn = [m for m in ARMS if (depth, init, m) in data]
+            sc = scales.get((depth, init))
+            note = f"$\\|P\\|_\\infty$ at init: {sc:.1e}" if sc is not None else ""
+            if not drawn:
+                ax.text(0.5, 0.55, "no optimiser converged", transform=ax.transAxes,
+                        ha="center", fontsize=8, color="#b03030")
+                ax.text(0.5, 0.45, note, transform=ax.transAxes, ha="center", fontsize=7,
+                        color="#b03030")
+                ax.set_xticks([]); ax.set_yticks([])
+                ax.set_title(f"$L={depth}$ / {init}", fontsize=9)
+                continue
+            pts = np.vstack([np.concatenate([data[(depth, init, m)]["path"] for m in drawn]), Pstar])
+            lo, hi = pts.min(0), pts.max(0)
+            pad = np.maximum((hi - lo) * 0.15, np.maximum(np.abs(hi), 1e-3) * 0.05)
+            lo, hi = lo - pad, hi + pad
+            gx, gy = np.meshgrid(np.linspace(lo[0], hi[0], 120), np.linspace(lo[1], hi[1], 120))
+            Z = np.stack([((X @ np.array([a, b]) - y) ** 2).mean()
+                          for a, b in zip(gx.ravel(), gy.ravel())]).reshape(gx.shape)
+            ax.contour(gx, gy, Z, levels=12, colors="#d0d0d0", linewidths=0.6, zorder=0)
+            for arm in drawn:
+                p = data[(depth, init, arm)]["path"]
+                ax.plot(p[:, 0], p[:, 1], "-", color=COLOR[arm], lw=1.3, alpha=0.85,
+                        label=LABEL[arm] if r == 0 and c == 1 else None, zorder=3)
+                ax.plot(p[0, 0], p[0, 1], "o", color=COLOR[arm], ms=3.5, zorder=4)
+            ax.plot(*Pstar, "k*", ms=12, zorder=5)
+            ax.text(0.03, 0.03, note, transform=ax.transAxes, fontsize=6.5, color="#555555")
+            ax.set_xlim(lo[0], hi[0]); ax.set_ylim(lo[1], hi[1])
+            ax.set_title(f"$L={depth}$ / {init}  ({len(drawn)}/{len(ARMS)} arms)", fontsize=9)
+            ax.tick_params(labelsize=6.5)
+            if r == len(depths) - 1:
+                ax.set_xlabel("$P_1$")
+            if c == 0:
+                ax.set_ylabel("$P_2$")
+    axes[0][1].legend(fontsize=6.5, frameon=False, loc="best", ncol=2)
+    fig.suptitle(f"Operator-space trajectories, {arch} chain, width 32. "
+                 f"Dot = initialisation, star = OLS solution; axes scale per panel.", fontsize=10)
+    fig.tight_layout(rect=(0, 0, 1, 0.975))
+    return fig

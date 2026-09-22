@@ -11,6 +11,7 @@
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{booktabs}
 \usepackage{graphicx}
+\usepackage{float}
 \graphicspath{{images/}}
 \usepackage{enumitem}
 
@@ -150,7 +151,8 @@ a \emph{gate} $D_\ell$, a matrix that may depend on the input. We consider four 
         input-dependent in form but not in value.
   \item[ReLU multilayer perceptron.] $D_\ell(x) = \mathrm{diag}\big(\mathbf{1}[z_\ell(x) > 0]\big)$,
         where $z_\ell(x)$ is the pre-activation at layer $\ell$.
-  \item[CReLU multilayer perceptron.] The concatenated rectifier doubles the feature dimension,
+  \item[CReLU multilayer perceptron.] The concatenated rectifier \citep{shang2016crelu} doubles the
+        feature dimension,
         $c = [\,\mathrm{relu}(z)\,;\,\mathrm{relu}(-z)\,]$, which can be written $c = D(z)\,z$ with
         the rectangular gate
         \begin{equation}
@@ -686,61 +688,15 @@ Each experiment below states its motivation, its exact configuration, the quanti
 its formula, its current status, the numbers obtained, and what may and may not be concluded from
 them. Status is one of \textsc{done}, \textsc{partial} or \textsc{todo}.
 
-\subsubsection{E1 --- Validating the machinery against a known closed form}
-
-\paragraph{Motivation.}
-Every later measurement is computed from the contexts \eqref{eq:contexts} and the step map
-\eqref{eq:M}. Before any of them can be believed, the implementation must reproduce a result that
-is known analytically. The per-mode gain of \citet{arora2018optimization} provides one, with the
-advantage that it is exact rather than asymptotic, so agreement can be demanded to machine
-precision rather than to within noise.
-
-\paragraph{Setup.}
-A balanced chain carrying a prescribed non-flat spectrum, $L \in \{2,4,8,16,32\}$, in both the deep
-linear and the CReLU implementation (looks-linear blocks built from the same spectrum, so the gate
-absorbs and $P$ remains non-flat). All diagnostics in float64 on CPU.
-
-\paragraph{Measurement.}
-With the transfer operator $T(H) := \sum_\ell A_\ell A_\ell^\top H\, B_\ell^\top B_\ell$, so that
-the induced operator change is $-\eta\,T(G) + O(\eta^2)$, and the singular value decomposition
-$P = \sum_k s_k u_k v_k^\top$, the \emph{mode gain} is
-\begin{equation}
-  c_k \;:=\; \big\langle u_k,\ T(u_k v_k^\top)\, v_k \big\rangle
-      \;=\; \sum_{\ell} \big\| A_\ell^\top u_k \big\|^2 \, \big\| B_\ell v_k \big\|^2 .
-  \label{eq:gain}
-\end{equation}
-We fit $\log c_k$ against $\log s_k$ and compare the slope with $2 - 2/L$ and the intercept
-with $L$, which is what \eqref{eq:arora} predicts under balancedness.
-
-\paragraph{Status.} \textsc{done}.
-
-\paragraph{Results.}
-The measured slope equals $2 - 2/L$ and the intercept equals $L$ to $10^{-14}$ for every depth
-tested, in both implementations.
-
-\paragraph{Conclusions.}
-The contexts, the transfer operator and the gain measurement are correct as implemented, in the
-gated as well as the ungated case. Two implementation traps are worth recording because each
-produces a qualitatively wrong exponent rather than a noisy one. First, $c_k$ must be probed with
-the rank-one direction $u_k v_k^\top$; probing with a random $H$ and forming
-$\langle u_k, T(H) v_k\rangle / \langle u_k, H v_k\rangle$ equals $c_k$ only when the context Gram
-matrices are diagonalised by the singular vectors of $P$, which holds under balancedness and fails
-otherwise. Second, a balanced chain is not an orthogonal one: an orthogonal chain is balanced but
-has a flat spectrum, from which no exponent is identifiable at all.
-
-This experiment validates the instrument. It is not evidence about optimisers, and the gain
-exponent is not used as a comparison metric anywhere in this paper: being a function of the current
-weights alone, it takes the same value for two optimisers evaluated at the same point.
-
 \subsubsection{E2 --- Operator-space trajectories}
 \label{sec:e2}
 
 \paragraph{Motivation and question.}
 The diagnostics of Section~\ref{sec:diagnostics} are per-step scalars. \emph{What do the
 trajectories themselves look like, and is the separation between rules visible as geometry rather
-than only as a summary statistic?} This experiment answers it in a setting where the operator is
-two-dimensional, so the path can be drawn exactly rather than projected, and where the loss is
-exactly quadratic, so the geometry is not in question.
+than only as a summary statistic?} A deep linear chain answers it exactly: the operator is a single
+$1\times2$ matrix, so the path can be drawn without projection, and the loss is exactly quadratic,
+so the geometry is not in question.
 
 \paragraph{Why operator space and not weight space.}
 This is not a presentational choice. A model whose \emph{weight} space is two-dimensional has a
@@ -752,47 +708,57 @@ attributable to how each rule converts a weight step into an operator step, sinc
 descend the same quadratic in $P$.
 
 \paragraph{Setup.}
-A bias-free chain of depth $L$ and width $h$ mapping two features to one output, so
-$P(x) \in \mathbb{R}^{1\times2}$: $X \in \mathbb{R}^{n \times 2}$ with feature scales
-$(1.0, 0.35)$ so the loss is anisotropic, $y = Xw$ with $w$ drawn once per seed, float64.
+A bias-free linear chain of depth $L$ and width $32$ mapping two features to one output, so
+$P \in \mathbb{R}^{1\times2}$: $X \in \mathbb{R}^{128 \times 2}$ with feature scales $(1.0, 0.35)$
+so the loss is anisotropic, $y = Xw$ with $w$ drawn once, float64, $300$ steps. Depths
+$L \in \{2, 32\}$ and initialisations $\{$Xavier, orthogonal$\}$. Eight optimisers: gradient
+descent, Adam, the reference, Muon, Shampoo, SOAP, K-FAC and heavy ball.
 
-Two configurations are reported. \emph{(a) The depth series:} deep linear, hidden width $8$,
-$L \in \{2, 8, 32\}$, five seeds, $400$ steps, arms gradient descent, Adam, damped alternating
-least squares and the reference. \emph{(b) The full grid:} hidden width $32$, $L = 32$, $n = 128$,
-$300$ steps, covering every combination of five architectures $\{$deep linear, FGLN, ReLU, leaky
-ReLU, CReLU$\}$, four initialisations $\{$He, Xavier, orthogonal, looks-linear$\}$ and eight
-optimisers $\{$gradient descent, Adam, the reference, Muon, Shampoo, SOAP, K-FAC, heavy ball$\}$.
-In (b) each arm's learning rate is swept per panel and the rate reaching the lowest model loss is
-the one drawn --- the arms differ in natural step scale by orders of magnitude and the reference
-has no learning rate at all, so an untuned figure would compare tuning luck rather than geometry.
-Depth $32$ is chosen because the mismatch grows with depth (Section~\ref{sec:e16}); at shallow
-depth the arms lie nearly on top of one another.
+Two configuration notes. He initialisation is omitted: applied to a \emph{linear} chain it assumes
+a rectifier halves the variance and there is nothing to halve it, so the gain is $2$ per layer and
+the operator reaches $\|P\|_\infty = 1.1\times10^{4}$ at $L=32$, from which no optimiser in the grid
+recovers. Looks-linear initialisation is also omitted: the $[\,O \mid -O\,]$ construction requires
+CReLU's doubled feature dimension (Section~\ref{sec:lookslinear}), so on a linear chain it reduces
+to the orthogonal case and contributes no separate panel.
+
+The reference here is the \emph{exact} minimal realisation of Section~\ref{sec:s1}, obtained from a
+damped minimum-norm solve, rather than the Krylov-truncated practical solver of
+Section~\ref{sec:s2}. On a deep linear chain the step map is largely null --- measured at $83\%$
+nullity at $L=6$, width $8$ --- and a truncated solve there reflects the solver rather than the
+rule.
+
+Each arm's step size is swept over a grid spanning $10^{-5}$ to $10^{-1}$ and the run drawn is the
+one that descends most directly among those reaching within a factor of two of that arm's best
+final loss. Selecting purely by lowest loss admits step sizes that overshoot and oscillate across
+the optimum: such a run lands low, but its path is a zigzag that describes the tuning rather than
+the rule.
 
 \paragraph{Measurement.}
-For (a): the realised operator change $\Delta P$ and its alignment with the request,
+For the figure, the operator path itself. Separately, on a depth series at width $8$ with five
+seeds, the realised operator change $\Delta P$ and its alignment with the request,
 \begin{equation}
   \mathrm{align} \;:=\; \cos\!\Big(\Delta P,\ -\tfrac{\partial \mathcal{L}}{\partial P}\Big),
   \label{eq:align}
 \end{equation}
-together with the final distance $\|P - P^\star\|$ to the ordinary least squares solution. We report the fraction
-of steps on which alignment is negative --- on which the step moved the operator \emph{against} the
-direction the loss asked for.
+from which we report the fraction of steps on which alignment is negative --- on which the step
+moved the operator \emph{against} the direction the loss asked for.
 
-For (b): the operator path itself. For the input-independent architectures (deep linear, FGLN) $P$
-is a single $1\times2$ matrix and the path is exact. For the gated architectures $P$ varies across
-inputs and the path is the data-averaged operator $\mathbb{E}_x[P(x)]$; each such panel is
-annotated with the spread of $P(x)$ across inputs, since an average cannot distinguish "every input
-sees the same map" from "the average of two very different maps", and the second is what a
-nonlinear network is for. On those panels the contours are a frame of reference rather than the
-model's true loss surface.
+\paragraph{Status.} \textsc{done}.
 
-\paragraph{Status.} \textsc{done} for (a); \textsc{partial} for (b), which is regenerating at the
-time of writing.
+\paragraph{Results.}
 
-\paragraph{Results (a).}
-Percentage of steps with negative alignment, mean over five seeds with the per-seed range in
-brackets. Diverged runs are excluded and counted separately, since a diverging run contributes an
-alignment statistic computed from a handful of blown-up steps.
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{fig_traj_linear.pdf}
+\caption{Operator-space trajectories of eight optimisers on a deep linear chain, at $L = 2$ (top)
+and $L = 32$ (bottom), under Xavier (left) and orthogonal (right) initialisation. Dots mark
+initialisation, the star marks the ordinary least squares solution, grey curves are exact loss
+contours, and axes are scaled per panel. All eight converge in all four panels.}
+\label{fig:trajlinear}
+\end{figure}
+
+Negative-alignment rates on the depth series, mean over five seeds with the per-seed range in
+brackets:
 
 \begin{center}\small
 \begin{tabular}{lccc}
@@ -806,59 +772,33 @@ $L=32$ & $0.0\%$ $[0,0]$ & $26.9\%$ $[15,37]$ & $0.1\%$ \\
 \end{tabular}
 \end{center}
 
-\paragraph{Results (b).}
-Figure~\ref{fig:trajgrid} shows the grid. Beyond the trajectories themselves it records the scale
-of the operator at initialisation in every cell, which at depth $32$ spans six orders of magnitude:
-
-\begin{center}\small
-\begin{tabular}{lcccc}
-\toprule
-$\|P\|_\infty$ at initialisation & He & Xavier & orthogonal & looks-linear \\
-\midrule
-deep linear & $1.1\cdot10^{4}$ & $1.6\cdot10^{-1}$ & $1.9\cdot10^{-1}$ & $1.9\cdot10^{-1}$ \\
-FGLN        & $2.4\cdot10^{-2}$ & $3.6\cdot10^{-7}$ & $1.1\cdot10^{-7}$ & $1.1\cdot10^{-7}$ \\
-ReLU        & $5.4\cdot10^{-1}$ & $8.2\cdot10^{-6}$ & $2.0\cdot10^{-6}$ & $2.0\cdot10^{-6}$ \\
-leaky       & $1.2\cdot10^{0}$  & $1.8\cdot10^{-5}$ & $2.5\cdot10^{-6}$ & $2.5\cdot10^{-6}$ \\
-CReLU       & $6.1\cdot10^{0}$  & $9.3\cdot10^{-5}$ & $1.1\cdot10^{-5}$ & $\mathbf{1.9\cdot10^{-1}}$ \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\begin{figure}[p]
-\centering
-\includegraphics[width=\textwidth]{fig_traj_grid_L32.pdf}
-\caption{Operator-space trajectories at depth $32$, width $32$: five architectures $\times$ four
-initialisations, with eight optimisers per panel. Dots mark initialisation, the star marks the
-ordinary least squares solution, and axes are scaled per panel because the initial operator spans
-six orders of magnitude across the grid. Panel titles report how many of the eight optimisers
-trained. For the gated architectures the path is the data-averaged operator.}
-\label{fig:trajgrid}
-\end{figure}
-
 \paragraph{Conclusions.}
-From (a): Adam moves the operator against the requested direction on a substantial fraction of
-steps at depth, in every seed --- the per-seed range never approaches zero --- while gradient
-descent and the reference essentially never do. The effect rises sharply from $L=2$ and then
-plateaus; with five seeds the difference between $L=8$ and $L=32$ lies within the spread, so we
-claim a rise and a plateau rather than a monotone law in depth.
+\emph{The rules separate geometrically, and the separation is not a difference in destination.} All
+eight reach the least squares solution in all four panels; what differs is the route. The reference,
+gradient descent and K-FAC descend along nearly the same arc --- which is the visual form of K-FAC's
+predicted closeness to the projection (Section~\ref{sec:sota}) --- while SOAP and heavy ball take
+wide excursions transverse to it before turning in, and Muon takes a distinct intermediate path.
+Since every arm minimises the same quadratic in $P$, those excursions are produced entirely by how
+each rule maps a weight step into an operator step.
 
-Remark~\ref{rem:fidelity} is visible in the same numbers: at $L=32$ Adam reaches
-$\|P - P^\star\| = 0.0000$ while the reference reaches $0.1437$. Adam is the worse-aligned method
-\emph{and} the faster one. Alignment is fidelity to the operator gradient, not optimisation
-quality, and the two must not be conflated anywhere in this paper.
+\emph{Depth widens the spread.} At $L=2$ the arms are bunched; at $L=32$ they fan out, and the
+step sizes that survive selection fall by two to three orders of magnitude for the elementwise
+methods (Adam from $10^{-3}$ to $10^{-5}$ at Xavier) while the reference's target size is unchanged
+at $\eta = 0.3$ across both depths and both initialisations. The reference has no step size to
+retune because its scale is set by the requested operator change rather than by the curvature of the
+parameterisation.
 
-From (b): the initialisation table separates the two effects the framework claims are distinct.
-He initialisation applied to a deep \emph{linear} chain explodes the operator to $10^4$, because it
-assumes a rectifier halves the variance and there is nothing to halve it; FGLN vanishes to $10^{-7}$
-under Xavier and orthogonal; and CReLU with looks-linear initialisation is the only nonlinear
-setting sitting at $O(1)$ at this depth, which is precisely what it was constructed for
-(Section~\ref{sec:lookslinear}). Conditioning at initialisation and operator--parameter mismatch are
-therefore independently controllable, and the grid is the picture of that.
+\emph{Alignment is fidelity, not optimisation quality.} Adam moves the operator against the
+requested direction on a substantial fraction of steps at depth, in every seed, while gradient
+descent and the reference essentially never do. Yet at $L=32$ Adam reaches
+$\|P - P^\star\| = 0.0000$ while the reference reaches $0.1437$: the worse-aligned method is the
+faster one. Remark~\ref{rem:fidelity} states this distinction and it is enforced throughout the
+paper.
 
-Alternating least squares is included in (a) for continuity with the previous formulation and
-requires ridge damping here; undamped, it is anti-aligned on $100\%$ of steps at $L=2$ and diverges
-to $\|P - P^\star\| = 154$. It is not a minimal realisation, which is the point of the contrast
-(Appendix~\ref{app:als}).
+\emph{A note on the solvers.} Alternating least squares, retained from the previous formulation for
+continuity, requires ridge damping here; undamped it is anti-aligned on $100\%$ of steps at $L=2$
+and diverges to $\|P - P^\star\| = 154$. It is not a minimal realisation, which is the point of the
+contrast (Appendix~\ref{app:als}).
 
 % =========================================================================
 \section{Part II --- Gated networks}
@@ -896,10 +836,13 @@ gated networks and not for deep linear ones.
 The ReLU network confounds two effects that we wish to separate: it is nonlinear, and at depth it
 is ill-conditioned, necessarily so \citep{pennington2017resurrecting}. To vary gating and
 conditioning independently we need a network that is genuinely nonlinear yet perfectly conditioned
-by construction. The concatenated rectifier of \eqref{eq:crelu} provides one.
+by construction. The concatenated rectifier of \eqref{eq:crelu}, introduced by
+\citet{shang2016crelu} to exploit the opposite-phase filter pairs observed in trained
+convolutional networks, provides one.
 
 Write the layer weight in block form $W = [\,O \mid -O\,]$ with $O$ orthogonal --- the
-\emph{looks-linear} initialisation. Then for every $z$,
+\emph{looks-linear} initialisation of \citet{balduzzi2017shattered}, introduced there to keep
+gradients from shattering with depth by making the network exactly linear at initialisation. Then for every $z$,
 \begin{equation}
   W D(z) \;=\; O\,\mathrm{diag}(\mathbf{1}[z>0]) \;+\; O\,\mathrm{diag}(\mathbf{1}[z<0]) \;=\; O ,
 \end{equation}
@@ -978,7 +921,7 @@ shows the size of the effect: the gap between peak-selected and last-quarter-mea
 plotted against the swing of each run over the second half of training. Every number in Part II is
 selected and scored by the same estimator.
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.78\textwidth]{selection_bias.pdf}
 \caption{Peak-validation selection against the last-quarter mean, with the post-interpolation swing
@@ -1082,7 +1025,7 @@ leaky  & gradient descent & $0.203$ & $0.122$ & $1.0000$ & $0.000$ \\
 \end{tabular}
 \end{center}
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.49\textwidth]{alignment_relu.pdf}
 \hfill
@@ -1112,7 +1055,7 @@ reference satisfies $M(M^{+}\Delta_\star) = \Pi\Delta_\star$ identically, so a v
 reflects the truncation at $k=50$ rather than any property of the rule. The number is therefore a
 statement about how much of the reference fifty Krylov iterations capture at this depth, and it is
 reported alongside gradient descent's --- which \emph{is} exactly the $k=1$ truncation
-(Remark~\ref{rem:krylov}) --- with that distinction in mind. Section~\ref{sec:e16}
+(Remark~\ref{rem:krylov}) --- with that distinction in mind. Section~\ref{sec:e17}
 measures it as a function of $k$ and depth directly.
 
 % ---------------------------------------------------------------------------
@@ -1157,7 +1100,7 @@ leaky  & gradient descent & $0.1$    & $5.7\cdot10^{-5}$  & $1.000$ & $0.533 \pm
 \end{tabular}
 \end{center}
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.49\textwidth]{fit_vs_generalise.pdf}
 \hfill
@@ -1184,8 +1127,9 @@ does help, relative to the rule that differs from it only by Krylov truncation.
 
 It does not close the gap to Adam, and this is the central negative result of the paper. The most
 operator-faithful rule is not the best-generalising one; the \emph{least} faithful rule is. Sections
-\ref{sec:e12}--\ref{sec:e15} pursue several candidate explanations for that inversion and eliminate
-them.
+\ref{sec:e13}--\ref{sec:e16} pursue candidate explanations for that inversion --- when the advantage
+is created, whether more training closes it, whether momentum is the hidden mechanism, and whether
+robustness separates the arms --- and eliminate each.
 
 % ---------------------------------------------------------------------------
 \subsubsection{E6 --- Calibrating the scale: what do these accuracies mean?}
@@ -1262,7 +1206,7 @@ operator rank   & $6.00$  & $5.82$  & $1.69$  & $2.09$  & $3.29$  & $7.73$ \\
 \end{tabular}
 \end{center}
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.49\textwidth]{eta_k_heatmap.pdf}
 \hfill
@@ -1322,7 +1266,7 @@ CReLU & gradient descent & $1.000$ & $0.000$ & $0.000$ & $0.511$ \\
 \end{tabular}
 \end{center}
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.49\textwidth]{gates_relu.pdf}
 \hfill
@@ -1390,7 +1334,7 @@ ReLU  & initialisation   & ---    & $241.2$ & $100\%$ \\
 \end{tabular}
 \end{center}
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.49\textwidth]{operator_diversity.pdf}
 \hfill
@@ -1408,12 +1352,75 @@ high, which is a different regime from Adam's: a small number of distinct linear
 relatively high rank.
 
 Pointwise rank separates Adam from gradient descent and orders correctly with accuracy on ReLU, but
-it does not order the reference consistently, and Section~\ref{sec:e15} shows that rank comparisons
+it does not order the reference consistently, and Section~\ref{sec:e16} shows that rank comparisons
 across arms are confounded with the operator norm the arms arrive at.
 
 % ---------------------------------------------------------------------------
-\subsubsection{E10 --- Where the linear regions sit}
+\subsubsection{E10 --- What the representation looks like layer by layer}
 \label{sec:e10}
+
+\paragraph{Motivation and question.}
+E9 measures the operator, which is what the framework is about, but it says nothing directly about
+the \emph{representation} the network builds on the way. \emph{Do the arms organise class structure
+across depth differently, and is the operator-rank difference of E9 visible in the hidden
+activations?}
+
+\paragraph{Setup.} The common configuration, final checkpoint, $400$ test inputs. For each arm we
+take the hidden activation at layers $1, 2, 4, 6, 8$ and project onto its first two principal
+components, colouring by class.
+
+\paragraph{Measurement.} The fraction of activation variance captured by those two components,
+which is a direct measure of how low-dimensional the representation has become, and the visible
+class organisation.
+
+\paragraph{Status.} \textsc{done}.
+
+\paragraph{Results.}
+Fraction of variance in the first two principal components:
+
+\begin{center}\small
+\begin{tabular}{llccccc}
+\toprule
+architecture & arm & layer 1 & layer 2 & layer 4 & layer 6 & layer 8 \\
+\midrule
+ReLU  & gradient descent & $23\%$ & $20\%$ & $24\%$ & $47\%$ & $81\%$ \\
+      & Adam             & $21\%$ & $20\%$ & $44\%$ & $73\%$ & $77\%$ \\
+      & reference        & $28\%$ & $25\%$ & $39\%$ & $86\%$ & $\mathbf{100\%}$ \\
+\midrule
+CReLU & gradient descent & $35\%$ & $27\%$ & $27\%$ & $46\%$ & $85\%$ \\
+      & Adam             & $20\%$ & $18\%$ & $41\%$ & $61\%$ & $96\%$ \\
+      & reference        & $31\%$ & $30\%$ & $56\%$ & $85\%$ & $95\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{layer_reps_relu.pdf}
+\caption{Two-dimensional PCA of the hidden representation at layers $1$, $4$ and $8$ for each arm
+on ReLU, coloured by class. Adam separates classes along a low-dimensional filament by layer $4$;
+the reference collapses the representation almost entirely by layer $8$; gradient descent stays
+diffuse until the last layer.}
+\label{fig:layerreps}
+\end{figure}
+
+\paragraph{Conclusions.}
+The three arms compress the representation at different depths and to different degrees. Gradient
+descent stays diffuse --- two components explain only $20$--$24\%$ of the variance through layer $4$
+--- and compresses only at the output. Adam compresses earlier, reaching $44\%$ by layer $4$, and
+the class structure is visibly organised along a one-dimensional filament from that layer onward.
+The reference compresses hardest and latest, reaching $86\%$ by layer $6$ and $100\%$ at layer $8$
+on ReLU: by the final layer its representation is, to numerical precision, two-dimensional.
+
+This corroborates E9 in a different measurement: the reference's low operator rank is not an
+artefact of how $P(x)$ is summarised, it is visible directly in the activations. It also sharpens
+what "low rank" means for each arm --- Adam arrives at a low-dimensional representation that is
+\emph{organised by class} early, whereas the reference arrives at one that is lower-dimensional
+still but only at the end, which is consistent with its concentrating the partition on the data
+(E11) while generalising less well.
+
+\subsubsection{E11 --- Where the linear regions sit}
+\label{sec:e11}
 
 \paragraph{Motivation and question.}
 A gated network partitions input space into linear regions. \emph{Do the arms place their regions
@@ -1455,7 +1462,7 @@ Adam $-$ gd        & $+0.0009 \pm 0.0629$ & $+0.1$ & $46\%$ of planes \\
 \end{tabular}
 \end{center}
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.49\textwidth]{local_complexity_relu.pdf}
 \hfill
@@ -1465,7 +1472,7 @@ the nearest training point, averaged over $24$ random planes with a one-standard
 \label{fig:regions}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.49\textwidth]{slice_relu.pdf}
 \hfill
@@ -1492,8 +1499,8 @@ for all three arms, and the sign of the between-arm difference flips by architec
 placement is not the mechanism.
 
 % ---------------------------------------------------------------------------
-\subsubsection{E11 --- Capacity: does a smaller reference-trained network close the gap?}
-\label{sec:e11}
+\subsubsection{E12 --- Capacity: does a smaller reference-trained network close the gap?}
+\label{sec:e12}
 
 \paragraph{Motivation and question.}
 One reading of E8 and E9 is that the reference uses less of the network than it is given. \emph{If
@@ -1521,7 +1528,7 @@ $128$ & $0.511 \pm 0.013$ & $0.613 \pm 0.070$ & $0.571 \pm 0.029$ \\
 \end{tabular}
 \end{center}
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.7\textwidth]{capacity.pdf}
 \caption{Test accuracy against width for the three arms.}
@@ -1535,8 +1542,8 @@ ordering is preserved at every width at which all three arms fit. Excess capacit
 reference is failing to exploit.
 
 % ---------------------------------------------------------------------------
-\subsubsection{E12 --- When is the advantage created? The optimiser-switch experiment}
-\label{sec:e12}
+\subsubsection{E13 --- When is the advantage created? The optimiser-switch experiment}
+\label{sec:e13}
 
 \paragraph{Motivation and question.}
 The endpoint comparison of E5 says \emph{that} Adam ends better; it says nothing about \emph{when}
@@ -1571,7 +1578,7 @@ CReLU, reference then Adam & $0.596$ & $0.640$ & $0.608$ & $0.527$ & $0.503$ & $
 \noindent Standard deviations across the three seeds are $0.004$--$0.021$ except at the two pure-Adam
 CReLU cells, where they reach $0.058$--$0.070$.
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.49\textwidth]{switch_relu.pdf}
 \hfill
@@ -1601,8 +1608,8 @@ This is the clearest positive result in Part II and it sharpens the open questio
 in the first few thousand steps that the reference does not, and why is it irreversible?
 
 % ---------------------------------------------------------------------------
-\subsubsection{E13 --- Extended training}
-\label{sec:e13}
+\subsubsection{E14 --- Extended training}
+\label{sec:e14}
 
 \paragraph{Motivation and question.}
 All arms are demonstrably still moving at $12000$ steps. \emph{Does the ordering survive $20$--$80
@@ -1635,7 +1642,7 @@ reference        & $0.526 \to 0.496$ & $34.6$k $\to 33.1$k & $0.694 \to 0.655$ &
 \end{tabular}
 \end{center}
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{fig_extended_relu_all.pdf}
 \caption{Every tracked statistic over $300000$ steps, all three arms on shared axes. Gradient
@@ -1643,7 +1650,7 @@ descent is static; only Adam keeps restructuring, and it eventually destabilises
 \label{fig:extended}
 \end{figure}
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.49\textwidth]{spikes_adam_relu.pdf}
 \hfill
@@ -1676,15 +1683,26 @@ The headline answer to the question is negative: more time does not close the re
 the ordering does not reverse.
 
 % ---------------------------------------------------------------------------
-\subsubsection{E14 --- Operator momentum: is unfaithfulness itself the useful ingredient?}
-\label{sec:e14}
+\subsubsection{E15 --- Isolating the momentum effect}
+\label{sec:e15}
 
 \paragraph{Motivation and question.}
-E4 and E5 together invite an uncomfortable reading: the \emph{least} operator-faithful rule
-generalises best. Taken at face value, that suggests unfaithfulness is the useful ingredient. But
-Adam differs from the reference in many ways at once, so the comparison cannot isolate faithfulness.
-\emph{Does degrading faithfulness inside the operator family, holding everything else fixed, improve
-generalisation?}
+The deflection diagnostic of E4 compares a \emph{single} step against the request made at that same
+point. That is the right comparison for a memoryless rule, but it is systematically unkind to a rule
+with memory. Adam carries a first-moment average with $\beta_1 = 0.9$, so its current step is a
+weighted average of roughly the last ten gradients; it therefore \emph{must} deviate from the
+current request, not because its direction is wrong but because it is integrating. Its near-zero
+$\cos_{op}$ is thus not, on its own, evidence about the quality of the direction it takes.
+
+This raises a concrete possibility that the diagnostic cannot see: \emph{Adam may be performing
+something equivalent to momentum at the operator level --- accumulating a coherent operator motion
+across steps --- while every individual step scores as unfaithful.} If so, the framework would be
+missing the mechanism entirely rather than measuring it.
+
+The question this experiment answers is therefore: \emph{is momentum the mechanism?} Adding momentum
+directly to the operator step isolates that one ingredient, holding target, solver, step size and
+seeds fixed. If accumulated operator motion is what Adam's advantage rests on, the operator rule
+with momentum should capture it.
 
 \paragraph{Setup.}
 The reference step is smoothed directly,
@@ -1695,20 +1713,18 @@ The reference step is smoothed directly,
 with \emph{no} learning rate: the operator rule has none, since the step size enters through $\eta$
 inside $\Delta_\star$. The factor $(1-\beta)$ keeps $\|u_t\|$ on the scale of a single reference
 step, so $\beta$ changes the direction the step is smoothed towards and not its magnitude, and
-$\beta = 0$ recovers the unmodified reference exactly. ReLU and CReLU, $\eta \in \{0.5, 1\}$,
-$k = 50$, $\beta \in \{0, 0.5, 0.9, 0.99\}$, three seeds: $48$ cells.
+$\beta = 0$ recovers the unmodified reference exactly. This is momentum on the \emph{realised
+operator displacement} rather than on the gradient, which is what makes it the operator-level
+analogue of Adam's first moment. ReLU and CReLU, $\eta \in \{0.5, 1\}$, $k = 50$,
+$\beta \in \{0, 0.5, 0.9, 0.99\}$, three seeds: $48$ cells.
 
-\paragraph{Why it should reduce faithfulness.}
-$\Delta W^{\mathrm{ref}}_t$ lies entirely in $\mathrm{range}(M_t^\top)$. But $M_t$ depends on the
-weights, so $\mathrm{range}(M^\top)$ rotates as training moves: a stale $u_{t-1}$ was faithful where
-it was computed and is not at the current point, and part of it now lies in $\ker M_t$, moving
-weights without moving the operator. Larger $\beta$ means staler, so deflection should fall
-monotonically in $\beta$.
+\paragraph{Measurement.}
+Stable test accuracy, paired against the $\beta = 0$ control on the same seed, together with
+$\cos_{op}$ and $\cos_w$ over the same cells and the final training loss.
 
 \paragraph{Status.} \textsc{done}.
 
 \paragraph{Results.}
-Paired against the $\beta = 0$ control on the same seed:
 
 \begin{center}\small
 \begin{tabular}{llccc}
@@ -1727,38 +1743,44 @@ CReLU & $0.5$ & $+0.006 \pm 0.006$ & $+0.003 \pm 0.011$ & $-0.009 \pm 0.005$ \\
 $0.09$--$0.30$ at $\beta = 0.99$, and $\cos_w$ falls with it ($0.34 \to 0.03$ on ReLU). Every cell
 still interpolates, with final training loss $\le 10^{-8}$ throughout.
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{fig_momentum.pdf}
-\caption{Operator momentum: test accuracy against $\beta$ (left column) and the operator-space
-faithfulness it trades away (right column), for ReLU and CReLU. The two move in opposite directions
-from what the faithfulness reading would predict.}
+\caption{Operator momentum: test accuracy against $\beta$ (left column) and single-step
+operator-space deflection over the same cells (right column), for ReLU and CReLU. Momentum lowers
+the single-step deflection by an order of magnitude and buys nothing.}
 \label{fig:momentum}
 \end{figure}
 
 \paragraph{Conclusions.}
-The mechanism prediction holds exactly: $\beta$ is an effective and monotone dial for
-unfaithfulness. Accuracy does not follow it. No $\beta$ beats the control by more than noise, and
-$\beta = 0.99$ costs $0.05$--$0.07$ where the effect is largest. Since all cells interpolate, this is
-a generalisation effect and not a failure to fit.
+\emph{Momentum is not the mechanism.} No $\beta$ beats the $\beta = 0$ control by more than noise,
+and $\beta = 0.99$ costs $0.05$--$0.07$ where the effect is largest. Since every cell interpolates,
+this is a generalisation effect and not a failure to fit. Accumulating operator motion across steps,
+which is the operator-level analogue of what Adam's first moment does, does not reproduce Adam's
+advantage. Whatever Adam is doing, it is not that.
 
-This is a within-family control for the central negative result. Faithfulness was reduced by an
-order of magnitude with target, solver, $\eta$ and seeds all held fixed, and generalisation got
-\emph{worse}. The inverse ordering of E4 and E5 is therefore a correlation across arms and not a
-causal relationship: being unfaithful is not what makes Adam good. Whatever Adam does is a specific
-\emph{direction} of deflection, not deflection as such.
+\emph{The measurement caveat is confirmed and quantified.} Momentum does exactly what the framing
+predicted it would do to the diagnostic: it drives single-step $\cos_{op}$ down by an order of
+magnitude, from $0.80$--$0.88$ to $0.09$--$0.30$, purely by carrying stale displacement. The reason
+is structural --- $\Delta W^{\mathrm{ref}}_t$ lies in $\mathrm{range}(M_t^\top)$, but $M_t$ moves
+with the weights, so a stale $u_{t-1}$ has a component in $\ker M_t$ at the current point. So a low
+single-step deflection is genuinely ambiguous between "this rule takes a poor direction" and "this
+rule has memory", and Adam's near-zero value cannot be read as the former without this control.
 
-Operator momentum is not a useful modification of the reference rule. Its value here is as the
-control that eliminates the cheapest available explanation.
+The two findings together close the loop. Momentum \emph{can} produce a low $\cos_{op}$ without any
+benefit, so the diagnostic's unkindness to rules with memory is real; and momentum applied to the
+operator rule produces no benefit either, so the hypothesis that Adam's advantage is hidden
+accumulated operator motion is eliminated rather than merely unmeasured. A useful consequence for
+reading the rest of Part II: any conclusion drawn from $\cos_{op}$ about a momentum-carrying rule
+should be understood as a statement about its single steps, not about its trajectory.
 
-% ---------------------------------------------------------------------------
-\subsubsection{E15 --- Adversarial robustness}
-\label{sec:e15}
+\subsubsection{E16 --- Adversarial robustness}
+\label{sec:e16}
 
 \paragraph{Motivation and question.}
 Clean accuracy is one axis. \emph{Do the arms differ in the robustness of the function they arrive
 at, and if so does that separate them where the structural measures did not?} A method that places
-its partition on the data (E10) and under-uses its gating (E8) might plausibly produce a flatter,
+its partition on the data (E11) and under-uses its gating (E8) might plausibly produce a flatter,
 more robust function.
 
 \paragraph{Setup.}
@@ -1801,7 +1823,7 @@ leaky & gradient descent & $0.534$ & $59.0\%$ & $31.8\%$ & $0.9\%$ & $1.50$  & $
 \end{tabular}
 \end{center}
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{fig_robustness.pdf}
 \caption{Left: adversarial accuracy as a fraction of clean accuracy against $\epsilon$, best
@@ -1830,66 +1852,85 @@ $-0.49$. With $63$ cells, three correlated predictors and an unbalanced design, 
 separate rank from norm, and we draw no conclusion from it.
 
 % ---------------------------------------------------------------------------
-\subsubsection{E16 --- Faithfulness against depth}
-\label{sec:e16}
+\subsubsection{E17 --- Behaviour against depth}
+\label{sec:e17}
 
 \paragraph{Motivation and question.}
 The framework is motivated by the claim that the gap between a weight step and the operator step it
 induces \emph{grows with depth}. Every experiment above is at a single depth, so the claim is so far
-untested. \emph{Does operator-space faithfulness decay with depth, and does the generalisation
-ordering survive?}
+untested here. \emph{Does operator-space faithfulness decay with depth; does each arm still reach
+interpolation as depth grows; and does the generalisation ordering survive?}
 
 \paragraph{Setup.}
-$L \in \{2, 4, 8, 16, 32\}$, ReLU and CReLU, width $128$, three seeds, learning-rate grids extended
-downward ($10^{-4}$ for Adam, $10^{-3}$ for gradient descent) because the useful range moves with
-depth; $\eta \in \{0.3, 1, 3\}$ at $k = 50$ for the reference. $390$ cells.
+$L \in \{2, 4, 8, 16, 32\}$, ReLU and CReLU, width $128$, $12000$ steps, three seeds. Learning-rate
+grids extended downward ($10^{-4}$ for Adam, $10^{-3}$ for gradient descent) because the useful
+range moves with depth; $\eta \in \{0.3, 1, 3\}$ at $k = 50$ for the reference. $390$ cells.
 
-\paragraph{Status.} \textsc{partial}. $L \in \{2,4\}$ complete at three seeds; $L = 8$ in progress
-at one seed; $L \in \{16, 32\}$ pending. Numbers below are from completed cells only.
+\paragraph{Measurement.}
+Per depth and arm, at the best hyper-parameter by stable test accuracy: stable test accuracy, final
+training accuracy and training loss --- so that a change in test accuracy can be attributed to
+generalisation rather than to a failure to fit --- and $\cos_{op}$.
+
+\paragraph{Status.} \textsc{partial}. $L \in \{2,4\}$ complete at three seeds, $L = 8$ nearly
+complete, $L \in \{16, 32\}$ pending. Numbers below are from completed cells only.
 
 \paragraph{Results.}
 
 \begin{center}\small
-\begin{tabular}{lccccc}
+\begin{tabular}{llcccc}
 \toprule
- & \multicolumn{2}{c}{$\cos_{op}$, ReLU} & \multicolumn{3}{c}{$\cos_{op}$, CReLU} \\
-depth & gradient descent & Adam & gradient descent & Adam & reference \\
+ & & \multicolumn{3}{c}{test accuracy} & \\
+architecture & arm & $L=2$ & $L=4$ & $L=8$ & $\cos_{op}$, $L=2 \to 4$ \\
 \midrule
-$L=2$ & $0.398$ & $0.191$ & $0.481$ & $0.210$ & $1.000$ \\
-$L=4$ & $0.195$ & $0.112$ & $0.299$ & --- & $0.718$ \\
-$L=8$ & $0.224$$^\dagger$ & $0.022$$^\dagger$ & --- & --- & --- \\
+ReLU  & gradient descent & $0.538$ & $0.558$ & $0.527$ & $0.398 \to 0.195$ \\
+      & Adam             & $0.545$ & $0.607$ & $\mathbf{0.645}$ & $0.191 \to 0.112$ \\
+      & reference        & $0.506$ & $0.587$ & $0.591$ & $1.000 \to 0.780$ \\
+\midrule
+CReLU & gradient descent & $0.533$ & $0.572$ & --- & $0.481 \to 0.299$ \\
+      & Adam             & $0.543$ & $0.676$ & --- & $0.210 \to$ --- \\
+      & reference        & $0.516$ & $0.578$ & --- & $1.000 \to 0.718$ \\
 \bottomrule
 \end{tabular}
 \end{center}
-\noindent $^\dagger$ one seed only. Dashes are cells not yet complete.
+\noindent Dashes are cells not yet complete.
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
-\includegraphics[width=\textwidth]{fig_depth_cosop.pdf}
-\caption{Operator-space faithfulness against depth, at each arm's best hyper-parameter.
+\includegraphics[width=\textwidth]{fig_depth_summary.pdf}
+\caption{Depth sweep: test accuracy, final training accuracy, final training loss and $\cos_{op}$
+against depth, at each arm's best hyper-parameter, for ReLU (top) and CReLU (bottom).
 \textsc{partial}: the deeper cells are still running.}
-\label{fig:depth}
+\label{fig:depthsummary}
 \end{figure}
 
 \paragraph{Interim conclusions.}
-Gradient descent's operator faithfulness roughly halves from $L=2$ to $L=4$ ($0.398 \to 0.195$ on
-ReLU, $0.481 \to 0.299$ on CReLU), and Adam's falls with it. This is the framework's motivating claim
-appearing directly in a measurement for the first time, and it is the reason the trajectory figure
-of Section~\ref{sec:linear-exp} is drawn at $L = 32$ rather than at a shallow depth.
+\emph{The mismatch grows with depth, as the framework predicts.} Gradient descent's operator
+faithfulness roughly halves from $L=2$ to $L=4$ ($0.398 \to 0.195$ on ReLU, $0.481 \to 0.299$ on
+CReLU) and Adam's falls with it. This is the motivating claim appearing directly in a measurement,
+and it is why the trajectory figure of Section~\ref{sec:e2} is drawn at $L = 32$ rather than at a
+shallow depth.
 
-The reference's own row requires the reading established in E4: it is $1.000$ at $L=2$ --- where
-fifty Krylov iterations fully converge --- and lower at greater depth because a deeper step map needs
-more iterations at fixed $k$. Measured directly at $L = 32$ on ReLU, the operator arm's $\cos_{op}$
-against a converged target rises from $0.71$ at $k = 50$ to $0.88$ at $k=200$, $0.978$ at $k = 1000$
-and $0.9999$ at $k = 3000$. That row is a statement about the truncation, not about the rule.
+\emph{Depth helps every arm, and helps the reference most.} On ReLU the reference improves from
+$0.506$ at $L=2$ to $0.591$ at $L=8$, closing from $0.039$ behind gradient descent to $0.064$ ahead
+of it, while gradient descent peaks at $L=4$ and then declines. Adam improves monotonically. The
+$2$--$6$ point reference-over-gradient-descent margin reported at $L=8$ in E5 is therefore not a
+fixed offset: it is absent at $L=2$ and grows with depth over the range measured so far. If it
+continues at $L \in \{16, 32\}$ that is the strongest support the framework has, and it is the
+single most important number still outstanding.
 
-We will not draw a conclusion about the depth dependence of \emph{generalisation} until the deeper
-cells land; the completed depths show accuracy rising with depth for all arms, which is expected on
-this task and is not yet informative about the ordering.
+\emph{The comparison stays at matched fit.} Final training accuracy is $1.000$ for every completed
+cell, so the test-accuracy changes above are generalisation effects rather than differences in
+whether the task was learned.
 
-% ---------------------------------------------------------------------------
-\subsubsection{E17 --- Preconditioned and orthogonalised comparators}
-\label{sec:e17}
+The reference's own $\cos_{op}$ row requires the reading established in E4: it is $1.000$ at $L=2$,
+where fifty Krylov iterations fully converge, and lower at greater depth because a deeper step map
+needs more iterations at fixed $k$. Measured directly at $L = 32$ on ReLU, the operator arm's
+$\cos_{op}$ against a converged target rises from $0.71$ at $k = 50$ to $0.88$ at $k = 200$,
+$0.978$ at $k = 1000$ and $0.9999$ at $k = 3000$. That row is a statement about the truncation, not
+about the rule.
+
+\subsubsection{E18 --- Preconditioned and orthogonalised comparators}
+\label{sec:e18}
 
 \paragraph{Motivation and question.}
 The reference step is a preconditioner, $-\eta (M^\top M)^{+}\nabla_W \mathcal{L}$, and the natural
@@ -1911,7 +1952,7 @@ The full diagnostic set of E4 and E5: $\cos_{op}$, $\cos_w$, the $\ker M$ fracti
 and stable test accuracy, so that each comparator takes its place in the same table as the three
 main arms.
 
-\paragraph{Status.} \textsc{queued}. This sweep runs after E16 completes; no numbers yet.
+\paragraph{Status.} \textsc{queued}. This sweep runs after E17 completes; no numbers yet.
 
 \paragraph{What the result would mean.}
 If K-FAC's $\cos_{op}$ sits close to the reference's while the elementwise methods sit near Adam's,
@@ -1922,8 +1963,8 @@ separates weight-space conditioning from operator-space faithfulness, which is t
 paper rests on.
 
 % ---------------------------------------------------------------------------
-\subsubsection{E18 --- A scaling check on CIFAR-10}
-\label{sec:e18}
+\subsubsection{E19 --- A scaling check on CIFAR-10}
+\label{sec:e19}
 
 \paragraph{Motivation and question.}
 Everything above is on one small task. \emph{Do the diagnostics remain computable, and the ordering
@@ -1988,8 +2029,8 @@ $\ker M$ fraction (E4)           & $0.000$        & ${\approx}0.16$ & $0.000$   
 operator rank (E9)               & $5.8$--$6.5$   & $2.0$--$3.3$   & $1.6$--$2.7$   & gradient descent from both \\
 operator diversity (E9)          & $79$--$86\%$   & $12$--$40\%$   & $20$--$44\%$   & gradient descent from both \\
 switching fraction (E8)          & $0.996$--$1.000$ & $0.91$--$1.00$ & $0.71$--$0.76$ & the reference from both \\
-region concentration (E10)       & baseline       & $+0.001$--$0.02$ & $+0.09$--$0.15$ & the reference from both \\
-CW-PGD$_{0.05}$ / clean (E15)    & $58$--$59\%$   & $65$--$66\%$   & $62$--$65\%$   & nothing \\
+region concentration (E11)       & baseline       & $+0.001$--$0.02$ & $+0.09$--$0.15$ & the reference from both \\
+CW-PGD$_{0.05}$ / clean (E16)    & $58$--$59\%$   & $65$--$66\%$   & $62$--$65\%$   & nothing \\
 \midrule
 test accuracy (E5)               & $0.51$--$0.53$ & $0.61$--$0.66$ & $0.55$--$0.58$ & --- \\
 \bottomrule
@@ -2003,16 +2044,18 @@ gap, which is the largest of the three: on region concentration the two are stat
 indistinguishable ($t = +0.1$ on CReLU), and on switching they differ in the wrong direction.
 
 $\cos_{op}$ is the only measure that cleanly separates all three, and it orders them \emph{inversely}
-to accuracy. E14 establishes that this inversion is not causal: degrading faithfulness inside the
-operator family, with everything else held fixed, makes generalisation worse rather than better. So
-the framework's central diagnostic is a genuine and reproducible ordering of optimisers that does
-\emph{not} reduce to generalisation --- which is a clearer statement of what the operator view does
-and does not buy than either a positive or a null result alone would be.
+to accuracy. E15 shows that this inversion must not be read as a causal claim, and why: the
+diagnostic compares single steps, so a rule with memory scores low for a reason unrelated to the
+quality of its direction. Adam carries a first moment; operator momentum reproduces its low
+$\cos_{op}$ without reproducing any of its benefit, and adding accumulated operator motion to the
+reference rule does not recover Adam's advantage. So the framework's central diagnostic is a genuine
+and reproducible ordering of optimisers that does \emph{not} reduce to generalisation, and one whose
+value for momentum-carrying rules is a statement about their steps rather than their trajectories.
 
 Two cautions on reading the table. Operator rank and robustness vary more \emph{within} an arm
 across its hyper-parameter grid than \emph{between} arms at their best settings, so a per-arm row
 understates the variation. And the reference's $\cos_{op}$ row is partly a statement about Krylov
-truncation at $k = 50$ rather than about the rule, as E4 and E16 discuss.
+truncation at $k = 50$ rather than about the rule, as E4 and E17 discuss.
 
 \section{Conclusion}
 \label{sec:conclusion}

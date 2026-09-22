@@ -259,11 +259,18 @@ def fig_layer_reps(runs, arch="relu", seed=0, n=400, layers=(0, 3, 7)):
     _s.path.insert(0, str(HERE.parent / "studies"))
     import exp as _exp, posthoc as _ph
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+    # Selected by the same estimator used everywhere else: `pick` takes the best hyper-parameter
+    # by stable test accuracy, and the requested seed's run within it. Selecting this figure by
+    # peak validation while every number in the paper is selected by the stable statistic would
+    # show representations from a different run than the one being described.
     picked = []
     for arm in ARMS:
-        sub = select(runs, arch=arch, arm=arm, seed=seed)
-        if sub:
-            picked.append((arm, max(sub, key=lambda z: best_by_val(z[1])["val_acc"])))
+        got = pick(runs, arch, arm, width=128, steps=12000, by="stable")
+        if not got:
+            continue
+        _, group = got
+        same = [z for z in group if z[0]["seed"] == seed] or group
+        picked.append((arm, same[0]))
     if not picked:
         return None
     c0 = picked[0][1][0]
