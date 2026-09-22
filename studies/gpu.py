@@ -229,14 +229,42 @@ def lsqr(M, b, iters, atol=0.0, stall=0.0):
     return x
 
 
+_OP_STEP_DRIFT_RATIO = 1e6
+
+
 def op_step(Ws, X, R, eta, k, arch, atol=0.0):
-    """The lambda-free operator step: dW realising as much of -eta*G as k Krylov steps reach."""
+    """The lambda-free operator step: dW realising as much of -eta*G as k Krylov steps reach.
+
+    `k` is the bias dial, so this solve is deliberately truncated and deliberately UNDAMPED --
+    unlike `solve_min_norm`, which adds Tikhonov damping and stall detection because it is meant
+    to converge. The consequence is that quality here is not monotone in `k`. Measured at L=2,
+    width 128, MNIST-1D: cos against a converged reference is 1.0000 at k = 200 and k = 1000, and
+    then 0.61 (CReLU) / 0.96 (ReLU) at k = 2000, where ||dW|| has gone from 0.85 to 7.9e13 while
+    the operator residual moved only 1.66 -> 2.12. That is the ker(M) drift recorded in the
+    notebook's section 1.3: past convergence the iterate accumulates null-space components, which
+    cost nothing in the residual LSQR minimises and everything in the step actually taken.
+
+    Every result in the paper uses k <= 200 and is below this threshold, but nothing in the code
+    said so, so a later sweep at larger k would have returned a silently ruined step. The guard
+    raises instead, following the same principle as the exact-ALS dimension guard: a method's
+    limits belong in the code, not in the reader's memory.
+    """
     _, gs = forward(Ws, X, arch)
     A, B = contexts(Ws, gs, X, arch)
     G = R.unsqueeze(2) * X.unsqueeze(1)                     # per-sample rank-one operator gradient
     shapes = [tuple(W.shape) for W in Ws]
     M = StepMap(A, B, shapes)
-    x = lsqr(M, (-eta * G).reshape(-1), k, atol)
+    b = (-eta * G).reshape(-1)
+    x = lsqr(M, b, k, atol)
+    nx = torch.linalg.vector_norm(x)
+    nb = torch.linalg.vector_norm(b)
+    if nb > 0 and nx > _OP_STEP_DRIFT_RATIO * nb:
+        raise RuntimeError(
+            f"op_step: the undamped solve has drifted into ker(M) at k={k} "
+            f"(||dW||={float(nx):.3e} against ||target||={float(nb):.3e}). The step map's null "
+            f"space is large and LSQR's residual cannot see motion inside it, so more iterations "
+            f"make the step worse, not better. Use a smaller k (<= 200 is verified safe here), "
+            f"or solve with gpu.solve_min_norm, which damps and stall-detects.")
     return [x[M.offs[l]:M.offs[l + 1]].view(shapes[l]) for l in range(len(Ws))]
 
 
