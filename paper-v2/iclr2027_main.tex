@@ -263,9 +263,26 @@ Comparing the adjoint with \eqref{eq:backprop} shows that gradient descent's wei
 $\Delta W^{\mathrm{GD}} \propto M^\top \Delta_\star$. It is the adjoint applied to the target, not
 the solution of any equation involving the target.
 
-The gated architectures do not, in general, admit every requested operator change: $\Delta_\star$
-need not lie in $\mathrm{range}(M)$. The best available request is therefore its projection, and
-the reference step is the smallest update realising it.
+What we would like to ask for is exact: the smallest displacement whose \emph{realised} operator
+change is the requested one,
+\begin{equation}
+  \min_{\Delta W} \; \sum_\ell \|\Delta W_\ell\|_F^2
+  \quad \text{subject to} \quad
+  P(x; W + \Delta W) - P(x; W) \;=\; \Delta_\star(x) \ \ \text{for every } x .
+  \label{eq:exact}
+\end{equation}
+Note what is being minimised: the \emph{displacement} from the current weights, not the weights
+themselves. Minimising $\sum_\ell\|W_\ell\|^2$ subject to realising a target is a different
+problem --- the smallest factors realising it from scratch --- whose answer does not depend on
+where the weights currently are, and whose classical solution is balanced. That is not the
+question a training step asks.
+
+Problem \eqref{eq:exact} is a polynomial system in $\Delta W$ and we do not solve it. Everything
+below works with its linearisation, in which the constraint is replaced by $M(\Delta W) =
+\Delta_\star$: the step map is the derivative of the left-hand side of \eqref{eq:exact} at
+$\Delta W = 0$, so the two agree to first order. One further adjustment is needed. The gated
+architectures do not in general admit every requested change --- $\Delta_\star$ need not lie in
+$\mathrm{range}(M)$ --- so the best available request is its projection.
 
 \begin{definition}[Reference step]
 \label{def:ref}
@@ -456,8 +473,9 @@ architecture that \emph{is} conditioned by construction (Section~\ref{sec:looksl
 a control. \citet{wang2016extended} proposed the extended data Jacobian matrix as a diagnostic,
 which is an operator-level measurement in our sense, though used for model comparison rather than
 for scoring update rules. \citet{haas2026why} analyse how the Jacobian spectra of deep networks
-separate with depth, and establish the conservation of the gate-absorbed imbalance that
-Section~\ref{sec:conserve} recovers from minimality.
+separate with depth, and establish a conservation law for the gate-absorbed imbalance. Our
+Section~\ref{sec:conserve} recovers the ungated case of that law from minimality rather than from
+the dynamics; it does not extend to the gated case, where the conservation fails.
 
 \subsection{Geometry-aware and second-order optimisation}
 
@@ -531,36 +549,10 @@ Exact natural gradient; cancels the depth preconditioner & DLN & invertible Fish
 In a deep linear network the gates are the identity, so $P = W_L \cdots W_1$ is a single matrix
 shared by every input. The target reduces to one matrix, $\Delta_\star = -\eta\,
 \partial\mathcal{L}/\partial P$, and the step map \eqref{eq:M} maps weight updates into the space
-of $n_L \times n_0$ matrices. This is the regime in which the reference step can be computed
-exactly and in closed form, and in which the classical theory of Section~\ref{sec:sota} gives us
-something to validate against.
-
-\subsection{The prescribed-step problem}
-\label{sec:prescribed}
-
-Rather than solving \eqref{eq:ref} in its linearised form, in the linear case we can pose and
-solve the exact, non-linearised problem.
-
-\begin{definition}[Prescribed-step problem]
-\label{def:prescribed}
-At current weights $W_1,\dots,W_L$ realising $P = W_L \cdots W_1$, and given a requested operator
-change $\Delta_\star$, find the smallest \emph{displacement} that realises the new target exactly:
-\begin{equation}
-  \min_{\Delta W_1,\dots,\Delta W_L} \; \sum_{\ell=1}^{L} \|\Delta W_\ell\|_F^2
-  \quad \text{subject to} \quad
-  (W_L + \Delta W_L)\cdots(W_1 + \Delta W_1) \;=\; P + \Delta_\star .
-  \label{eq:prescribed}
-\end{equation}
-\end{definition}
-
-This is the exact, non-linearised counterpart of Definition~\ref{def:ref}: the constraint is on the
-\emph{perturbed} product rather than on its linearisation, and the objective is the displacement
-rather than the weights. The distinction matters and is easy to lose. Minimising $\sum\|W_\ell\|^2$
-subject to $W_L\cdots W_1 = P^\star$ is a different problem --- it asks for the smallest factors
-realising a target from scratch, and its answer does not depend on where the weights currently are.
-Everything in Part I concerns \eqref{eq:prescribed}; the static problem is mentioned only to keep
-the two apart, since the classical factorisation results --- minimal factors are balanced, and the
-minimal total norm is a Schatten quasi-norm --- describe it and not the step.
+of $n_L \times n_0$ matrices. Two things follow that do not hold once gates are present: the
+contexts are the same for every input, so the minimum-norm condition produces a \emph{single}
+Lagrange multiplier rather than one per input; and the classical theory of
+Section~\ref{sec:sota} gives us something to validate against.
 
 \subsection{Minimality conserves imbalance}
 \label{sec:conserve}
@@ -580,10 +572,24 @@ multiplier of the constraint, such that
   \qquad \text{for every } \ell .
   \label{eq:kkt}
 \end{equation}
-Consequently $\Delta W_{\ell+1}^\top W_{\ell+1}$ and $\Delta W_\ell W_\ell^\top$ are transposes of
-one another, and the imbalance $W_{\ell+1}^\top W_{\ell+1} - W_\ell W_\ell^\top$ is unchanged to
-first order in the step.
+If moreover the gates are trivial, $D_\ell = I$, then $\Delta W_{\ell+1}^\top W_{\ell+1}$ and
+$\Delta W_\ell W_\ell^\top$ are transposes of one another, and the imbalance
+$W_{\ell+1}^\top W_{\ell+1} - W_\ell W_\ell^\top$ is unchanged to first order in the step.
 \end{proposition}
+
+The hypothesis $D_\ell = I$ is not cosmetic and the result does not survive without it. The
+transpose identity requires $D_\ell$ to commute through the chain $W_\ell B_\ell \Lambda^\top
+A_{\ell+1} W_{\ell+1}$, which holds only when the gate is the identity. Measured as a relative
+violation $\|\Delta W_{\ell+1}^\top W_{\ell+1} - (\Delta W_\ell W_\ell^\top)^\top\| /
+\|\Delta W_{\ell+1}^\top W_{\ell+1}\|$ at a single minimal-displacement step: $10^{-14}$ for the
+deep linear chain, against $1$ to $25$ for FGLN, ReLU and leaky ReLU. Note that FGLN fails too even
+though its gates are fixed and input-independent --- what breaks the identity is that $D_\ell \ne
+I$, not that the gates vary with the input. Over a trajectory the consequence is milder but visible:
+the per-layer imbalance drifts by $0.1\%$ over $150$ steps in the deep linear case and by $1.9\%$
+under ReLU.
+
+So this is a Part I result in the strict sense: it is a statement about ungated chains, and Part II
+inherits the shared multiplier \eqref{eq:kkt} but not the conservation that follows from it.
 
 The content of Proposition~\ref{prop:conserve} is that the shared multiplier in \eqref{eq:kkt} ---
 one $\Lambda$ for all layers --- is forced by minimality, and the balance property follows from
