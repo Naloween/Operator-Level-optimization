@@ -616,3 +616,191 @@ def fig_switch(runs_switch, arch="relu"):
     ax.grid(alpha=0.25); ax.legend(frameon=False, fontsize=9)
     fig.tight_layout()
     return fig
+
+
+# ---------------------------------------------------------------- operator momentum
+def momentum_cells(runs, width=128, steps=12000, k=50):
+    """Index the momentum sweep by (arch, eta, beta), with beta=0 reproducing the plain reference.
+
+    The `opmom` arm carries hyper = (eta, k, beta) and applies the smoothed update
+    u_t = beta u_{t-1} + (1 - beta) d_t directly, with no learning rate, so beta = 0 is the
+    unmodified reference step and the beta = 0 column is a bit-for-bit control.
+    """
+    cells = {}
+    for c, r, _ in runs:
+        if c["width"] != width or c["steps"] != steps:
+            continue
+        h = c["hyper"]
+        if c["arm"] == "opmom" and h[1] == k:
+            cells.setdefault((c["arch"], h[0], h[2]), []).append(r)
+        elif c["arm"] == "op" and isinstance(h, (list, tuple)) and h[1] == k:
+            cells.setdefault((c["arch"], h[0], "plain"), []).append(r)
+    return cells
+
+
+def _tail_mean(recs, key, frac=0.5):
+    """Mean of `key` over the last `frac` of the probes -- the same estimator as stable_test."""
+    v = [x[key] for x in recs if key in x]
+    return float(np.mean(v[int(len(v) * frac):])) if v else np.nan
+
+
+def fig_momentum(runs, etas=(0.5, 1.0), betas=(0.0, 0.5, 0.9, 0.99), archs=("relu", "crelu")):
+    """Operator momentum: accuracy against beta, and the faithfulness it trades away.
+
+    Left column: test accuracy, paired to the beta = 0 control on the same seed. Right column:
+    operator-space deflection cos_op over the same cells. The point of putting them side by side
+    is that beta moves the two in opposite directions from what the faithfulness story predicts.
+    """
+    import matplotlib.pyplot as plt
+    cells = momentum_cells(runs)
+    fig, axes = plt.subplots(len(archs), 2, figsize=(9.6, 3.5 * len(archs)), squeeze=False)
+    mk = {0.5: ("o-", "#4c78a8"), 1.0: ("s-", "#e15759")}
+    xs = np.arange(len(betas))
+    for row, arch in enumerate(archs):
+        for eta in etas:
+            acc_m, acc_s, cos_m = [], [], []
+            for b in betas:
+                g = cells.get((arch, eta, b), [])
+                acc_m.append(np.mean([stable_test(r) for r in g]) if g else np.nan)
+                acc_s.append(np.std([stable_test(r) for r in g]) if g else np.nan)
+                cos_m.append(np.mean([_tail_mean(r, "cos_op") for r in g]) if g else np.nan)
+            fmt, col = mk[eta]
+            axes[row][0].errorbar(xs, acc_m, yerr=acc_s, fmt=fmt, color=col, capsize=3,
+                                  label=f"$\\eta$ = {eta:g}")
+            axes[row][1].plot(xs, cos_m, fmt, color=col, label=f"$\\eta$ = {eta:g}")
+        for col_i, (ylab, title) in enumerate(
+                [("test accuracy (last-quarter mean)", "generalisation"),
+                 ("$\\cos_{op}$ (last-half mean)", "operator-space faithfulness")]):
+            ax = axes[row][col_i]
+            ax.set_xticks(xs); ax.set_xticklabels([f"{b:g}" for b in betas])
+            ax.set_xlabel("momentum $\\beta$"); ax.set_ylabel(ylab)
+            ax.set_title(f"{arch}: {title}", fontsize=10)
+            ax.grid(alpha=0.25); ax.legend(frameon=False, fontsize=8)
+        axes[row][1].set_ylim(0, 1)
+    fig.tight_layout()
+    return fig
+
+
+def momentum_table(runs, etas=(0.5, 1.0), betas=(0.5, 0.9, 0.99), archs=("relu", "crelu")):
+    """Per-seed paired differences against beta = 0, so seed variance cancels."""
+    cells = momentum_cells(runs)
+    rows = []
+    for arch in archs:
+        for eta in etas:
+            base = {}
+            for c, r, _ in runs:
+                h = c["hyper"]
+                if (c["arch"] == arch and c["arm"] == "opmom" and c["width"] == 128
+                        and c["steps"] == 12000 and h[1] == 50 and h[0] == eta):
+                    base.setdefault(h[2], {})[c["seed"]] = r
+            if 0.0 not in base:
+                continue
+            for b in betas:
+                if b not in base:
+                    continue
+                shared = sorted(set(base[b]) & set(base[0.0]))
+                d = [stable_test(base[b][s]) - stable_test(base[0.0][s]) for s in shared]
+                rows.append(dict(
+                    arch=arch, eta=eta, beta=b, n=len(d),
+                    delta_acc=float(np.mean(d)), delta_sd=float(np.std(d)),
+                    cos_op=float(np.mean([_tail_mean(base[b][s], "cos_op") for s in shared])),
+                    cos_op_beta0=float(np.mean([_tail_mean(base[0.0][s], "cos_op") for s in shared])),
+                    final_train_loss=float(np.median([base[b][s][-1]["train_loss"] for s in shared])),
+                ))
+    return rows
+
+
+# ---------------------------------------------------------------- adversarial robustness
+def robustness_sweep(runs, archs=("relu", "crelu", "leaky"), width=128, steps=12000,
+                     eps=(0.1, 0.3), pgd_steps=50, restarts=1, dev=None, max_seeds=3):
+    """Clean and PGD accuracy at the final checkpoint of every (arch, arm, hyper) cell.
+
+    Reported alongside the final training accuracy, because "this function is not robust" is only
+    meaningful once we know it fit the data; and alongside the operator rank, because the k-dial
+    moves both at once. `ratio` is adversarial / clean -- robustness normalised by how good the
+    model was to begin with, since the arms differ by 10 points of clean accuracy.
+    """
+    import torch
+    import exp, gpu
+    import toy2d
+    dev = dev or ("cuda" if torch.cuda.is_available() else "cpu")
+    rows = []
+    for arch in archs:
+        cells = {}
+        for c, r, d in runs:
+            if c["arch"] != arch or c["width"] != width or c["steps"] != steps:
+                continue
+            h = c["hyper"]
+            key = (c["arm"], tuple(h) if isinstance(h, (list, tuple)) else h)
+            cells.setdefault(key, []).append((c, r, d))
+        for (arm, h), group in sorted(cells.items(), key=lambda kv: str(kv[0])):
+            acc = {k: [] for k in ("train", "clean", "pr")}
+            adv = {e: [] for e in eps}
+            for c, r, d in group[:max_seeds]:
+                if not (d / "ckpt.pt").exists():
+                    continue
+                Ws = [w.to(dev) for w in
+                      torch.load(d / "ckpt.pt", map_location=dev, weights_only=False)["Ws"]]
+                D = exp.mnist1d(4000, 1000, 1000, c["seed"], dev)
+                X, Y = D["Xte"], D["Yte"]
+                with torch.no_grad():
+                    o, _ = gpu.forward(Ws, X, arch)
+                    acc["clean"].append(float((o.argmax(1) == Y).float().mean()))
+                acc["train"].append(r[-1]["train_acc"])
+                v = [x["pr"] for x in r if "pr" in x]
+                acc["pr"].append(float(np.mean(v[len(v) // 2:])) if v else np.nan)
+                for e in eps:
+                    adv[e].append(min(toy2d.pgd_accuracy(Ws, X, Y, arch, eps=e, steps=pgd_steps)
+                                      for _ in range(restarts)))
+            if not acc["clean"]:
+                continue
+            row = dict(arch=arch, arm=arm, hyper=h, n=len(acc["clean"]),
+                       train_acc=float(np.mean(acc["train"])),
+                       clean=float(np.mean(acc["clean"])),
+                       pr=float(np.mean(acc["pr"])))
+            for e in eps:
+                row[f"pgd_{e}"] = float(np.mean(adv[e]))
+                row[f"ratio_{e}"] = float(np.mean(adv[e]) / np.mean(acc["clean"]))
+            rows.append(row)
+    return rows
+
+
+def fig_robustness(rows, eps=0.3, archs=("relu", "crelu")):
+    """Robustness against the k-dial, and against operator rank across every cell.
+
+    Left: the dial from k = 1 (which *is* gradient descent) to k = 200, with gd's own tuned runs
+    drawn as a band for comparison. Right: the same quantity against operator rank, pooling every
+    arm -- the relationship that the dial alone cannot distinguish from a k effect.
+    """
+    import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.4))
+    key = f"ratio_{eps}"
+    for arch, mk in zip(archs, ("o-", "s-")):
+        dial = [r for r in rows if r["arch"] == arch and r["arm"] == "op"
+                and isinstance(r["hyper"], tuple) and r["hyper"][0] == 1.0]
+        dial.sort(key=lambda r: r["hyper"][1])
+        if dial:
+            ks = [r["hyper"][1] for r in dial]
+            axes[0].plot(ks, [r[key] for r in dial], mk, color=COLOR["op"] if arch == "relu" else "#b07aa1",
+                         label=f"{arch}: reference, $\\eta$=1")
+        g = [r[key] for r in rows if r["arch"] == arch and r["arm"] == "gd"]
+        if g:
+            axes[0].axhspan(min(g), max(g), color=COLOR["gd"], alpha=0.12 if arch == "relu" else 0.08)
+            axes[0].axhline(float(np.mean(g)), color=COLOR["gd"], ls="--", lw=1,
+                            label=f"{arch}: gd, tuned lr grid" if arch == "relu" else None)
+    axes[0].set_xscale("log"); axes[0].set_xlabel("Krylov truncation $k$  ($k{=}1$ is gradient descent)")
+    axes[0].set_ylabel(f"PGD$_{{{eps}}}$ accuracy / clean accuracy")
+    axes[0].set_title("robustness along the bias dial", fontsize=10)
+    axes[0].grid(alpha=0.25); axes[0].legend(frameon=False, fontsize=8)
+
+    for arm in ARMS:
+        sub = [r for r in rows if r["arm"] == arm and r["arch"] in archs and r["train_acc"] > 0.999]
+        if sub:
+            axes[1].scatter([r["pr"] for r in sub], [r[key] for r in sub], s=34,
+                            color=COLOR[arm], label=LABEL[arm], alpha=0.85, edgecolor="white", lw=0.6)
+    axes[1].set_xlabel("operator rank (participation ratio, last-half mean)")
+    axes[1].set_ylabel(f"PGD$_{{{eps}}}$ accuracy / clean accuracy")
+    axes[1].set_title("interpolating cells only", fontsize=10)
+    axes[1].grid(alpha=0.25); axes[1].legend(frameon=False, fontsize=8)
+    fig.tight_layout()
+    return fig
