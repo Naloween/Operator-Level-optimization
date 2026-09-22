@@ -354,3 +354,265 @@ def fig_pointwise_vs_diversity(runs):
     axes[0].legend(frameon=False, fontsize=9)
     fig.tight_layout()
     return fig
+
+
+def fig_eta_k_dynamics(runs, arch="crelu", seed=0, width=128, steps=12000):
+    """Training dynamics across the eta x k grid, against tuned gd and Adam.
+
+    Four panels, all from runs already computed:
+      (a) training loss, varying k at fixed eta -- what FAITHFULNESS does to the dynamics
+      (b) training loss, varying eta at fixed k -- what STEP SIZE does, for contrast
+      (c) test accuracy for the same runs, with the validation-selected point marked
+      (d) gate density, where the operator arm's early transient is visible
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib import cm
+    # width/steps must be pinned: the capacity sweep produced op runs at widths 16/32/64 which
+    # would otherwise appear as extra, identically-coloured k=50 curves
+    sub = [(c, r) for c, r, d in select(runs, arch=arch, arm="op", seed=seed)
+           if isinstance(c["hyper"], list) and c["width"] == width and c["steps"] == steps]
+    if not sub:
+        return None
+    ks = sorted({c["hyper"][1] for c, _ in sub})
+    es = sorted({c["hyper"][0] for c, _ in sub})
+    fixed_e = 1.0 if 1.0 in es else es[len(es) // 2]
+    fixed_k = 50 if 50 in ks else ks[-1]
+    ck = {k: cm.viridis(i / max(len(ks) - 1, 1)) for i, k in enumerate(ks)}
+    ce = {e: cm.plasma(i / max(len(es) - 1, 1)) for i, e in enumerate(es)}
+
+    fig, ax = plt.subplots(2, 2, figsize=(13, 8))
+    for c, r in sub:
+        e, k = c["hyper"]
+        s = [x["step"] for x in r]
+        if abs(e - fixed_e) < 1e-9:
+            ax[0, 0].plot(s, [x["train_loss"] for x in r], color=ck[k], label=f"k={k}")
+            ax[1, 0].plot(s, [x["test_acc"] for x in r], color=ck[k], label=f"k={k}")
+            ax[1, 1].plot(s, [x["density"] for x in r], color=ck[k], label=f"k={k}")
+        if k == fixed_k:
+            ax[0, 1].plot(s, [x["train_loss"] for x in r], color=ce[e], label=f"$\\eta$={e:g}")
+    # tuned baselines for reference
+    for arm, style in (("gd", "--"), ("adam", ":")):
+        b = [z for z in select(runs, arch=arch, arm=arm, seed=seed)
+             if z[0]["width"] == width and z[0]["steps"] == steps]
+        if not b:
+            continue
+        c, r, _ = max(b, key=lambda z: stable_test(z[1]))
+        s = [x["step"] for x in r]
+        for a, key in ((ax[0, 0], "train_loss"), (ax[0, 1], "train_loss"),
+                       (ax[1, 0], "test_acc"), (ax[1, 1], "density")):
+            a.plot(s, [x[key] for x in r], style, color="0.25", lw=1.6,
+                   label=f"{arm} (tuned)")
+    ax[0, 0].set_title(f"training loss, varying $k$ at $\\eta$={fixed_e:g}", fontsize=10)
+    ax[0, 1].set_title(f"training loss, varying $\\eta$ at $k$={fixed_k}", fontsize=10)
+    ax[1, 0].set_title("test accuracy (varying $k$)", fontsize=10)
+    ax[1, 1].set_title("gate density (varying $k$)", fontsize=10)
+    for a in ax[0]:
+        a.set_yscale("log"); a.set_ylabel("training loss")
+    ax[1, 0].set_ylabel("test accuracy"); ax[1, 1].set_ylabel("gate density")
+    for a in ax.ravel():
+        a.set_xlabel("step"); a.grid(alpha=0.25)
+        a.legend(fontsize=7, ncol=2, frameon=False)
+    fig.suptitle(f"{arch}, seed {seed}: the operator arm across the $\\eta\\times k$ grid",
+                 fontsize=11)
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------- selection
+def stable_test(recs, frac=0.25):
+    """Test accuracy averaged over the final `frac` of probes -- no selection, no cherry-picking.
+
+    `best_by_val` takes the maximum over ~48 probes, which is an upward-biased estimator whenever
+    the run oscillates. Measured on ReLU under Adam, whose test accuracy swings by 0.318 and whose
+    training loss never falls below 0.68, the two estimators differ by 0.126 and they disagree
+    about which optimiser wins. Prefer this one, and report the swing alongside it so an unconverged
+    run is visible rather than silently flattering.
+    """
+    q = recs[int(len(recs) * (1 - frac)):]
+    return float(np.mean([x["test_acc"] for x in q]))
+
+
+def swing(recs, frac=0.5):
+    q = recs[int(len(recs) * (1 - frac)):]
+    return float(max(x["test_acc"] for x in q) - min(x["test_acc"] for x in q))
+
+
+def pick(runs, arch, arm, width=None, steps=None, by="stable"):
+    """Best hyperparameter for an (arch, arm) cell under the chosen estimator."""
+    sub = [(c, r, d) for c, r, d in select(runs, arch=arch, arm=arm)
+           if (width is None or c["width"] == width)
+           and (steps is None or c["steps"] == steps)]
+    if not sub:
+        return None
+    byh = {}
+    for c, r, d in sub:
+        byh.setdefault(hyper_of(c), []).append((c, r, d))
+    score = (lambda g: np.mean([stable_test(r) for _, r, _ in g])) if by == "stable" \
+        else (lambda g: np.mean([best_by_val(r)["val_acc"] for _, r, _ in g]))
+    bh = max(byh, key=lambda k: score(byh[k]))
+    return bh, byh[bh]
+
+
+def fig_selection_bias(runs):
+    """Peak-selected against last-quarter-mean, with the swing that explains the gap."""
+    import matplotlib.pyplot as plt
+    archs = [a for a in ("crelu", "relu", "leaky") if select(runs, arch=a)]
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
+    w = 0.25
+    xs = np.arange(len(archs))
+    for j, arm in enumerate(ARMS):
+        pk, st, sw = [], [], []
+        for arch in archs:
+            got = pick(runs, arch, arm, width=128, steps=12000)
+            if not got:
+                pk.append(np.nan); st.append(np.nan); sw.append(np.nan); continue
+            _, g = got
+            pk.append(np.mean([best_by_val(r)["test_acc"] for _, r, _ in g]))
+            st.append(np.mean([stable_test(r) for _, r, _ in g]))
+            sw.append(np.mean([swing(r) for _, r, _ in g]))
+        axes[0].bar(xs + (j - 1) * w, pk, w * 0.42, color=COLOR[arm], alpha=0.45,
+                    label=f"{LABEL[arm]} (peak)")
+        axes[0].bar(xs + (j - 1) * w + w * 0.44, st, w * 0.42, color=COLOR[arm],
+                    label=f"{LABEL[arm]} (last 25%)")
+        axes[1].bar(xs + (j - 1) * w, sw, w * 0.8, color=COLOR[arm], label=LABEL[arm])
+    axes[0].set_ylabel("test accuracy"); axes[0].set_title(
+        "peak-selected (pale) vs last-quarter mean (solid)", fontsize=10)
+    axes[1].set_ylabel("test-accuracy swing over the final half")
+    axes[1].set_title("how much the run is still oscillating", fontsize=10)
+    for a in axes:
+        a.set_xticks(xs); a.set_xticklabels(archs); a.grid(alpha=0.25, axis="y")
+    axes[0].legend(fontsize=7, ncol=3, frameon=False)
+    axes[1].legend(fontsize=8, frameon=False)
+    fig.tight_layout()
+    return fig
+
+
+def fig_eta_k_heatmap(runs):
+    """Test accuracy over the eta x k grid, as a heatmap rather than a printed table."""
+    import matplotlib.pyplot as plt
+    archs = [a for a in ("crelu", "relu") if select(runs, arch=a, arm="op")]
+    fig, axes = plt.subplots(1, len(archs), figsize=(5.6 * len(archs), 4.3), squeeze=False)
+    for ax, arch in zip(axes[0], archs):
+        cells = {}
+        for c, r, d in select(runs, arch=arch, arm="op"):
+            if not isinstance(c["hyper"], list) or c["width"] != 128 or c["steps"] != 12000:
+                continue
+            cells.setdefault(tuple(c["hyper"]), []).append(stable_test(r))
+        if not cells:
+            ax.axis("off"); continue
+        es = sorted({e for e, _ in cells}); ks = sorted({k for _, k in cells})
+        Z = np.full((len(ks), len(es)), np.nan)
+        for (e, k), v in cells.items():
+            Z[ks.index(k), es.index(e)] = np.mean(v)
+        im = ax.imshow(Z, cmap="viridis", aspect="auto", origin="lower")
+        ax.set_xticks(range(len(es))); ax.set_xticklabels([f"{e:g}" for e in es])
+        ax.set_yticks(range(len(ks))); ax.set_yticklabels(ks)
+        ax.set_xlabel(r"$\eta$ (step size)"); ax.set_ylabel("$k$ (faithfulness)")
+        ax.set_title(f"{arch}: test accuracy", fontsize=10)
+        for i in range(len(ks)):
+            for j in range(len(es)):
+                if np.isfinite(Z[i, j]):
+                    ax.text(j, i, f"{Z[i,j]:.3f}", ha="center", va="center", fontsize=7,
+                            color="white" if Z[i, j] < np.nanmax(Z) * 0.93 else "black")
+        fig.colorbar(im, ax=ax, fraction=0.046)
+    fig.tight_layout()
+    return fig
+
+
+def fig_capacity(runs):
+    """Test accuracy against width: does giving the operator arm LESS capacity close the gap?"""
+    import matplotlib.pyplot as plt
+    archs = [a for a in ("crelu", "relu") if select(runs, arch=a)]
+    fig, axes = plt.subplots(1, len(archs), figsize=(5.6 * len(archs), 4.2), squeeze=False)
+    for ax, arch in zip(axes[0], archs):
+        widths = sorted({c["width"] for c, _, _ in select(runs, arch=arch)})
+        for arm in ARMS:
+            xs, ys, es = [], [], []
+            for w in widths:
+                got = pick(runs, arch, arm, width=w, steps=12000)
+                if not got:
+                    continue
+                _, g = got
+                v = [stable_test(r) for _, r, _ in g]
+                xs.append(w); ys.append(np.mean(v)); es.append(np.std(v))
+            if xs:
+                ax.errorbar(xs, ys, yerr=es, marker="o", color=COLOR[arm], label=LABEL[arm],
+                            capsize=3)
+        ax.set_xscale("log", base=2); ax.set_xlabel("width"); ax.set_ylabel("test accuracy")
+        ax.set_title(arch, fontsize=10); ax.grid(alpha=0.25)
+    axes[0][0].legend(frameon=False, fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
+def fig_fit_vs_generalise(runs, width=128, steps=12000):
+    """Final training loss against test accuracy, every run. Two regimes, not one trend.
+
+    Below interpolation (gradient descent at small lr, Adam when it diverges) fitting better helps.
+    Above it -- and every operator run and every well-tuned Adam run interpolates, at 100% training
+    accuracy -- further loss reduction buys nothing, and among such runs the LESS converged ones
+    generalise better. The operator arm drives the loss about three orders lower than Adam and gains
+    nothing for it.
+    """
+    import matplotlib.pyplot as plt
+    archs = [a for a in ("crelu", "relu", "leaky") if select(runs, arch=a)]
+    fig, axes = plt.subplots(1, len(archs), figsize=(5.0 * len(archs), 4.2), squeeze=False)
+    for ax, arch in zip(axes[0], archs):
+        for arm in ARMS:
+            xs, ys, interp = [], [], []
+            for c, r, d in select(runs, arch=arch, arm=arm):
+                if c["width"] != width or c["steps"] != steps:
+                    continue
+                tl = r[-1]["train_loss"]
+                if not np.isfinite(tl) or tl <= 0:
+                    tl = 1e-12                       # log axis: floor exact zeros
+                xs.append(tl); ys.append(stable_test(r))
+                interp.append(r[-1]["train_acc"] > 0.999)
+            if not xs:
+                continue
+            xs, ys, interp = np.array(xs), np.array(ys), np.array(interp)
+            ax.scatter(xs[interp], ys[interp], color=COLOR[arm], s=38, alpha=0.9,
+                       edgecolor="white", linewidth=0.6, label=f"{LABEL[arm]} (interpolates)")
+            if (~interp).any():
+                ax.scatter(xs[~interp], ys[~interp], facecolor="none", edgecolor=COLOR[arm],
+                           s=46, linewidth=1.4, label=f"{LABEL[arm]} (does not fit)")
+        ax.set_xscale("log"); ax.invert_xaxis()
+        ax.set_xlabel("final training loss  (better fit $\\rightarrow$)")
+        ax.set_ylabel("test accuracy (last-quarter mean)")
+        ax.set_title(arch, fontsize=10); ax.grid(alpha=0.25)
+    axes[0][0].legend(fontsize=7, frameon=False, loc="lower left")
+    fig.tight_layout()
+    return fig
+
+
+def fig_switch(runs_switch, arch="relu"):
+    """Test accuracy against the handover step, both directions.
+
+    switch_at = 0 is the pure second arm, switch_at = total is the pure first arm, so the two
+    endpoints of each curve reproduce the unmixed optimisers and act as an internal check.
+    """
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(7.0, 4.6))
+    style = {"adam->op": ("#e15759", "o-"), "op->adam": ("#59a14f", "s-")}
+    for direction in ("adam->op", "op->adam"):
+        pts = {}
+        for c, r, d in runs_switch:
+            if c["arch"] != arch or c["arm"] != "switch":
+                continue
+            A, hA, B, hB, at = c["hyper"]
+            if f"{A}->{B}" != direction:
+                continue
+            pts.setdefault(at, []).append(stable_test(r))
+        if not pts:
+            continue
+        xs = sorted(pts)
+        m = [np.mean(pts[x]) for x in xs]
+        s = [np.std(pts[x]) for x in xs]
+        col, mk = style[direction]
+        ax.errorbar(xs, m, yerr=s, fmt=mk, color=col, capsize=3,
+                    label=f"{direction}  (n={len(pts[xs[0]])} seeds)")
+    ax.set_xlabel("handover step"); ax.set_ylabel("test accuracy (last-quarter mean)")
+    ax.set_title(f"{arch}: when is the advantage created?", fontsize=10)
+    ax.grid(alpha=0.25); ax.legend(frameon=False, fontsize=9)
+    fig.tight_layout()
+    return fig

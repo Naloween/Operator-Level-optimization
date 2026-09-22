@@ -111,6 +111,35 @@ def cifar10(n_train, n_val, n_test, seed, dev):
                 Xte=f(Xte_all[ite]), Yte=Yte_all[ite].to(dev))
 
 
+def moons(n_train, n_val, n_test, seed, dev, noise=0.15):
+    """Two moons in 2D, with a constant coordinate appended.
+
+    Why the constant. A bias-free positively homogeneous network satisfies f(lambda x) =
+    lambda f(x), so its decision regions are CONES through the origin and two moons would be
+    unlearnable. Appending a constant input restores affine capability on the original two
+    coordinates while leaving the network bias-free, so f(x) = P(x) x and the whole operator
+    framework remain exact. The visualisations below are drawn in the original 2D plane.
+    """
+    import numpy as _np
+    def make(n, s):
+        rng = _np.random.default_rng(s)
+        t = rng.uniform(0, _np.pi, n // 2)
+        a = _np.stack([_np.cos(t), _np.sin(t)], 1)
+        b = _np.stack([1 - _np.cos(t), 1 - _np.sin(t) - 0.5], 1)
+        X = _np.concatenate([a, b]) + rng.normal(0, noise, (n, 2))
+        y = _np.array([0] * (n // 2) + [1] * (n - n // 2))
+        q = rng.permutation(n)
+        return X[q], y[q]
+    out = {}
+    for name, n, s in (("tr", n_train, seed), ("va", n_val, seed + 101), ("te", n_test, seed + 202)):
+        X, y = make(n, s)
+        X = _np.concatenate([X, _np.ones((len(X), 1))], 1)          # the constant coordinate
+        out[f"X{name}"] = torch.tensor(X, dtype=torch.float32, device=dev)
+        out[f"Y{name}" if name != "tr" else "Ytr"] = torch.tensor(y, dtype=torch.long, device=dev)
+    return dict(Xtr=out["Xtr"], Ytr=out["Ytr"], Xva=out["Xva"], Yva=out["Yva"],
+                Xte=out["Xte"], Yte=out["Yte"])
+
+
 def get_task(cfg, dev):
     """Dispatch on cfg['task'], defaulting to mnist1d.
 
@@ -125,6 +154,8 @@ def get_task(cfg, dev):
         return mnist1d(*args)
     if name == "cifar10":
         return cifar10(*args)
+    if name == "moons":
+        return moons(*args)
     raise ValueError(f"unknown task {name!r}")
 
 
@@ -250,8 +281,44 @@ def alignment(Ws, X, R, eta, arch, arm, hyper, state, step, k_ideal=3000,
 
 # --------------------------------------------------------------------------- the arms
 def step_for(arm, Ws, X, R, hyper, arch, state, step, dtype_ok=False):
-    """The update each arm would take. `state` holds Adam's moments and is updated in place."""
+    """The update each arm would take. `state` holds Adam's moments and is updated in place.
+
+    `switch` hands over from one rule to another partway through training, to ask WHEN an
+    optimiser's advantage is created: if Adam's benefit is established in the first few hundred
+    steps and merely preserved thereafter, a run that starts with Adam and finishes with the
+    reference should keep it. If the benefit requires Adam throughout, it should not.
+    """
     n = X.shape[0]
+    if arm == "opmom":
+        # Momentum on the STEP, not on a gradient. The reference step already carries eta, so
+        # there is no learning rate: u_t = beta u_{t-1} + (1-beta) d_t is applied as-is. The
+        # (1-beta) keeps the steady-state magnitude equal to d_t, so beta=0 recovers the plain
+        # reference exactly and beta only changes the direction, never the scale -- without it,
+        # heavy-ball would inflate the step by 1/(1-beta) and confound momentum with step size.
+        eta, k, beta = hyper
+        d = gpu.op_step(Ws, X, R / R.norm().clamp_min(1e-12), eta, int(k), arch)
+        out = []
+        if dtype_ok:
+            # Scoring must neither create nor mutate the training state. Creating it here was a
+            # real bug: the alignment probe runs at step 0 *before* the first training step and
+            # promotes weights to float64, so `setdefault` seeded the momentum buffer in float64;
+            # the training path then added it to float32 weights, silently promoting them, and the
+            # next forward died on a float/double matmul.
+            u = state.get("u")
+            for i, di in enumerate(d):
+                prev = u[i].to(di.dtype) if u is not None else torch.zeros_like(di)
+                out.append(beta * prev + (1 - beta) * di)
+            return out
+        u = state.setdefault("u", [torch.zeros_like(w) for w in Ws])
+        for i, di in enumerate(d):
+            u[i].mul_(beta).add_(di.to(u[i].dtype), alpha=1 - beta)
+            out.append(u[i].clone())
+        return out
+    if arm == "switch":
+        a, ha, b, hb, at = hyper
+        sub, h = (a, ha) if step < at else (b, hb)
+        return step_for(sub, Ws, X, R, tuple(h) if isinstance(h, list) else h,
+                        arch, state, step, dtype_ok)
     if arm == "op":
         eta, k = hyper
         return gpu.op_step(Ws, X, R / R.norm().clamp_min(1e-12), eta, int(k), arch)

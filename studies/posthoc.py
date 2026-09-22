@@ -235,3 +235,72 @@ def decode_operator_step(Ws, X, R, arch, eta=0.3, k_ideal=2000):
     out["grad_vs_sign"] = cos(M.mv(cands["grad"]), M.mv(cands["sign"]))
     out["gradW_vs_signW"] = cos(cands["grad"], cands["sign"])
     return out
+
+
+def switching_units(Ws, X, arch):
+    """Fraction of units that actually SWITCH across inputs -- the gating that is really used.
+
+    `exp.gate_stats` reports `dead_units`, units never in the positive regime. For leaky that
+    undercounts what matters: a unit pinned to the leak side for every input passes alpha*z, a
+    purely LINEAR path, so it supplies no gating even though it is not dead. Equally, a unit
+    positive for every input is a linear path through the identity branch. Either way the network
+    is affine in that unit and no nonlinearity is being used.
+
+    So we report:
+        switching  fraction of units whose sign pattern is not constant over the inputs
+        always_on  fraction always in the positive regime
+        always_off fraction never in the positive regime (the old `dead_units`)
+    switching = 1 - always_on - always_off, and it is the quantity the leaky control should be
+    judged on.
+    """
+    if arch == "crelu":
+        _, gs = gpu.forward(Ws, X, arch)
+        on = [g > 0 for g in gs]
+    else:
+        _, gs = gpu.forward(Ws, X, arch)
+        on = [g > 0.5 for g in gs]
+    flat = torch.cat([o.reshape(o.shape[0], -1) for o in on], dim=1)
+    always_on = float(flat.all(0).float().mean())
+    always_off = float((~flat.any(0)).float().mean())
+    return dict(switching=1.0 - always_on - always_off,
+                always_on=always_on, always_off=always_off)
+
+
+def range_ker_split(Ws, X, R, arch, arm, hyper, state, step, eta=0.3, k_ideal=1500):
+    """Split each arm's weight step into the part that moves the operator and the part that does not.
+
+    Every update decomposes orthogonally as dW = P_range dW + P_ker dW, where range = range(M^T)
+    and ker = ker(M). The ker component changes the weights while leaving the function unchanged to
+    first order -- it is invisible to the loss now, but it reshapes the contexts A_l, B_l and hence
+    the geometry available to later steps.
+
+    This is not symmetric between the arms, by construction:
+        gradient descent   dW ∝ M^T Dstar            lies ENTIRELY in range(M^T)
+        the reference      dW  = M^T (M M^T)^+ Dstar lies ENTIRELY in range(M^T)
+        Adam               dW  = -lr * mhat/sqrt(vhat), whose per-coordinate rescaling takes it
+                           OUT of range(M^T)
+    so Adam is the only arm with a ker component, and measuring it asks whether that motion is
+    where its advantage lives.
+
+    P_range dW is computed as M^+ (M dW), i.e. the minimum-norm preimage of the operator change the
+    step actually causes; the remainder is the ker part.
+    """
+    W = [w.double() for w in Ws]
+    Xd, Rd = X.double(), R.double()
+    _, gs = gpu.forward(W, Xd, arch)
+    A, B = gpu.contexts(W, gs, Xd, arch)
+    M = gpu.StepMap(A, B, [tuple(w.shape) for w in W])
+    out = {}
+    from exp import step_for
+    for name, (a, h) in {"gd": ("gd", 1.0), "adam": ("adam", 1.0), "self": (arm, hyper)}.items():
+        dW = step_for(a, W, Xd, Rd, h, arch, state, step, dtype_ok=True)
+        v = torch.cat([d.reshape(-1) for d in dW])
+        nv = torch.linalg.vector_norm(v)
+        if nv == 0:
+            continue
+        rng = gpu.solve_min_norm(M, M.mv(v), iters=k_ideal, lam_rel=1e-7, stall=1e-10)
+        nr = torch.linalg.vector_norm(rng)
+        ker = v - rng
+        out[f"{name}_ker_frac"] = float(torch.linalg.vector_norm(ker) / nv)
+        out[f"{name}_range_frac"] = float(nr / nv)
+    return out
