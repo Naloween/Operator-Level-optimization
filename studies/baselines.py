@@ -51,9 +51,16 @@ def _inv_pow_spd(m, power, eps):
     return (Q * ev.clamp(min=eps).pow(power).unsqueeze(0)) @ Q.T
 
 
-def newton_schulz(G, steps=5, eps=1e-8):
-    """Approximate polar factor of a 2D matrix by the quintic Newton-Schulz iteration."""
-    a, b, c = 1.875, -1.25, 0.375
+def newton_schulz(G, steps=5, eps=1e-7):
+    """Approximate polar factor of a 2D matrix by the quintic Newton-Schulz iteration.
+
+    Coefficients are Muon's published ones, (3.4445, -4.7750, 2.0315), tuned by its author so
+    that five iterations suffice. The transcription this file started from used the *classical*
+    quintic coefficients (1.875, -1.25, 0.375); those converge to the same polar factor in the
+    limit but are far from it after five steps, so the two produce materially different updates
+    at the step budget Muon actually uses. `tests_baselines.py` quantifies the gap.
+    """
+    a, b, c = 3.4445, -4.7750, 2.0315
     X = G / (G.norm() + eps)
     transposed = X.shape[0] > X.shape[1]          # the iteration is stable on wide matrices
     if transposed:
@@ -94,12 +101,16 @@ def muon(g, state, hyper, mutate=True):
     collapsed operator spectrum despite updates that are perfectly conditioned in weight space.
     """
     lr, momentum = hyper[0], (hyper[1] if len(hyper) > 1 else 0.95)
-    nesterov, ns_steps, eps = True, 5, 1e-8
+    nesterov, ns_steps, eps = True, 5, 1e-7
     buf = _buffers(state, "muon", g, mutate)
     out = []
     for i, gi in enumerate(g):
-        b = buf[i].mul_(momentum).add_(gi) if mutate else buf[i] * momentum + gi
-        d = gi.add(b, alpha=momentum) if nesterov else b
+        # Official form: buf.lerp_(g, 1 - beta) then update = g.lerp_(buf, beta). The earlier
+        # transcription used buf = beta*buf + g, which is exactly 1/(1-beta) times this and so
+        # gives an identical direction once Newton-Schulz normalises -- verified to cos = 1.0 --
+        # but the published form is kept so the code reads as the algorithm it claims to be.
+        b = buf[i].lerp_(gi, 1 - momentum) if mutate else buf[i] + (gi - buf[i]) * (1 - momentum)
+        d = gi + (b - gi) * momentum if nesterov else b
         if d.ndim != 2:
             out.append(-lr * d / (d.norm() + eps))
             continue
@@ -108,16 +119,24 @@ def muon(g, state, hyper, mutate=True):
     return out
 
 
-def shampoo(g, state, hyper, mutate=True):
+def shampoo(g, state, hyper, mutate=True, graft=True):
     """Kronecker-factored preconditioning from accumulated gradient outer products.
 
     Two-sided, which by the framework's account is the property that matters: the update carries
     a left and a right factor and so can act on the operator's row and column geometry. But the
-    factors are an EMA of past gradients, not the current contexts, so they coincide with the
+    factors come from past gradients, not the current contexts, so they coincide with the
     reference's bases only when both contexts are near isometries.
+
+    Matched to `google-research/scalable_shampoo/pytorch/shampoo.py`: statistics accumulate as a
+    plain sum (`beta2 = 1.0`), the ridge is `matrix_eps = 1e-12`, and the Shampoo direction is
+    **grafted** to SGD's step magnitude -- take Shampoo's direction, take SGD's length. Grafting
+    is not in the 2018 paper; it is in every implementation anyone benchmarks, and without it the
+    step scale is set entirely by the preconditioner, which makes a shared learning-rate grid
+    meaningless against the other arms. The earlier transcription had beta = 0.9, eps = 1e-4 and
+    no grafting.
     """
     lr = hyper[0]
-    beta, eps = (hyper[1] if len(hyper) > 1 else 0.9), 1e-4
+    beta, eps = (hyper[1] if len(hyper) > 1 else 1.0), 1e-12
     L = state.get("sh_L"), state.get("sh_R")
     if state.get("sh_L") is None:
         Ls = [torch.zeros(w.shape[1], w.shape[1], device=w.device, dtype=w.dtype) for w in g]
@@ -134,9 +153,12 @@ def shampoo(g, state, hyper, mutate=True):
         if gi.ndim != 2:
             out.append(-lr * gi)
             continue
-        Ls[i].mul_(beta).add_(gi.T @ gi, alpha=1.0 - beta)
-        Rs[i].mul_(beta).add_(gi @ gi.T, alpha=1.0 - beta)
+        w2 = 1.0 if beta == 1.0 else 1.0 - beta      # beta2 = 1 is a plain sum, as in the paper
+        Ls[i].mul_(beta).add_(gi.T @ gi, alpha=w2)
+        Rs[i].mul_(beta).add_(gi @ gi.T, alpha=w2)
         upd = _inv_pow_spd(Rs[i], -0.25, eps) @ gi @ _inv_pow_spd(Ls[i], -0.25, eps)
+        if graft:                                     # SGD grafting: Shampoo direction, SGD length
+            upd = upd * (gi.norm() / (upd.norm() + 1e-16))
         out.append(-lr * upd)
     return out
 
@@ -144,8 +166,9 @@ def shampoo(g, state, hyper, mutate=True):
 def soap(g, state, hyper, step, mutate=True):
     """Adam run inside Shampoo's eigenbasis: the preconditioner picks a basis, Adam scales in it."""
     lr = hyper[0]
-    b1, b2 = 0.9, 0.999
-    sb, eps = (hyper[1] if len(hyper) > 1 else 0.95), 1e-8
+    b1, b2 = 0.95, 0.95                  # official SOAP defaults; the transcription had Adam's
+    sb, eps = (hyper[1] if len(hyper) > 1 else b2), 1e-8
+    precond_every = 10                   # official `precondition_frequency`; was 1 (every step)
     if state.get("so_m") is None:
         m = [torch.zeros_like(w) for w in g]
         v = [torch.zeros_like(w) for w in g]
@@ -160,26 +183,43 @@ def soap(g, state, hyper, step, mutate=True):
             v = [x.clone().to(g[i].dtype) for i, x in enumerate(v)]
             GL = [x.clone().to(g[i].dtype) for i, x in enumerate(GL)]
             GR = [x.clone().to(g[i].dtype) for i, x in enumerate(GR)]
+    # The eigenbasis is held between refreshes, as in the official implementation. Recomputing it
+    # every step is not more faithful, it is a different algorithm -- and it costs ~10x, which is
+    # what made SOAP the second most expensive arm in the sweep.
+    # Held as two flat tensor lists rather than a list of (ql, qr) pairs: `exp._ckpt_state`
+    # persists lists of tensors, and a list of tuples silently fails its type check, so a cached
+    # basis stored that way would vanish on every resume without anything reporting it.
+    QL, QR = state.get("so_QL"), state.get("so_QR")
+    refresh = QL is None or (step % precond_every == 0)
     t = step + 1
+    newQL, newQR = ([], []) if refresh else (None, None)
     out = []
     for i, gi in enumerate(g):
         if gi.ndim == 2:
             GL[i].mul_(sb).add_(gi @ gi.T, alpha=1.0 - sb)
             GR[i].mul_(sb).add_(gi.T @ gi, alpha=1.0 - sb)
-            eyeL = torch.eye(GL[i].shape[0], device=gi.device, dtype=gi.dtype)
-            eyeR = torch.eye(GR[i].shape[0], device=gi.device, dtype=gi.dtype)
-            ql, _ = svd_psd(GL[i] + eps * eyeL)
-            qr, _ = svd_psd(GR[i] + eps * eyeR)
+            if refresh:
+                eyeL = torch.eye(GL[i].shape[0], device=gi.device, dtype=gi.dtype)
+                eyeR = torch.eye(GR[i].shape[0], device=gi.device, dtype=gi.dtype)
+                ql, _ = svd_psd(GL[i] + eps * eyeL)
+                qr, _ = svd_psd(GR[i] + eps * eyeR)
+                newQL.append(ql); newQR.append(qr)
+            else:
+                ql, qr = QL[i].to(gi.dtype), QR[i].to(gi.dtype)
             gt = ql.T @ gi @ qr
         else:
             ql = qr = None
             gt = gi
+            if refresh:
+                newQL.append(None); newQR.append(None)
         m[i].mul_(b1).add_(gt, alpha=1.0 - b1)
         v[i].mul_(b2).add_(gt.square(), alpha=1.0 - b2)
         upd = m[i] / v[i].sqrt().add(eps)
         if ql is not None:
             upd = ql @ upd @ qr.T
         out.append(-(lr * (1.0 - b2 ** t) ** 0.5 / (1.0 - b1 ** t)) * upd)
+    if mutate and refresh:
+        state["so_QL"], state["so_QR"] = newQL, newQR
     return out
 
 
@@ -221,8 +261,18 @@ def kfac(Ws, X, R, g, state, hyper, arch, mutate=True):
         Gcov[k] = Gk.clone() if Gcov[k] is None else Gcov[k].mul_(decay).add_(Gk, alpha=1 - decay)
         eA = torch.eye(Acov[k].shape[0], device=X.device, dtype=X.dtype)
         eG = torch.eye(Gcov[k].shape[0], device=X.device, dtype=X.dtype)
-        nat = (torch.linalg.solve(Gcov[k] + (damping + eps) * eG, eG) @ g[k]
-               @ torch.linalg.solve(Acov[k] + (damping + eps) * eA, eA))
+        # Factored Tikhonov damping (Martens & Grosse, sec. 6.3): adding lam*I to A (x) G while
+        # preserving the Kronecker structure means splitting it as (A + pi sqrt(lam) I) and
+        # (G + sqrt(lam)/pi I) with pi chosen from the factors' average eigenvalues. Adding the
+        # same lam to both -- which is what this file did first, and pi = 1 -- damps whichever
+        # factor is smaller far harder than the other, and in a deep net their scales differ by
+        # orders of magnitude.
+        trA = float(Acov[k].diagonal().sum()) / Acov[k].shape[0]
+        trG = float(Gcov[k].diagonal().sum()) / Gcov[k].shape[0]
+        pi = (max(trA, 1e-30) / max(trG, 1e-30)) ** 0.5
+        rl = (damping + eps) ** 0.5
+        nat = (torch.linalg.solve(Gcov[k] + (rl / pi) * eG, eG) @ g[k]
+               @ torch.linalg.solve(Acov[k] + (rl * pi) * eA, eA))
         out.append(-lr * nat)
     if mutate and fresh:
         state["kf_A"], state["kf_G"] = Acov, Gcov

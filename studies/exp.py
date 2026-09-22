@@ -280,6 +280,36 @@ def alignment(Ws, X, R, eta, arch, arm, hyper, state, step, k_ideal=3000,
 
 
 # --------------------------------------------------------------------------- the arms
+def _ckpt_state(state):
+    """Every optimiser buffer, not just Adam's.
+
+    `state` originally held only Adam's `m` and `v`, so the checkpoint hard-coded those two keys.
+    The comparator arms in `baselines.py` keep their own buffers (Muon's momentum, Shampoo's and
+    SOAP's accumulated factors, K-FAC's covariances); with the old code a resumed run would
+    silently restart them from zero while the weights carried on, which no metric would flag.
+    Runs here are killed and resumed routinely, so this had to be general.
+    """
+    out = {}
+    for k, v in state.items():
+        if isinstance(v, list) and v and all(hasattr(x, "detach") for x in v):
+            out[k] = [x.detach().cpu() for x in v]
+        elif isinstance(v, list) and all(x is None or hasattr(x, "detach") for x in v):
+            out[k] = [None if x is None else x.detach().cpu() for x in v]
+    return out
+
+
+def _restore_state(z, dev):
+    """Inverse of `_ckpt_state`, tolerant of checkpoints written before it existed."""
+    st = {}
+    for k, v in z.items():
+        if k in ("Ws", "step"):
+            continue
+        if isinstance(v, list):
+            st[k] = [None if x is None else x.to(dev) for x in v]
+    st.setdefault("m", None)
+    return st
+
+
 def step_for(arm, Ws, X, R, hyper, arch, state, step, dtype_ok=False):
     """The update each arm would take. `state` holds Adam's moments and is updated in place.
 
@@ -377,7 +407,9 @@ def execute(experiment: str, cfg: dict, dev: str, force: bool = False) -> dict:
     if ck.exists() and not force:
         z = torch.load(ck, map_location=dev, weights_only=False)
         Ws = [w.to(dev) for w in z["Ws"]]
-        state = {"m": [w.to(dev) for w in z["m"]], "v": [w.to(dev) for w in z["v"]]}
+        state = _restore_state(z, dev)
+        if state.get("m") is None:                  # pre-_ckpt_state checkpoints
+            state = {"m": [w.to(dev) for w in z["m"]], "v": [w.to(dev) for w in z["v"]]}
         start = z["step"]
     mf = (d / "metrics.jsonl").open("a")
 
@@ -432,8 +464,7 @@ def execute(experiment: str, cfg: dict, dev: str, force: bool = False) -> dict:
                 break
             if step % cfg.get("ckpt_every", 2000) == 0 and step > start:
                 torch.save({"Ws": [w.detach().cpu() for w in Ws],
-                            "m": [x.detach().cpu() for x in state["m"]],
-                            "v": [x.detach().cpu() for x in state["v"]], "step": step}, ck)
+                            **_ckpt_state(state), "step": step}, ck)
     except Exception as exc:                                   # noqa: BLE001
         err = f"{type(exc).__name__}: {exc}"
     mf.close()
@@ -442,8 +473,7 @@ def execute(experiment: str, cfg: dict, dev: str, force: bool = False) -> dict:
     # single probe of the diverged weights, and marked itself complete with a nan in the metrics.
     if err is None:
         torch.save({"Ws": [w.detach().cpu() for w in Ws],
-                    "m": [x.detach().cpu() for x in state["m"]],
-                    "v": [x.detach().cpu() for x in state["v"]], "step": last_step}, ck)
+                    **_ckpt_state(state), "step": last_step}, ck)
     elif ck.exists():
         ck.unlink()                      # a failed run must not be resumable into a false success
     if err is None:
