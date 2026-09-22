@@ -344,6 +344,38 @@ def step_for(arm, Ws, X, R, hyper, arch, state, step, dtype_ok=False):
             u[i].mul_(beta).add_(di.to(u[i].dtype), alpha=1 - beta)
             out.append(u[i].clone())
         return out
+    if arm == "opnoise":
+        # The reference step plus noise, scaled relative to the step's own norm so that eps is
+        # dimensionless and comparable across eta. `mode` decides WHERE the noise lives:
+        #   iso    isotropic in weight space -- the standard noise-injection baseline
+        #   ker    projected onto ker(M): moves the weights while leaving the operator EXACTLY
+        #          unchanged, so it explores the function's level set and cannot help by
+        #          changing what the network computes
+        #   range  projected onto range(M^T): the complement, which changes the operator
+        # The ker/range split is the part the step map makes possible and isotropic injection
+        # cannot distinguish.
+        eta, k, eps = hyper[0], int(hyper[1]), hyper[2]
+        mode = hyper[3] if len(hyper) > 3 else "iso"
+        d = gpu.op_step(Ws, X, R / R.norm().clamp_min(1e-12), eta, k, arch)
+        flat = torch.cat([x.reshape(-1) for x in d])
+        gen = torch.Generator(device=flat.device).manual_seed(hash((step, mode)) & 0x7fffffff)
+        g = torch.randn(flat.shape, generator=gen, device=flat.device, dtype=flat.dtype)
+        if mode in ("ker", "range"):
+            _, gs = gpu.forward(Ws, X, arch)
+            A, B = gpu.contexts(Ws, gs, X, arch)
+            M = gpu.StepMap(A, B, [tuple(w.shape) for w in Ws])
+            # M^+ M g is the projection of g onto range(M^T); the remainder lies in ker M
+            # 300 iterations, not k: at k=50 the projection leaks 11% of the noise's operator
+            # motion back in, which would make a "function-preserving" arm that visibly changes
+            # the function. Measured leakage: 0.108 at 50 iters, 0.030 at 150, 0.012 at 300.
+            g_rng = gpu.solve_min_norm(M, M.mv(g), iters=300, lam_rel=1e-7, stall=1e-10)
+            g = (g - g_rng) if mode == "ker" else g_rng
+        ng = torch.linalg.vector_norm(g).clamp_min(1e-30)
+        noisy = flat + (eps * torch.linalg.vector_norm(flat) / ng) * g
+        offs, out = 0, []
+        for w in Ws:
+            out.append(noisy[offs:offs + w.numel()].view(w.shape)); offs += w.numel()
+        return out
     if arm == "switch":
         a, ha, b, hb, at = hyper
         sub, h = (a, ha) if step < at else (b, hb)

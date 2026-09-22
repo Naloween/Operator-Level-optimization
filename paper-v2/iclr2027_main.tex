@@ -2011,6 +2011,87 @@ would not include the accuracy column in a final version without either equalisi
 the budget mismatch as prominently as it is stated here.
 
 % ---------------------------------------------------------------------------
+\subsubsection{E20 --- Noise in the step, and where it is allowed to live}
+\label{sec:e20}
+
+\paragraph{Motivation and question.}
+Two observations from the experiments above point the same way. First, the reference generalises
+\emph{better at larger target size}: on ReLU its accuracy rises monotonically with $\eta$, from
+$0.524$ at $\eta = 0.1$ to $0.570$ at $\eta = 1$, and the same ordering holds on CReLU and leaky
+(E7). Second, larger $\eta$ crosses more nonlinearities: gate churn over the same cells rises from
+$0.0070$ to $0.0303$. A step large enough to move pre-activations across zero changes which linear
+region the model is in, which injects a form of stochasticity into the trajectory that a small step
+does not have.
+
+That suggests a mechanism rather than an accident, and it is one with a long literature behind it.
+Noise in the update is a classical route to flat minima --- regions of weight space over which the
+error is approximately constant \citep{hochreiter1997flat} --- whether it arises from Langevin
+dynamics \citep{welling2011sgld}, from explicit gradient-noise injection
+\citep{neelakantan2015adding}, from the minibatch noise of SGD itself
+\citep{smith2020generalization}, or from deliberately anticorrelated perturbations
+\citep{orvieto2022anticorrelated}.
+
+\emph{So: does injecting noise into the reference step improve its generalisation, and if it does,
+is the benefit coming from perturbing the function or from relocating the weights?} The second half
+is the part this framework can answer and isotropic noise injection cannot.
+
+\paragraph{The decomposition, and why it is the interesting measurement.}
+Weight space splits as $\mathrm{range}(M^\top) \oplus \ker M$. A perturbation in $\ker M$ moves the
+weights while leaving $M(\Delta W) = 0$: to first order the operator, and therefore the function the
+network computes, is \emph{unchanged}. That is exactly Hochreiter and Schmidhuber's flat region,
+identified constructively rather than searched for. A perturbation in $\mathrm{range}(M^\top)$ is
+the complement and changes the operator.
+
+This gives three arms that inject the same amount of noise in different places:
+\begin{equation}
+  \Delta W \;=\; \Delta W^{\mathrm{ref}} \;+\;
+  \varepsilon\,\frac{\|\Delta W^{\mathrm{ref}}\|}{\|\Pi_\bullet g\|}\,\Pi_\bullet g ,
+  \qquad g \sim \mathcal N(0, I),
+  \label{eq:opnoise}
+\end{equation}
+with $\Pi_\bullet$ the identity (\textsc{iso}), the projection onto $\ker M$ (\textsc{ker}), or the
+projection onto $\mathrm{range}(M^\top)$ (\textsc{range}). Scaling by
+$\|\Delta W^{\mathrm{ref}}\|$ makes $\varepsilon$ dimensionless and comparable across $\eta$.
+
+The three are separated as intended. Measured at $\varepsilon = 0.1$ on ReLU, the operator
+perturbation induced relative to the reference step's own operator motion is $0.137$ for
+\textsc{iso}, $0.017$ for \textsc{ker} and $0.324$ for \textsc{range}: the \textsc{ker} arm moves
+the weights by the same amount while moving the function by an order of magnitude less.
+
+\paragraph{Setup.}
+MNIST-1D, the common configuration, ReLU, $\eta = 1$, $k = 50$,
+$\varepsilon \in \{0.01, 0.03, 0.1, 0.3\}$, two seeds, with $\varepsilon = 0$ rerun inside the same
+sweep as the control. The \textsc{ker} and \textsc{range} arms require a projection at every step
+and are correspondingly more expensive, so they follow the isotropic pilot.
+
+\paragraph{Measurement.}
+Stable test accuracy against $\varepsilon$, paired to the $\varepsilon = 0$ control; final training
+loss and accuracy, to establish whether any change is a generalisation effect or a fitting one; and
+gate churn, to test whether injected noise reproduces the gate-crossing behaviour that larger $\eta$
+produces.
+
+\paragraph{Status.} \textsc{partial}. The isotropic pilot is running; the \textsc{ker} and
+\textsc{range} arms are queued. No numbers yet.
+
+\paragraph{What the possible outcomes would mean.}
+This is stated in advance because the experiment is cheap to over-read after the fact.
+
+If \textsc{iso} helps, we reproduce a known effect \citep{smith2020generalization} with a different
+base optimiser, which is a useful sanity check on the reference rule but not a contribution.
+
+If \textsc{ker} helps as much as \textsc{iso}, the benefit is available \emph{without changing the
+function at all}: the gain would come from where in the level set the weights sit, which is the
+flat-minima hypothesis in its purest measurable form and is not a statement isotropic injection can
+make.
+
+If \textsc{range} helps and \textsc{ker} does not, the benefit requires perturbing the function, and
+the flat-minima reading of the $\eta$ trend is wrong --- the effect would be closer to label-noise
+or implicit-regularisation-through-perturbation than to basin geometry.
+
+If nothing helps, the $\eta$ trend of E7 is a step-size effect rather than a noise effect, which is
+the confound this experiment exists to remove: larger $\eta$ changes both the step size and the
+amount of gate crossing, and only a fixed-$\eta$ noise sweep separates them.
+
 \subsubsection{Summary: what separates what}
 \label{sec:e-summary}
 

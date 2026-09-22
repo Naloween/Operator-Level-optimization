@@ -34,6 +34,10 @@ def main():
     ap.add_argument("--soap-lrs", type=float, nargs="*", default=[])
     ap.add_argument("--kfac-lrs", type=float, nargs="*", default=[])
     ap.add_argument("--heavyball-lrs", type=float, nargs="*", default=[])
+    ap.add_argument("--noise-eps", type=float, nargs="*", default=[],
+                    help="noise injected into the reference step, relative to its own norm")
+    ap.add_argument("--noise-modes", nargs="*", default=["iso"],
+                    choices=["iso", "ker", "range"])
     ap.add_argument("--ks", type=int, nargs="+", default=[50],
                     help="Krylov truncation levels: k=1 is exactly gradient descent, "
                          "large k the reference, so this is the bias dial")
@@ -67,6 +71,11 @@ def main():
             for k in a.ks:
                 for b in a.betas:
                     jobs.append((depth, arch, seed, width, "opmom", (e, k, b)))
+        for e in a.etas:
+            for k in a.ks:
+                for eps in a.noise_eps:
+                    for mode in a.noise_modes:
+                        jobs.append((depth, arch, seed, width, "opnoise", (e, k, eps, mode)))
     print(f"{len(jobs)} cells on {dev}", flush=True)
 
     t0 = time.time()
