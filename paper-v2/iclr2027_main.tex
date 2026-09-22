@@ -551,22 +551,45 @@ solve the exact, non-linearised problem.
 
 \begin{definition}[Prescribed-step problem]
 \label{def:prescribed}
-Given a target matrix $P^\star$ and a depth $L$, find factors minimising the total squared norm
-subject to realising the target exactly:
+At current weights $W_1,\dots,W_L$ realising $P = W_L \cdots W_1$, and given a requested operator
+change $\Delta_\star$, find the smallest \emph{displacement} that realises the new target exactly:
 \begin{equation}
-  \min_{W_1,\dots,W_L} \; \sum_{\ell=1}^{L} \|W_\ell\|_F^2
-  \qquad \text{subject to} \qquad
-  W_L W_{L-1} \cdots W_1 \;=\; P^\star .
+  \min_{\Delta W_1,\dots,\Delta W_L} \; \sum_{\ell=1}^{L} \|\Delta W_\ell\|_F^2
+  \quad \text{subject to} \quad
+  (W_L + \Delta W_L)\cdots(W_1 + \Delta W_1) \;=\; P + \Delta_\star .
   \label{eq:prescribed}
 \end{equation}
 \end{definition}
 
-The solution is classical in form and is governed by a Schatten quasi-norm. Writing
-$\|\cdot\|_{S_p}$ for the Schatten-$p$ quasi-norm, $\|A\|_{S_p} = (\sum_k \sigma_k(A)^p)^{1/p}$:
+This is the exact, non-linearised counterpart of Definition~\ref{def:ref}: the constraint is on the
+\emph{perturbed} product rather than on its linearisation, and the objective is the displacement
+rather than the weights. The distinction matters and is easy to lose. Minimising $\sum\|W_\ell\|^2$
+subject to $W_L\cdots W_1 = P^\star$ is a different problem --- it asks for the smallest factors
+realising a target from scratch, and its answer does not depend on where the weights currently are.
+We will need that problem too, but only as a special case:
+
+\begin{definition}[Minimal realisation from zero]
+\label{def:static}
+\begin{equation}
+  \min_{W_1,\dots,W_L} \; \sum_{\ell=1}^{L} \|W_\ell\|_F^2
+  \qquad \text{subject to} \qquad
+  W_L W_{L-1} \cdots W_1 \;=\; P^\star .
+  \label{eq:static}
+\end{equation}
+\end{definition}
+
+\noindent Problem \eqref{eq:static} is exactly \eqref{eq:prescribed} evaluated at $W = 0$, where
+every $W_\ell$ vanishes from the constraint and the displacement \emph{is} the factorisation. That
+is the only configuration at which the two coincide, and it is the configuration
+Section~\ref{sec:degeneracy} is about.
+
+The solution of \eqref{eq:static} is classical in form and is governed by a Schatten quasi-norm.
+Writing $\|\cdot\|_{S_p}$ for the Schatten-$p$ quasi-norm,
+$\|A\|_{S_p} = (\sum_k \sigma_k(A)^p)^{1/p}$:
 
 \begin{proposition}[Minimal realisation]
 \label{prop:minimal}
-The optimum of \eqref{eq:prescribed} equals $L \, \|P^\star\|_{S_{2/L}}^{2/L}$, and is attained by
+The optimum of \eqref{eq:static} equals $L \, \|P^\star\|_{S_{2/L}}^{2/L}$, and is attained by
 any factorisation whose factors share the singular vectors of $P^\star$ in the chain and distribute
 its singular values as $\sigma_k^{1/L}$ in every factor. In particular the optimal factorisation is
 \emph{balanced}: $W_{\ell+1}^\top W_{\ell+1} = W_\ell W_\ell^\top$ for all $\ell$.
@@ -578,18 +601,28 @@ mean--geometric mean inequality to establish that the per-mode split is the equa
 given in Appendix~\ref{app:proofs}. The quasi-norm appearing here is the same object that arises
 as a non-convex surrogate for rank, and whose direct minimisation is studied algorithmically by
 \citet{shang2016scalable}; the difference is that it emerges for us as the value of
-\eqref{eq:prescribed} rather than being imposed as a penalty.
+\eqref{eq:static} rather than being imposed as a penalty.
 
-Proposition~\ref{prop:minimal} already says something about the literature. Balancedness enters the
-classical analysis as a hypothesis on the \emph{initialisation}, preserved thereafter by the
-conservation law of \citet{du2018algorithmic}. Here it appears instead as a consequence of
-minimality, with no dynamics involved. We return to this in Section~\ref{sec:conserve}.
+Proposition~\ref{prop:minimal} says something about the literature, but it is important to say
+exactly what. Balancedness enters the classical analysis as a hypothesis on the
+\emph{initialisation}, preserved thereafter by the conservation law of \citet{du2018algorithmic}.
+Here it appears instead as a consequence of minimality --- but of minimality in \eqref{eq:static},
+that is, of the step taken \emph{from zero}. It does not follow that minimal displacement produces
+balance in general, and Section~\ref{sec:conserve} shows it does not: away from the origin the
+minimal step conserves whatever imbalance the weights already carry, exactly as gradient flow does.
+Started unbalanced, the reference step stays unbalanced. Measured on a deliberately unbalanced
+depth-$4$ chain, the per-layer imbalance
+$\|W_{\ell+1}^\top W_{\ell+1} - W_\ell W_\ell^\top\|$ moves from $(514.3, 94.8, 98.2)$ to
+$(513.4, 94.6, 97.7)$ over $300$ minimal-displacement steps, while the minimiser of
+\eqref{eq:static} for the same operator would report $(0,0,0)$.
 
 \subsection{Degeneracy: where derivative-based methods stop and the prescribed step does not}
 \label{sec:degeneracy}
 
-The practically important feature of \eqref{eq:prescribed} is that it remains solvable at parameter
-values where gradient information vanishes entirely.
+The practically important feature of the prescribed step is that it remains solvable at parameter
+values where gradient information vanishes entirely. At such a point the weights contribute nothing
+to the constraint, so \eqref{eq:prescribed} collapses to \eqref{eq:static} --- a problem that never
+references a gradient and is solvable for every target.
 
 \begin{definition}[Degenerate point]
 A parameter value $W$ is \emph{degenerate} if $P = 0$ and all contexts vanish, i.e.\ $A_\ell = 0$
@@ -600,9 +633,9 @@ or $B_\ell = 0$ for every $\ell$.
 \label{prop:degen}
 At a degenerate point, $\partial \mathcal{L}/\partial W_\ell = 0$ for every $\ell$, so every
 method whose update is a function of the gradient --- gradient descent, momentum, Adam, and any
-preconditioned variant --- is stationary. The prescribed-step problem \eqref{eq:prescribed}
-nevertheless has a solution for every $P^\star$ and every $L$, and the construction of
-Section~\ref{sec:s1} attains it.
+preconditioned variant --- is stationary. The prescribed step \eqref{eq:prescribed}, which at such
+a point coincides with \eqref{eq:static}, nevertheless has a solution for every $P^\star$ and every
+$L$, and the construction of Section~\ref{sec:s1} attains it.
 \end{proposition}
 
 \begin{remark}[Why this is not a statement about the reference step]
@@ -610,10 +643,12 @@ Section~\ref{sec:s1} attains it.
 The distinction matters and is easy to lose. At a degenerate point $M = 0$, so the linearised
 reference step \eqref{eq:precond} vanishes along with the gradient: as a preconditioned gradient
 method it is stationary there too. Proposition~\ref{prop:degen} is a statement about the
-\emph{exact} problem \eqref{eq:prescribed}, which asks for factors whose product equals a target
-rather than for a small update whose first-order effect matches a requested change. That problem
-does not reference the gradient at all, which is why it remains solvable where every gradient-based
-method --- ours included --- stops.
+\emph{exact} problem, which at the origin is \eqref{eq:static}: it asks for factors whose product
+equals a target, rather than for a small update whose first-order effect matches a requested
+change. That problem does not reference the gradient at all, which is why it remains solvable where
+every gradient-based method --- ours included --- stops. Away from the origin the two problems come
+apart again, and it is \eqref{eq:prescribed}, the displacement problem, that the reference step
+approximates.
 \end{remark}
 
 The all-zero chain is the extreme case, but the situation it models is not exotic. In a deep chain
@@ -623,11 +658,14 @@ zero in the directions that matter, and the gradient carries no usable signal ev
 formally zero. The degenerate point is the idealisation of that regime, and a construction that is
 exact there is well defined throughout it.
 
-\subsection{Minimality implies balancedness}
+\subsection{Minimality conserves imbalance}
 \label{sec:conserve}
 
 The minimum-norm condition in Definition~\ref{def:ref} has a consequence that recovers, from a
-different premise, the structure the classical analysis assumes.
+different premise, the conservation law the classical analysis relies on. Note that this is
+conservation, not balancedness: it says the imbalance does not \emph{change}, not that it is
+\emph{zero}. Balancedness is the content of Proposition~\ref{prop:minimal}, which describes
+\eqref{eq:static} --- the step from the origin --- and does not extend to steps taken elsewhere.
 
 \begin{proposition}[Conservation from minimality]
 \label{prop:conserve}
@@ -653,7 +691,11 @@ itself.
 \subsection{Solver S1: exact minimal realisation by recursive splitting}
 \label{sec:s1}
 
-We solve \eqref{eq:prescribed} by recursion on the depth. Suppose the chain of depth $L$ is split
+This solver addresses \eqref{eq:static}, the minimal realisation from zero, by recursion on the
+depth. By the remark after Definition~\ref{def:static} that makes it an exact solver for the
+prescribed \emph{step} \eqref{eq:prescribed} at a degenerate point, and a reinitialisation rather
+than a step anywhere else --- which is precisely the regime Section~\ref{sec:degeneracy} isolates,
+and the reason the solver is stated here rather than offered as a general training rule. Suppose the chain of depth $L$ is split
 into a lower part of depth $a$ and an upper part of depth $b$, with $a + b = L$, so that
 $P^\star = Y X$ where $X$ is realised by the lower $a$ factors and $Y$ by the upper $b$. Taking the
 singular value decomposition $P^\star = U \Sigma V^\top$, we set
