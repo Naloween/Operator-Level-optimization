@@ -735,7 +735,7 @@ gated networks and not for deep linear ones.
 \label{sec:lookslinear}
 
 The ReLU network confounds two effects that we wish to separate: it is nonlinear, and at depth it
-is ill-conditioned, necessarily so \citep{pennington2017resurrecting}. To vary gating and
+is ill-conditioned, necessarily so \citep{pennington2017resurrecting, haas2026why}. To vary gating and
 conditioning independently we need a network that is genuinely nonlinear yet perfectly conditioned
 by construction. The concatenated rectifier of \eqref{eq:crelu}, introduced by
 \citet{shang2016crelu} to exploit the opposite-phase filter pairs observed in trained
@@ -758,7 +758,7 @@ nonlinear and perfectly conditioned; ReLU with a standard random initialisation 
 ill-conditioned at depth; the deep linear network of Part I is linear. Differences attributed to
 gating can then be distinguished from differences attributable to conditioning.
 
-\subsection{Solver S2: least squares on the step map}
+\subsection{Solver: least squares on the step map}
 \label{sec:s2}
 
 For gated networks we solve \eqref{eq:ref} directly as a least-squares problem,
@@ -774,17 +774,38 @@ gradient descent direction and large $k$ returns the reference step, so a single
 both arms.
 
 \paragraph{A numerical caveat that must not be skipped.}
-On these step maps, LSQR \emph{diverges after it has converged}: the Lanczos basis loses
-orthogonality, and the iterate grows without bound while the least-squares residual remains at its
-converged value. Running to a fixed large iteration count therefore returns a meaningless result
-with no error raised. Two natural stopping tests do not detect this. The quantity $\bar\phi$
-maintained internally by the LSQR recursion is monotonically non-increasing by construction and so
-never signals anything. The residual $\|M(\Delta W) - \Delta_\star\|$ is blind to the component of
-the failure that lies in $\ker M$, which is precisely where the iterate grows. The normal-equation
-residual $\|M^\top(M(\Delta W) - \Delta_\star)\|$ detects both, and is the stopping rule we use; it
-is not monotone, so the best iterate is retained rather than the last, and its attained value is
-recorded alongside every measurement. We report quantitative diagnostics in
+LSQR's iterates are built inside the Krylov space
+$\mathcal{K}_k(M^\top M, M^\top \Delta_\star) \subseteq \mathrm{range}(M^\top)$, and that
+containment is exactly why the limit is the \emph{minimum-norm} least-squares solution. In finite
+precision it does not hold: the Golub--Kahan bidiagonalisation loses orthogonality, the iterates
+leave that subspace, and a component in $\ker M$ grows without bound. Measured on a depth-$2$
+CReLU chain of width $128$, $\|\Delta W\|$ is $0.85$ at $k = 200$ and $9.3\cdot 10^{13}$ at
+$k = 3000$, with $\|M(\Delta W)\| / \|\Delta W\| = 2\cdot10^{-14}$: the growth is weight motion
+that produces essentially no operator motion. Running to a fixed large $k$ therefore returns a
+ruined step, with no error raised.
+
+The obvious guards do not help. The quantity $\bar\phi$ maintained internally by the recursion
+satisfies $\bar\phi \leftarrow s\,\bar\phi$ with $s \le 1$, so it is monotone by construction and
+can never signal that anything has gone wrong. The least-squares residual
+$\|M(\Delta W) - \Delta_\star\|$ converges to a nonzero value that is not known in advance, so
+there is no threshold to test it against --- and, being built from $M$, it is blind to motion
+inside $\ker M$ by definition. So is the normal-equation residual
+$\|M^\top(M(\Delta W) - \Delta_\star)\|$: adding $10^{6}$ times a null direction to a converged
+iterate leaves both unchanged to four significant figures.
+
+What we rely on is therefore not detection. The normal-equation residual is the optimality
+condition for $\min\|M(\Delta W) - \Delta_\star\|$ and does converge to zero, so unlike the plain
+residual it can be thresholded; and because it is not monotone, we retain the \emph{best} iterate
+under it rather than the last. Drift cannot improve that quantity, so a drifted iterate is never
+the one returned. Its attained value is recorded alongside every measurement, and reported in
 Appendix~\ref{app:numerics}.
+
+Two consequences are worth stating because they shape the experiments. Where the reference is
+wanted to converge, the solve is Tikhonov-damped: $\ker([M;\lambda I]) = \{0\}$, so there is no
+null direction left to drift into, which is a structural fix rather than a tolerance. And where
+the truncation $k$ is itself the object of study (Section~\ref{sec:e7}), the solve is deliberately
+undamped, so solution quality is \emph{not} monotone in $k$ --- beyond a few hundred iterations it
+degrades. All results reported here use $k \le 200$, below that threshold.
 
 \subsection{Experiments}
 \label{sec:nonlinear-exp}
