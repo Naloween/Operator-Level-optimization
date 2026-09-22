@@ -2221,4 +2221,146 @@ tests; the normal-equation stopping rule and the attained residuals by depth and
 \emph{[Measured ratio between the alternating-least-squares realisation and the minimal one, and
 its consequences.]}
 
+
+% =========================================================================
+\section{Hardware, cost, and what each method costs}
+\label{app:cost}
+
+\subsection{Hardware and software}
+
+All experiments ran on a single workstation: one NVIDIA RTX 6000 Ada Generation
+($47.4$\,GiB, $142$ SMs, compute capability $8.9$), an Intel Core i9-14900 ($32$ threads) and
+$123$\,GiB of host memory, under Linux 6.17, CUDA 13.0, PyTorch 2.11 and Python 3.13. No
+distributed or multi-GPU training was used anywhere, and no experiment in this paper requires it.
+
+One property of this device shapes several design decisions below. Measured on $2048^2$ matrix
+products, it sustains $36.1$ TFLOP/s in float32 and $0.99$ TFLOP/s in float64, a ratio of
+$37{:}1$. Every diagnostic that has to be trusted to many digits --- the reachability check
+$\alpha \le 1$, the normal-equation residual, the structural identities --- runs in float64 and
+therefore runs at roughly one thirty-seventh of peak. This is affordable at MNIST-1D scale and is
+not at CIFAR-10 scale, which is why the probe there runs in float32 with its solve quality
+recorded rather than assumed (Section~\ref{sec:e19}).
+
+\subsection{Cost of one optimiser step}
+
+Two different questions get two different answers, and conflating them is the usual way cost
+comparisons mislead.
+
+\paragraph{The rule alone.} Milliseconds per optimiser step, measured with every
+(method, depth) pair warmed before any timing, so that no measurement absorbs the one-time
+workspace allocation for a shape it happens to touch first:
+
+\begin{center}\small
+\begin{tabular}{lcccc}
+\toprule
+method & $L=2$ & $L=8$ & $L=32$ & $\times$ gd at $L=8$ \\
+\midrule
+gradient descent      & $0.1$  & $0.5$   & $2.1$   & $1\times$ \\
+Adam                  & $0.2$  & $0.7$   & $2.9$   & $1\times$ \\
+heavy ball            & $0.1$  & $0.6$   & $2.5$   & $1\times$ \\
+Muon                  & $0.5$  & $1.9$   & $7.5$   & $4\times$ \\
+K-FAC                 & $3.9$  & $16.6$  & $67.5$  & $31\times$ \\
+SOAP                  & $4.3$  & $17.3$  & $64.1$  & $33\times$ \\
+Shampoo               & $41.3$ & $163.9$ & $617.7$ & $312\times$ \\
+\midrule
+reference ($k=50$)    & $66.1$ & $76.1$  & $114.5$ & $145\times$ \\
+\; + momentum (E15)   & $66.7$ & $76.2$  & $115.2$ & $145\times$ \\
+\; + isotropic noise (E20) & $66.2$ & $76.2$ & $114.7$ & $145\times$ \\
+\; + $\ker M$ noise (E20)  & $493.1$ & $814.1$ & $982.6$ & $1549\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{How this scales, which is the part that matters.} The reference's relative cost
+\emph{falls sharply with depth}: $661\times$ gradient descent at $L=2$, $152\times$ at $L=8$,
+$55\times$ at $L=32$. The reason is that the step solves $M^{+}\Delta_\star$ by $k$ Krylov
+iterations, each of which is a handful of small kernels rather than one large one, so at these
+sizes it is launch-bound rather than arithmetic-bound. Going from $L=2$ to $L=32$ multiplies the
+parameter count by $78$ ($6.4$k to $498$k) and the time per step by only $1.7$. The overhead is
+therefore worst on small models and amortises as the model grows --- the opposite of how a method
+that explicitly inverted a curvature matrix behaves, and visible in the same table: Shampoo, which
+does per-layer inverse roots at every step, costs $294\times$ gradient descent at $L=32$ against
+the reference's $55\times$. At that depth the reference is the \emph{cheaper} of the two.
+
+Momentum and isotropic noise are free on top of the reference, as expected --- they add an
+elementwise operation to a step already dominated by the solve. The $\ker M$ projection is not: it
+requires a second, better-converged solve at every step and costs an order of magnitude more, which
+is why E20's isotropic and projected arms are reported on different budgets.
+
+\paragraph{The run as a whole.} End-to-end wall clock per completed $12000$-step run, from the
+depth sweep's own logs, including data loading, evaluation probes, alignment probes and
+checkpointing:
+
+\begin{center}\small
+\begin{tabular}{lcccc}
+\toprule
+ & $L=2$ & $L=4$ & $L=8$ & $\times$ gd at $L=8$ \\
+\midrule
+gradient descent   & $9$\,s   & $38$\,s  & $65$\,s  & $1\times$ \\
+Adam               & $10$\,s  & $38$\,s  & $78$\,s  & $1.2\times$ \\
+reference ($k=50$) & $111$\,s & $202$\,s & $313$\,s & $\mathbf{4.8\times}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The end-to-end ratio is $4.8\times$ where the per-step ratio is $152\times$, and both are correct.
+A gradient-descent run spends $65$\,s on $12000$ steps that cost $0.5$\,ms each, so over $90\%$ of
+its wall clock is evaluation, probing and I/O rather than optimisation. For the cheap arms the
+optimiser is not what one is paying for. We report both because the per-step figure is the property
+of the method and the end-to-end figure is the property of the experiment, and a reader deciding
+whether the reference is affordable needs the second.
+
+A final note in the method's favour that a wall-clock table cannot show: the reference has no
+learning-rate grid to search. Its target size $\eta$ transfers across depth unchanged
+(Section~\ref{sec:e2}), while the baselines' useful learning rates move by two to three orders of
+magnitude between $L=2$ and $L=32$ and had to be swept at every depth. At equal \emph{tuning}
+budget rather than equal wall clock, the comparison is considerably kinder to the reference than
+the numbers above suggest.
+
+\subsection{Cost of the diagnostics}
+
+The alignment probe is the expensive measurement, not the optimiser. It solves the reference to
+$k = 3000$ with damping, in float64, and its cost grows linearly with depth: $4.0$\,s at $L=8$,
+$8.1$\,s at $L=16$, $16.5$\,s at $L=32$ per probe. At the default of one probe every $2000$ steps
+this is a few percent of a run at $L=8$ and around a fifth of one at $L=32$.
+
+At CIFAR-10 scale the same probe is not affordable in float64. The step map there has $3.07$M
+equations against $40$k for MNIST-1D --- a $77\times$ increase, with every LSQR iteration growing
+in proportion --- so the probe runs in float32 with batch $32$ and $k = 1200$, and the relative
+normal-equation residual is recorded at every probe so that a reduced budget appears in the data as
+a worse residual rather than as a silently wrong number.
+
+\subsection{Cost of the experiments}
+
+Total compute for every result in this paper, from each run's own recorded wall clock:
+
+\begin{center}\small
+\begin{tabular}{lrr}
+\toprule
+experiment & runs & GPU hours \\
+\midrule
+Main MNIST-1D grid (E3--E16) & $302$ & $25.0$ \\
+CIFAR-10 (E19, partial) & $31$ & $17.6$ \\
+Depth sweep (E17, partial) & $232$ & $4.9$ \\
+Optimiser switch (E13) & $72$ & $2.8$ \\
+Extended training (E14) & $4$ & $1.0$ \\
+Two-dimensional toy (E2, E11) & $25$ & $0.2$ \\
+Noise injection (E20, partial) & $2$ & $0.3$ \\
+\midrule
+total & $668$ & $\approx 53$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Roughly two GPU-days for the whole paper on one consumer-class card, with $2.5$\,GB of stored
+metrics, checkpoints and snapshots. Two observations about where it goes. CIFAR-10 accounts for a
+third of the total while contributing a single feasibility check, entirely because the operator
+step costs about forty times a gradient step at that scale; and the depth sweep's remaining cells
+at $L \in \{16, 32\}$ are projected at a further $17$ hours, which is more than everything
+completed so far, since cost is linear in depth and those are the two deepest settings.
+
+Every run is keyed by the SHA-1 of its configuration, so re-running any script costs nothing for
+work already done and a new cell is simply added. That is what made it practical to extend grids
+repeatedly rather than plan them correctly in advance.
+
 \end{document}
