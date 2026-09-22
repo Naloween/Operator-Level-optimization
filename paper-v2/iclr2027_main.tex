@@ -111,10 +111,6 @@ step}. We give solvers for it in two regimes: exactly, in closed form, for deep 
         optimiser gives up within what is allowed. The first is optimiser-independent, the second
         is scale-invariant and therefore independent of the learning rate
         (Section~\ref{sec:diagnostics}).
-  \item \textbf{The classical conservation law, from minimality rather than from dynamics.} The
-        layer-wise imbalance that the deep linear literature preserves along gradient flow is
-        preserved by \emph{any} minimal-displacement step, as a consequence of the shared Lagrange
-        multiplier the minimum-norm condition forces (Section~\ref{sec:conserve}).
   \item \textbf{Measurements.} What the decomposition finds across model classes,
         initialisations, and optimisers (Sections~\ref{sec:linear-exp}, \ref{sec:nonlinear-exp}).
 \end{enumerate}
@@ -303,8 +299,26 @@ concatenated update.
 Minimum norm is not an arbitrary tie-break. The constraint in \eqref{eq:ref} fixes only the
 first-order effect on the operator; any element of $\ker M$ may be added without changing it, and
 such an addition moves the weights while leaving the function unchanged to first order. Requiring
-the smallest update is what makes the reference a statement about the operator alone. It also has
-a consequence for the classical theory, developed in Section~\ref{sec:conserve}.
+the smallest update is what makes the reference a statement about the operator alone.
+
+\begin{remark}[Relation to the conservation laws of gradient flow]
+\label{rem:conserve}
+$\ker M$ is the tangent space to the symmetry orbits of the parameterisation: for a linear chain,
+$W_{\ell+1} \mapsto W_{\ell+1}G^{-1},\, W_\ell \mapsto G W_\ell$ leaves $P$ unchanged, and moving
+along such an orbit is precisely an element of $\ker M$. A step lying in
+$\mathrm{range}(M^\top) = (\ker M)^\perp$ therefore conserves the Noether charge associated with
+that symmetry --- for a linear chain, the layer imbalance $W_{\ell+1}^\top W_{\ell+1} - W_\ell
+W_\ell^\top$ --- which is the mechanism behind the conservation law of \citet{du2018algorithmic},
+developed systematically by \citet{kunin2021neural} and characterised in full by
+\citet{marcotte2023abide}. Both gradient descent, whose step is $M^\top \Delta_\star$, and the
+reference, whose step is $M^{+}\Delta_\star = (M^\top M)^{+}M^\top \Delta_\star$, lie in
+$\mathrm{range}(M^\top)$ by construction and so inherit it. We claim nothing new here; we record it
+because it says what the reference step does \emph{not} do. It does not rebalance a network: an
+unbalanced chain stays unbalanced under minimal displacement, and balancedness is a property of
+minimising the weights themselves, which is a different problem. What is ours is the decomposition
+as a \emph{measurement} --- which arms put mass in $\ker M$ and which do not --- reported in
+Section~\ref{sec:e4}.
+\end{remark}
 
 \begin{remark}[The reference step is a preconditioned gradient step]
 \label{rem:precond}
@@ -473,9 +487,7 @@ architecture that \emph{is} conditioned by construction (Section~\ref{sec:looksl
 a control. \citet{wang2016extended} proposed the extended data Jacobian matrix as a diagnostic,
 which is an operator-level measurement in our sense, though used for model comparison rather than
 for scoring update rules. \citet{haas2026why} analyse how the Jacobian spectra of deep networks
-separate with depth, and establish a conservation law for the gate-absorbed imbalance. Our
-Section~\ref{sec:conserve} recovers the ungated case of that law from minimality rather than from
-the dynamics; it does not extend to the gated case, where the conservation fails.
+separate with depth, and establish a conservation law for the gate-absorbed imbalance.
 
 \subsection{Geometry-aware and second-order optimisation}
 
@@ -548,55 +560,17 @@ Exact natural gradient; cancels the depth preconditioner & DLN & invertible Fish
 
 In a deep linear network the gates are the identity, so $P = W_L \cdots W_1$ is a single matrix
 shared by every input. The target reduces to one matrix, $\Delta_\star = -\eta\,
-\partial\mathcal{L}/\partial P$, and the step map \eqref{eq:M} maps weight updates into the space
-of $n_L \times n_0$ matrices. Two things follow that do not hold once gates are present: the
-contexts are the same for every input, so the minimum-norm condition produces a \emph{single}
-Lagrange multiplier rather than one per input; and the classical theory of
-Section~\ref{sec:sota} gives us something to validate against.
+\partial\mathcal{L}/\partial P$, and the step map \eqref{eq:M} carries weight updates into the
+space of $n_L \times n_0$ matrices.
 
-\subsection{Minimality conserves imbalance}
-\label{sec:conserve}
-
-The minimum-norm condition in Definition~\ref{def:ref} has a consequence that recovers, from a
-different premise, the conservation law the classical analysis relies on. Note that it is
-conservation and not balancedness: it says the imbalance does not \emph{change}, not that it is
-\emph{zero}. A chain started unbalanced stays unbalanced under minimal-displacement steps, which is
-the opposite of what minimising the weights themselves would give.
-
-\begin{proposition}[Conservation from minimality]
-\label{prop:conserve}
-Let $\Delta W$ solve \eqref{eq:ref}. Then there exists a single matrix $\Lambda$, the Lagrange
-multiplier of the constraint, such that
-\begin{equation}
-  \Delta W_\ell \;=\; A_\ell^\top\, \Lambda\, B_\ell^\top
-  \qquad \text{for every } \ell .
-  \label{eq:kkt}
-\end{equation}
-If moreover the gates are trivial, $D_\ell = I$, then $\Delta W_{\ell+1}^\top W_{\ell+1}$ and
-$\Delta W_\ell W_\ell^\top$ are transposes of one another, and the imbalance
-$W_{\ell+1}^\top W_{\ell+1} - W_\ell W_\ell^\top$ is unchanged to first order in the step.
-\end{proposition}
-
-The hypothesis $D_\ell = I$ is not cosmetic and the result does not survive without it. The
-transpose identity requires $D_\ell$ to commute through the chain $W_\ell B_\ell \Lambda^\top
-A_{\ell+1} W_{\ell+1}$, which holds only when the gate is the identity. Measured as a relative
-violation $\|\Delta W_{\ell+1}^\top W_{\ell+1} - (\Delta W_\ell W_\ell^\top)^\top\| /
-\|\Delta W_{\ell+1}^\top W_{\ell+1}\|$ at a single minimal-displacement step: $10^{-14}$ for the
-deep linear chain, against $1$ to $25$ for FGLN, ReLU and leaky ReLU. Note that FGLN fails too even
-though its gates are fixed and input-independent --- what breaks the identity is that $D_\ell \ne
-I$, not that the gates vary with the input. Over a trajectory the consequence is milder but visible:
-the per-layer imbalance drifts by $0.1\%$ over $150$ steps in the deep linear case and by $1.9\%$
-under ReLU.
-
-So this is a Part I result in the strict sense: it is a statement about ungated chains, and Part II
-inherits the shared multiplier \eqref{eq:kkt} but not the conservation that follows from it.
-
-The content of Proposition~\ref{prop:conserve} is that the shared multiplier in \eqref{eq:kkt} ---
-one $\Lambda$ for all layers --- is forced by minimality, and the balance property follows from
-that form alone. It requires neither gradient flow nor a balanced initialisation. Since gradient
-descent's step $M^\top \Delta_\star$ is of the same form with $\Lambda = \Delta_\star$, the
-classical conservation law is recovered as the special case in which the multiplier is the target
-itself.
+This is the regime in which the framework can be \emph{seen} rather than only measured. With a
+two-dimensional operator the trajectory of $P$ under any optimiser can be drawn exactly, against
+a loss whose contours are exact ellipses, and every difference between the paths is attributable
+to how each rule converts a weight step into an operator step --- since all of them descend the
+same quadratic in $P$. That is the subject of this part. The substantive comparisons between
+optimisers are deferred to Part II, for the reason given in Section~\ref{sec:whatchanges}: a deep
+linear network with enough samples pins its single shared $P$, so all methods that fit the data
+must agree, and there is nothing at the endpoint to distinguish.
 
 \subsection{Experiments}
 \label{sec:linear-exp}
@@ -2147,106 +2121,8 @@ not be more than 1 page.
 \section{Proofs}
 \label{app:proofs}
 
-\subsection*{Proof of Proposition~\ref{prop:conserve}}
-
-Throughout, $\langle X, Y\rangle = \mathrm{tr}(X^\top Y)$ is the Frobenius inner product, and the
-contexts satisfy the recursions $A_L = I$, $A_\ell = A_{\ell+1} W_{\ell+1} D_\ell$ and $B_1 = I$,
-$B_{\ell+1} = D_\ell W_\ell B_\ell$, so that $P = A_\ell W_\ell B_\ell$ for every $\ell$.
-
-\paragraph{Step 1: the multiplier is shared across layers.}
-The contexts of a deep linear chain do not depend on the input, so $M$ maps the concatenated
-update to the single matrix $M(\Delta W) = \sum_\ell A_\ell\, \Delta W_\ell\, B_\ell$, and
-\eqref{eq:ref} reads
-\[
-  \min_{\Delta W} \ \tfrac12 \sum_\ell \|\Delta W_\ell\|_F^2
-  \qquad \text{subject to} \qquad
-  \sum_\ell A_\ell\, \Delta W_\ell\, B_\ell \;=\; \Pi \Delta_\star .
-\]
-The constraint is affine and feasible by construction, since $\Pi\Delta_\star \in
-\mathrm{range}(M)$, so no constraint qualification is needed: a minimiser exists, is unique by
-strict convexity of the objective, and satisfies the stationarity condition of the Lagrangian
-\[
-  \mathcal{L}(\Delta W, \Lambda)
-  \;=\; \tfrac12 \sum_\ell \|\Delta W_\ell\|_F^2
-  \;-\; \Big\langle \Lambda, \ \sum_\ell A_\ell \Delta W_\ell B_\ell - \Pi\Delta_\star \Big\rangle
-\]
-for a single multiplier matrix $\Lambda \in \mathbb{R}^{n_L \times n_0}$, of the same shape as the
-constraint. Using $\langle \Lambda, A_\ell \Delta W_\ell B_\ell\rangle = \langle A_\ell^\top
-\Lambda B_\ell^\top, \Delta W_\ell \rangle$, differentiation in $\Delta W_\ell$ gives
-\[
-  \Delta W_\ell - A_\ell^\top\, \Lambda\, B_\ell^\top \;=\; 0
-  \qquad \text{for every } \ell ,
-\]
-which is \eqref{eq:kkt}. Equivalently: the minimum-norm solution of a consistent linear system lies
-in $\mathrm{range}(M^\top)$, and $(M^\top H)_\ell = A_\ell^\top H B_\ell^\top$, so $\Delta W =
-M^\top \Lambda$ with $\Lambda = (MM^\top)^{+}\Pi\Delta_\star$. That one $\Lambda$ serves all layers
-is the whole content of the step: it is what couples the layers to each other.
-
-\paragraph{Step 2: the two products are transposes when $D_\ell = I$.}
-Assume the gates are trivial, so $A_\ell = A_{\ell+1} W_{\ell+1}$ and $B_{\ell+1} = W_\ell B_\ell$.
-Substituting \eqref{eq:kkt},
-\[
-  \Delta W_{\ell+1}^\top W_{\ell+1}
-  \;=\; B_{\ell+1} \Lambda^\top A_{\ell+1} W_{\ell+1}
-  \;=\; B_{\ell+1} \Lambda^\top A_\ell
-  \;=\; W_\ell B_\ell\, \Lambda^\top A_\ell ,
-\]
-using $A_{\ell+1}W_{\ell+1} = A_\ell$ and then $B_{\ell+1} = W_\ell B_\ell$. On the other side,
-\[
-  \Delta W_\ell W_\ell^\top
-  \;=\; A_\ell^\top \Lambda B_\ell^\top W_\ell^\top
-  \;=\; A_\ell^\top \Lambda \,(W_\ell B_\ell)^\top ,
-  \qquad\text{so}\qquad
-  \big(\Delta W_\ell W_\ell^\top\big)^\top
-  \;=\; W_\ell B_\ell\, \Lambda^\top A_\ell .
-\]
-The two right-hand sides coincide, so writing $X := \Delta W_\ell W_\ell^\top$ we have
-$\Delta W_{\ell+1}^\top W_{\ell+1} = X^\top$.
-
-\paragraph{Step 3: the imbalance is conserved to first order.}
-Expanding each factor of the imbalance $E_\ell := W_{\ell+1}^\top W_{\ell+1} - W_\ell W_\ell^\top$
-after the update $W \mapsto W + \Delta W$,
-\[
-  (W_{\ell+1}+\Delta W_{\ell+1})^\top (W_{\ell+1}+\Delta W_{\ell+1})
-  = W_{\ell+1}^\top W_{\ell+1} + \underbrace{\Delta W_{\ell+1}^\top W_{\ell+1}}_{X^\top}
-  + \underbrace{W_{\ell+1}^\top \Delta W_{\ell+1}}_{X}
-  + \Delta W_{\ell+1}^\top \Delta W_{\ell+1},
-\]
-where the second underbrace uses that $W_{\ell+1}^\top \Delta W_{\ell+1}$ is the transpose of
-$\Delta W_{\ell+1}^\top W_{\ell+1} = X^\top$. Likewise
-\[
-  (W_\ell+\Delta W_\ell)(W_\ell+\Delta W_\ell)^\top
-  = W_\ell W_\ell^\top + \underbrace{\Delta W_\ell W_\ell^\top}_{X} +
-  \underbrace{W_\ell \Delta W_\ell^\top}_{X^\top} + \Delta W_\ell \Delta W_\ell^\top .
-\]
-Subtracting, the first-order terms are $(X^\top + X) - (X + X^\top) = 0$, leaving
-\[
-  E_\ell \;\longmapsto\; E_\ell
-  \;+\; \Delta W_{\ell+1}^\top \Delta W_{\ell+1} - \Delta W_\ell \Delta W_\ell^\top ,
-\]
-so the imbalance is unchanged to first order in the step. \qed
-
-\paragraph{Where the hypothesis $D_\ell = I$ enters, and why it cannot be dropped.}
-Step 1 uses only that the contexts are input-independent; Step 3 uses only the conclusion of
-Step 2. The gate enters in Step 2 alone. Retaining it, $A_\ell = A_{\ell+1}W_{\ell+1}D_\ell$ and
-$B_{\ell+1} = D_\ell W_\ell B_\ell$ give
-\[
-  \Delta W_{\ell+1}^\top W_{\ell+1} = D_\ell\, K ,
-  \qquad
-  \big(\Delta W_\ell W_\ell^\top\big)^\top = K\, D_\ell ,
-  \qquad
-  K := W_\ell B_\ell\, \Lambda^\top A_{\ell+1} W_{\ell+1} ,
-\]
-so the two agree precisely when $[D_\ell, K] = 0$. A $0/1$ diagonal gate does not commute with a
-general $K$, and the failure is therefore generic rather than exceptional. This is consistent with
-the measurement reported in Section~\ref{sec:conserve}, including that FGLN fails despite having
-fixed gates: what matters is $D_\ell \neq I$, not whether $D_\ell$ varies with the input.
-
-For an architecture whose contexts \emph{do} depend on the input, Step 1 itself fails: the
-constraint is one equation per input, the multiplier is a family $(\Lambda_x)_x$, and
-\eqref{eq:kkt} becomes $\Delta W_\ell = \sum_x A_\ell(x)^\top \Lambda_x B_\ell(x)^\top$ with no
-single $\Lambda$ to factor out. Both hypotheses of the proposition are thus used, and neither is
-removable.
+\emph{[No proofs are currently carried here; the structural identities used in the text are
+verified numerically in Section~\ref{sec:diagnostics} and its experiments.]}
 
 \section{Numerical behaviour of the least-squares solve}
 \label{app:numerics}
