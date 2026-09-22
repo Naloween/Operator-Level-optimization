@@ -2058,6 +2058,35 @@ perturbation induced relative to the reference step's own operator motion is $0.
 \textsc{iso}, $0.017$ for \textsc{ker} and $0.324$ for \textsc{range}: the \textsc{ker} arm moves
 the weights by the same amount while moving the function by an order of magnitude less.
 
+\paragraph{How large is $\ker M$, and what that implies for the design.}
+The three arms are only three different experiments if the projections actually move the noise
+somewhere it would not otherwise be. Measuring the fraction of a random direction that already
+lies in $\ker M$:
+
+\begin{center}\small
+\begin{tabular}{lccc}
+\toprule
+fraction of a random $g$ in $\ker M$ & $L=2$ & $L=8$ & $L=32$ \\
+\midrule
+ReLU  & $0.02$ & $0.63$ & $0.94$ \\
+CReLU & $0.13$ & $0.81$ & $0.96$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The null space grows quickly with depth, and this reshapes the experiment. At $L=8$ isotropic
+noise is \emph{already} $63$--$81\%$ function-preserving, so the \textsc{ker} arm is a refinement
+of \textsc{iso} rather than a contrast with it, and the two may be hard to tell apart. The arm
+that genuinely differs is \textsc{range}, which concentrates all of the perturbation into the
+minority of directions that change the operator. At $L=32$ the point is sharper still: isotropic
+noise there is $94$--$96\%$ confined to $\ker M$, so the cheap arm is essentially the
+function-preserving experiment already, and only the \textsc{range} projection has to be paid for.
+
+This is not a detail of implementation. It says that in a deep network, most of what any noise
+injection method does is move weights without changing the function --- and that the flat-minima
+reading of noise injection is, in these models, a statement about the majority of the perturbation
+rather than an incidental part of it.
+
 \paragraph{Setup.}
 MNIST-1D, the common configuration, ReLU, $\eta = 1$, $k = 50$,
 $\varepsilon \in \{0.01, 0.03, 0.1, 0.3\}$, two seeds, with $\varepsilon = 0$ rerun inside the same
@@ -2282,10 +2311,15 @@ that explicitly inverted a curvature matrix behaves, and visible in the same tab
 does per-layer inverse roots at every step, costs $294\times$ gradient descent at $L=32$ against
 the reference's $55\times$. At that depth the reference is the \emph{cheaper} of the two.
 
-Momentum and isotropic noise are free on top of the reference, as expected --- they add an
-elementwise operation to a step already dominated by the solve. The $\ker M$ projection is not: it
-requires a second, better-converged solve at every step and costs an order of magnitude more, which
-is why E20's isotropic and projected arms are reported on different budgets.
+Momentum and isotropic noise are free on top of the reference: they add an elementwise operation
+to a step already dominated by the solve, and drawing the noise itself is unmeasurable at
+$0.0$\,ms. The projected arms are not free, and it is worth being exact about why, since "noise is
+expensive" would be the wrong lesson. The cost is a \emph{second linear solve}, not the noise.
+Measured at $L=8$: the reference step's own $50$ iterations cost $76$\,ms, or $1.52$\,ms each; the
+projection's $300$ iterations cost $492$\,ms, or $1.64$\,ms each. The per-iteration cost is
+essentially the same and the factor of six is entirely iteration count. Reducing the projection to
+$150$ iterations halves it, at the price of leaking $3.0\%$ of the noise's operator motion back in
+rather than $1.2\%$.
 
 \paragraph{The run as a whole.} End-to-end wall clock per completed $12000$-step run, from the
 depth sweep's own logs, including data loading, evaluation probes, alignment probes and
