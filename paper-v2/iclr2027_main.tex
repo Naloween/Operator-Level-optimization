@@ -130,7 +130,7 @@ makes the diagnostics of Section~\ref{sec:diagnostics} comparable across model c
 Throughout, a model has $L$ weight matrices $W_\ell \in \mathbb{R}^{n_\ell \times n_{\ell-1}}$ for
 $\ell = 1,\dots,L$, and no bias terms. We write $W = (W_1,\dots,W_L)$ for the collection and
 $\Delta W = (\Delta W_1,\dots,\Delta W_L)$ for an update. Between consecutive weight matrices sits
-a \emph{gate} $D_\ell$, a matrix that may depend on the input. We consider four instances.
+a \emph{gate} $D_\ell$, a matrix that may depend on the input. We consider five instances.
 
 \begin{description}[leftmargin=*,itemsep=2pt,topsep=3pt]
   \item[Deep linear network (DLN).] $D_\ell = I$ for all $\ell$.
@@ -139,6 +139,13 @@ a \emph{gate} $D_\ell$, a matrix that may depend on the input. We consider four 
         input-dependent in form but not in value.
   \item[ReLU multilayer perceptron.] $D_\ell(x) = \mathrm{diag}\big(\mathbf{1}[z_\ell(x) > 0]\big)$,
         where $z_\ell(x)$ is the pre-activation at layer $\ell$.
+  \item[Leaky ReLU multilayer perceptron.] $D_\ell(x) = \mathrm{diag}\big(\mathbf{1}[z_\ell(x)>0]
+        + \alpha\,\mathbf{1}[z_\ell(x)\le 0]\big)$ with $\alpha = 0.1$. Every gate entry is
+        strictly positive, so no unit can ever be dead. This is a control rather than a model of
+        interest: it holds depth, width and the factorisation fixed while removing the possibility
+        of unit death, which separates "the optimiser prunes units" from "the optimiser reduces
+        how much the gate pattern depends on the input" (Section~\ref{sec:e8}). It is used where
+        that distinction is at stake and omitted elsewhere.
   \item[CReLU multilayer perceptron.] The concatenated rectifier \citep{shang2016crelu} doubles the
         feature dimension,
         $c = [\,\mathrm{relu}(z)\,;\,\mathrm{relu}(-z)\,]$, which can be written $c = D(z)\,z$ with
@@ -154,8 +161,16 @@ a \emph{gate} $D_\ell$, a matrix that may depend on the input. We consider four 
         given in Section~\ref{sec:lookslinear}.
 \end{description}
 
-All four gates are positively homogeneous of degree zero in the pre-activation, so the network is
+All five gates are positively homogeneous of degree zero in the pre-activation, so the network is
 positively homogeneous of degree one and \eqref{eq:fx} holds exactly rather than approximately.
+Leaky ReLU is worth checking on this point rather than assuming it: $\max(z, \alpha z)$ is
+positively homogeneous of degree one for any $\alpha$, so the gate is degree zero and the
+factorisation is exact there too --- which is what makes it usable as a control at all.
+
+Not every experiment uses all five. The deep linear and fixed-gate models are where the operator is
+input-independent and the geometry can be drawn exactly (Section~\ref{sec:linear}); ReLU and CReLU
+carry the main comparisons; leaky ReLU appears where dead units would otherwise confound the
+reading. Each experiment states which it uses.
 
 \subsection{The operator and its contexts}
 \label{sec:contexts}
@@ -793,8 +808,12 @@ $4000$ training, $1000$ validation and $1000$ test points, batch size $100$, cro
 The task is small enough that every arm can be run to interpolation on a full hyper-parameter grid
 with several seeds, which is what makes the comparisons below matched rather than budget-limited.
 
-\paragraph{Model.} Bias-free chain of depth $L = 8$ and width $128$, He initialisation, in four
-architectures: deep linear, ReLU, leaky ReLU ($\alpha = 0.1$) and CReLU. Bias-freedom is what makes
+\paragraph{Model.} Bias-free chain of depth $L = 8$ and width $128$, He initialisation. The main
+grid is ReLU and CReLU, the two gated architectures that carry the comparison; leaky ReLU
+($\alpha = 0.1$) is added wherever unit death would otherwise confound the reading, and each
+experiment states whether it is included. Deep linear is not part of this grid, for the reason in
+Section~\ref{sec:whatchanges}: its single shared operator is pinned by the data, so all methods
+that fit must agree. Bias-freedom is what makes
 $f(x) = P(x)x$ exact, so the operator is the object the model actually computes rather than an
 approximation to it.
 
