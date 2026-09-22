@@ -744,3 +744,41 @@ def fig_extended(arch="relu", arms=("op", "gd", "adam"), seed=0, experiment="gro
     fig.suptitle(f"{arch}: extended training, every tracked statistic", fontsize=11)
     fig.tight_layout()
     return fig, data
+
+
+def pgd_cw(Ws, X, Y, arch, eps=0.3, steps=50, restarts=3):
+    """PGD on the CW margin loss, max_{j != y} z_j - z_y. The attack we should have used.
+
+    Cross-entropy PGD (`pgd_accuracy` above) silently fails against networks with large logits:
+    the softmax saturates, the gradient underflows, and `sign(grad)` becomes noise. More steps and
+    more restarts do not fix it, so the usual masking check does not detect it. This loss is
+    scale-covariant -- multiplying all logits by c > 0 multiplies it by c and leaves its gradient
+    direction unchanged -- so a network cannot hide behind its own scale.
+
+    Bias-free homogeneous networks make this failure mode acute: the logit scale grows without
+    bound along an interpolating trajectory, and it differs by two orders of magnitude between
+    arms, so a cross-entropy attack compares how saturated the networks are, not how robust.
+    """
+    best = torch.ones_like(Y, dtype=torch.bool)
+    for _ in range(restarts):
+        d = (torch.rand_like(X) * 2 - 1) * eps
+        for _ in range(steps):
+            d = d.detach().requires_grad_(True)
+            out, _ = gpu.forward(Ws, X + d, arch)
+            t = out.gather(1, Y[:, None]).squeeze(1)
+            other = out.clone().scatter_(1, Y[:, None], -1e30)
+            g, = torch.autograd.grad((other.max(1).values - t).sum(), d)
+            d = (d + (2.5 * eps / steps) * g.sign()).clamp(-eps, eps)
+        with torch.no_grad():
+            out, _ = gpu.forward(Ws, X + d, arch)
+            best &= (out.argmax(1) == Y)
+    return float(best.float().mean())
+
+
+def logit_margin(Ws, X, Y, arch):
+    """Mean z_y - max_{j != y} z_j. Scale-dependent, which is exactly why it matters here."""
+    with torch.no_grad():
+        out, _ = gpu.forward(Ws, X, arch)
+        t = out.gather(1, Y[:, None]).squeeze(1)
+        other = out.clone().scatter_(1, Y[:, None], -1e30)
+        return float((t - other.max(1).values).mean())

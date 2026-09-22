@@ -325,6 +325,21 @@ def step_for(arm, Ws, X, R, hyper, arch, state, step, dtype_ok=False):
     g = gpu.coord_grad(Ws, X, R / n, arch)
     if arm == "gd":
         return [-hyper * x for x in g]
+    if arm in ("muon", "shampoo", "soap", "kfac", "heavyball"):
+        # The previous submission's comparators. Transcribed functionally in `baselines.py`;
+        # `dtype_ok` is the scoring path and must leave every persistent buffer untouched.
+        import baselines
+        h = tuple(hyper) if isinstance(hyper, (list, tuple)) else (hyper,)
+        mutate = not dtype_ok
+        if arm == "heavyball":
+            return baselines.heavyball(g, state, h, mutate)
+        if arm == "muon":
+            return baselines.muon(g, state, h, mutate)
+        if arm == "shampoo":
+            return baselines.shampoo(g, state, h, mutate)
+        if arm == "soap":
+            return baselines.soap(g, state, h, step, mutate)
+        return baselines.kfac(Ws, X, R / n, g, state, h, arch, mutate)
     b1, b2, e = 0.9, 0.999, 1e-8
     m, v = state["m"], state["v"]
     out = []

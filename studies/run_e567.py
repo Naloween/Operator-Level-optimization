@@ -20,6 +20,8 @@ def main():
     ap.add_argument("--archs", nargs="+", default=["crelu", "relu"])
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     ap.add_argument("--depth", type=int, default=8)
+    ap.add_argument("--depths", type=int, nargs="*", default=None,
+                    help="sweep over depths; absent means the single --depth")
     ap.add_argument("--widths", type=int, nargs="+", default=[128])
     ap.add_argument("--steps", type=int, default=12000)
     ap.add_argument("--adam-lrs", type=float, nargs="*", default=[1e-3, 3e-3, 1e-2, 3e-2])
@@ -27,6 +29,11 @@ def main():
     ap.add_argument("--etas", type=float, nargs="*", default=[0.1, 0.3, 0.5, 1.0])
     ap.add_argument("--betas", type=float, nargs="*", default=[],
                     help="momentum on the reference step; beta=0 is the plain reference")
+    ap.add_argument("--muon-lrs", type=float, nargs="*", default=[])
+    ap.add_argument("--shampoo-lrs", type=float, nargs="*", default=[])
+    ap.add_argument("--soap-lrs", type=float, nargs="*", default=[])
+    ap.add_argument("--kfac-lrs", type=float, nargs="*", default=[])
+    ap.add_argument("--heavyball-lrs", type=float, nargs="*", default=[])
     ap.add_argument("--ks", type=int, nargs="+", default=[50],
                     help="Krylov truncation levels: k=1 is exactly gradient descent, "
                          "large k the reference, so this is the bias dial")
@@ -43,24 +50,28 @@ def main():
     a = ap.parse_args()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 
+    depths = a.depths if a.depths else [a.depth]
     jobs = []
-    for arch, seed, width in itertools.product(a.archs, a.seeds, a.widths):
+    for depth, arch, seed, width in itertools.product(depths, a.archs, a.seeds, a.widths):
         for lr in a.adam_lrs:
-            jobs.append((arch, seed, width, "adam", lr))
+            jobs.append((depth, arch, seed, width, "adam", lr))
         for lr in a.gd_lrs:
-            jobs.append((arch, seed, width, "gd", lr))
+            jobs.append((depth, arch, seed, width, "gd", lr))
+        for name in ("muon", "shampoo", "soap", "kfac", "heavyball"):
+            for lr in getattr(a, f"{name}_lrs"):
+                jobs.append((depth, arch, seed, width, name, lr))
         for e in a.etas:
             for k in a.ks:
-                jobs.append((arch, seed, width, "op", (e, k)))
+                jobs.append((depth, arch, seed, width, "op", (e, k)))
         for e in a.etas:
             for k in a.ks:
                 for b in a.betas:
-                    jobs.append((arch, seed, width, "opmom", (e, k, b)))
+                    jobs.append((depth, arch, seed, width, "opmom", (e, k, b)))
     print(f"{len(jobs)} cells on {dev}", flush=True)
 
     t0 = time.time()
-    for i, (arch, seed, width, arm, hyper) in enumerate(jobs, 1):
-        cfg = dict(arch=arch, init="he", arm=arm, hyper=hyper, depth=a.depth, width=width,
+    for i, (depth, arch, seed, width, arm, hyper) in enumerate(jobs, 1):
+        cfg = dict(arch=arch, init="he", arm=arm, hyper=hyper, depth=depth, width=width,
                    n_train=a.n_train, n_val=a.n_val, n_test=a.n_test,
                    batch=100, steps=a.steps, every=250,
                    probe_n=64, seed=seed, snap_every=4000, ckpt_every=4000,
@@ -78,7 +89,7 @@ def main():
             cfg["align_dtype"] = a.align_dtype
         r = exp.execute(a.experiment, cfg, dev, force=a.force)
         h = hyper if not isinstance(hyper, tuple) else f"{hyper[0]:g}/k{hyper[1]}"
-        print(f"[{i:>3}/{len(jobs)}] {arch:>5} s{seed} w{width:<3} {arm:>4} {str(h):<9} {r['status']:>8}"
+        print(f"[{i:>3}/{len(jobs)}] L{depth:<3} {arch:>5} s{seed} w{width:<3} {arm:>9} {str(h):<9} {r['status']:>8}"
               f" {r.get('seconds',0):6.0f}s  elapsed {(time.time()-t0)/60:5.1f}min"
               + (f"  ERROR {r['error']}" if r.get("error") else ""), flush=True)
     print(f"done in {(time.time()-t0)/60:.1f} min")

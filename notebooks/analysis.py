@@ -712,19 +712,26 @@ def momentum_table(runs, etas=(0.5, 1.0), betas=(0.5, 0.9, 0.99), archs=("relu",
 
 # ---------------------------------------------------------------- adversarial robustness
 def robustness_sweep(runs, archs=("relu", "crelu", "leaky"), width=128, steps=12000,
-                     eps=(0.1, 0.3), pgd_steps=50, restarts=1, dev=None, max_seeds=3):
-    """Clean and PGD accuracy at the final checkpoint of every (arch, arm, hyper) cell.
+                     eps=(0.02, 0.05, 0.1, 0.2, 0.3), pgd_steps=50, restarts=3,
+                     dev=None, max_seeds=3):
+    """Clean and CW-PGD accuracy at the final checkpoint of every (arch, arm, hyper) cell.
 
-    Reported alongside the final training accuracy, because "this function is not robust" is only
-    meaningful once we know it fit the data; and alongside the operator rank, because the k-dial
-    moves both at once. `ratio` is adversarial / clean -- robustness normalised by how good the
-    model was to begin with, since the arms differ by 10 points of clean accuracy.
+    Uses the CW margin attack, not cross-entropy: see `toy2d.pgd_cw` for why the cross-entropy
+    version is unusable here. The logit margin and the operator (input-Jacobian) norm are carried
+    alongside, because they are what the cross-entropy attack was actually measuring.
     """
     import torch
     import exp, gpu
     import toy2d
     dev = dev or ("cuda" if torch.cuda.is_available() else "cpu")
     rows = []
+    _data = {}
+
+    def dataset(seed):
+        if seed not in _data:
+            _data[seed] = exp.mnist1d(4000, 1000, 1000, seed, dev)
+        return _data[seed]
+
     for arch in archs:
         cells = {}
         for c, r, d in runs:
@@ -734,30 +741,33 @@ def robustness_sweep(runs, archs=("relu", "crelu", "leaky"), width=128, steps=12
             key = (c["arm"], tuple(h) if isinstance(h, (list, tuple)) else h)
             cells.setdefault(key, []).append((c, r, d))
         for (arm, h), group in sorted(cells.items(), key=lambda kv: str(kv[0])):
-            acc = {k: [] for k in ("train", "clean", "pr")}
+            acc = {k: [] for k in ("train", "clean", "pr", "margin", "fro")}
             adv = {e: [] for e in eps}
             for c, r, d in group[:max_seeds]:
                 if not (d / "ckpt.pt").exists():
                     continue
                 Ws = [w.to(dev) for w in
                       torch.load(d / "ckpt.pt", map_location=dev, weights_only=False)["Ws"]]
-                D = exp.mnist1d(4000, 1000, 1000, c["seed"], dev)
+                D = dataset(c["seed"])
                 X, Y = D["Xte"], D["Yte"]
                 with torch.no_grad():
                     o, _ = gpu.forward(Ws, X, arch)
                     acc["clean"].append(float((o.argmax(1) == Y).float().mean()))
                 acc["train"].append(r[-1]["train_acc"])
-                v = [x["pr"] for x in r if "pr" in x]
-                acc["pr"].append(float(np.mean(v[len(v) // 2:])) if v else np.nan)
+                acc["margin"].append(toy2d.logit_margin(Ws, X, Y, arch))
+                acc["pr"].append(exp.operator_stats(Ws, D["Xtr"][:256], arch)[0])
+                acc["fro"].append(_operator_norm(Ws, D["Xtr"][:256], arch))
                 for e in eps:
-                    adv[e].append(min(toy2d.pgd_accuracy(Ws, X, Y, arch, eps=e, steps=pgd_steps)
-                                      for _ in range(restarts)))
+                    adv[e].append(toy2d.pgd_cw(Ws, X, Y, arch, eps=e,
+                                               steps=pgd_steps, restarts=restarts))
+                del Ws
+                if dev == "cuda":
+                    torch.cuda.empty_cache()
             if not acc["clean"]:
                 continue
             row = dict(arch=arch, arm=arm, hyper=h, n=len(acc["clean"]),
-                       train_acc=float(np.mean(acc["train"])),
-                       clean=float(np.mean(acc["clean"])),
-                       pr=float(np.mean(acc["pr"])))
+                       **{k: float(np.mean(v)) for k, v in acc.items() if k != "train"},
+                       train_acc=float(np.mean(acc["train"])))
             for e in eps:
                 row[f"pgd_{e}"] = float(np.mean(adv[e]))
                 row[f"ratio_{e}"] = float(np.mean(adv[e]) / np.mean(acc["clean"]))
@@ -765,42 +775,55 @@ def robustness_sweep(runs, archs=("relu", "crelu", "leaky"), width=128, steps=12
     return rows
 
 
-def fig_robustness(rows, eps=0.3, archs=("relu", "crelu")):
-    """Robustness against the k-dial, and against operator rank across every cell.
+def _operator_norm(Ws, X, arch):
+    """Mean Frobenius norm of P(x) -- the input Jacobian, since f(x) = P(x) x here."""
+    import torch
+    import gpu
+    W = [w.double() for w in Ws]
+    Xd = X.double()
+    _, gs = gpu.forward(W, Xd, arch)
+    A, B = gpu.contexts(W, gs, Xd, arch)
+    sv = torch.linalg.svdvals(A[0] @ W[0] @ B[0])
+    live = sv[:, 0] > 1e-9 * sv[:, 0].max().clamp_min(1e-300)
+    return float((sv[live] ** 2).sum(1).sqrt().mean()) if bool(live.any()) else float("nan")
 
-    Left: the dial from k = 1 (which *is* gradient descent) to k = 200, with gd's own tuned runs
-    drawn as a band for comparison. Right: the same quantity against operator rank, pooling every
-    arm -- the relationship that the dial alone cannot distinguish from a k effect.
+
+def fig_robustness(rows, eps=(0.02, 0.05, 0.1, 0.2, 0.3), archs=("relu", "crelu", "leaky")):
+    """The corrected robustness picture: an epsilon curve under the CW attack, per arm.
+
+    Left: adversarial accuracy as a fraction of clean accuracy, best hyperparameter per arm. The
+    arms lie on top of each other -- the separation reported earlier was an artefact of attacking
+    with cross-entropy. Right: what the cross-entropy attack was actually tracking, the logit
+    margin, which differs between arms by two orders of magnitude.
     """
     import matplotlib.pyplot as plt
     fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.4))
-    key = f"ratio_{eps}"
-    for arch, mk in zip(archs, ("o-", "s-")):
-        dial = [r for r in rows if r["arch"] == arch and r["arm"] == "op"
-                and isinstance(r["hyper"], tuple) and r["hyper"][0] == 1.0]
-        dial.sort(key=lambda r: r["hyper"][1])
-        if dial:
-            ks = [r["hyper"][1] for r in dial]
-            axes[0].plot(ks, [r[key] for r in dial], mk, color=COLOR["op"] if arch == "relu" else "#b07aa1",
-                         label=f"{arch}: reference, $\\eta$=1")
-        g = [r[key] for r in rows if r["arch"] == arch and r["arm"] == "gd"]
-        if g:
-            axes[0].axhspan(min(g), max(g), color=COLOR["gd"], alpha=0.12 if arch == "relu" else 0.08)
-            axes[0].axhline(float(np.mean(g)), color=COLOR["gd"], ls="--", lw=1,
-                            label=f"{arch}: gd, tuned lr grid" if arch == "relu" else None)
-    axes[0].set_xscale("log"); axes[0].set_xlabel("Krylov truncation $k$  ($k{=}1$ is gradient descent)")
-    axes[0].set_ylabel(f"PGD$_{{{eps}}}$ accuracy / clean accuracy")
-    axes[0].set_title("robustness along the bias dial", fontsize=10)
+    style = {"relu": "-", "crelu": "--", "leaky": ":"}
+    for arch in archs:
+        for arm in ARMS:
+            sub = [r for r in rows if r["arch"] == arch and r["arm"] == arm
+                   and r["train_acc"] > 0.999]
+            if not sub:
+                continue
+            best = max(sub, key=lambda r: r["clean"])
+            axes[0].plot(eps, [best[f"ratio_{e}"] for e in eps], style[arch],
+                         color=COLOR[arm], marker="o", ms=4,
+                         label=f"{arch}: {LABEL[arm]}" if arch == "relu" else None)
+    axes[0].set_xlabel("$\\epsilon$  ($L_\\infty$)")
+    axes[0].set_ylabel("CW-PGD accuracy / clean accuracy")
+    axes[0].set_title("no separation survives a scale-covariant attack", fontsize=10)
     axes[0].grid(alpha=0.25); axes[0].legend(frameon=False, fontsize=8)
 
     for arm in ARMS:
         sub = [r for r in rows if r["arm"] == arm and r["arch"] in archs and r["train_acc"] > 0.999]
         if sub:
-            axes[1].scatter([r["pr"] for r in sub], [r[key] for r in sub], s=34,
-                            color=COLOR[arm], label=LABEL[arm], alpha=0.85, edgecolor="white", lw=0.6)
-    axes[1].set_xlabel("operator rank (participation ratio, last-half mean)")
-    axes[1].set_ylabel(f"PGD$_{{{eps}}}$ accuracy / clean accuracy")
-    axes[1].set_title("interpolating cells only", fontsize=10)
+            axes[1].scatter([r["margin"] for r in sub], [r["pr"] for r in sub], s=34,
+                            color=COLOR[arm], label=LABEL[arm], alpha=0.85,
+                            edgecolor="white", lw=0.6)
+    axes[1].set_xscale("symlog")
+    axes[1].set_xlabel("logit margin  (what cross-entropy PGD was really measuring)")
+    axes[1].set_ylabel("operator rank (participation ratio)")
+    axes[1].set_title("margin and rank are confounded across arms", fontsize=10)
     axes[1].grid(alpha=0.25); axes[1].legend(frameon=False, fontsize=8)
     fig.tight_layout()
     return fig
