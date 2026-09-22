@@ -106,23 +106,15 @@ step}. We give solvers for it in two regimes: exactly, in closed form, for deep 
         change --- as in the closest prior formulation, \citet{evans2026theory} --- constrains only
         its action along that input; the two separate precisely when the network is gated or the
         inputs are not whitened (Sections~\ref{sec:setup}, \ref{sec:nonlinear}).
-  \item \textbf{An exact solution of the prescribed-step problem at depth.} Realising a target
-        operator exactly through $L$ factors, with minimal total norm, is a different problem from
-        the linearised step above, and we solve it in closed form for deep linear chains
-        (Section~\ref{sec:s1}). \citet{evans2026theory} solve the single-layer case exactly and
-        bound the multi-layer case by Lipschitz arguments.
   \item \textbf{A decomposition of the bias into an architectural and an algorithmic part.}
         Reachability measures what the architecture forbids; deflection measures what the
         optimiser gives up within what is allowed. The first is optimiser-independent, the second
         is scale-invariant and therefore independent of the learning rate
         (Section~\ref{sec:diagnostics}).
-  \item \textbf{A solver that is exact from degenerate points.} The prescribed-step problem admits
-        an exact recursive solution even at parameter values where every derivative-based method
-        is stationary, such as an all-zero chain or a deep chain whose product has underflowed
-        (Section~\ref{sec:s1}).
-  \item \textbf{Balancedness as a property of minimal realisations.} The layer-wise balance
-        condition that underlies the classical deep linear analysis follows from minimality of the
-        realisation alone, without invoking gradient flow (Section~\ref{sec:conserve}).
+  \item \textbf{The classical conservation law, from minimality rather than from dynamics.} The
+        layer-wise imbalance that the deep linear literature preserves along gradient flow is
+        preserved by \emph{any} minimal-displacement step, as a consequence of the shared Lagrange
+        multiplier the minimum-norm condition forces (Section~\ref{sec:conserve}).
   \item \textbf{Measurements.} What the decomposition finds across model classes,
         initialisations, and optimisers (Sections~\ref{sec:linear-exp}, \ref{sec:nonlinear-exp}).
 \end{enumerate}
@@ -483,9 +475,9 @@ constrains only its action along $x$.
 \citet{evans2026theory} give the closest published formulation of the underlying problem: they
 derive minimal-norm weight perturbations achieving a specified change in \emph{output}, exactly for
 a single layer, and compare against Lipschitz-based bounds for the multi-layer case; their purpose
-is robustness certification rather than optimiser analysis. The two differences from our setting are
-the target --- output versus operator --- and the treatment of depth, where we solve the multi-layer
-prescribed-step problem exactly (Section~\ref{sec:s1}). \citet{frerix2018proximal} recast
+is robustness certification rather than optimiser analysis. The difference from our setting is the
+target: an output change constrains the network along one input, an operator change constrains its
+action on every input at once. \citet{frerix2018proximal} recast
 backpropagation as a sequence of proximal steps, and \citet{dufortlabbe2026layerwise} develop a
 layerwise LQR view of geometry-aware optimisation. The distinction of purpose is worth stating
 once: all of these are optimisation methods proposed to train faster, whereas we use the algebra as
@@ -566,106 +558,18 @@ This is the exact, non-linearised counterpart of Definition~\ref{def:ref}: the c
 rather than the weights. The distinction matters and is easy to lose. Minimising $\sum\|W_\ell\|^2$
 subject to $W_L\cdots W_1 = P^\star$ is a different problem --- it asks for the smallest factors
 realising a target from scratch, and its answer does not depend on where the weights currently are.
-We will need that problem too, but only as a special case:
-
-\begin{definition}[Minimal realisation from zero]
-\label{def:static}
-\begin{equation}
-  \min_{W_1,\dots,W_L} \; \sum_{\ell=1}^{L} \|W_\ell\|_F^2
-  \qquad \text{subject to} \qquad
-  W_L W_{L-1} \cdots W_1 \;=\; P^\star .
-  \label{eq:static}
-\end{equation}
-\end{definition}
-
-\noindent Problem \eqref{eq:static} is exactly \eqref{eq:prescribed} evaluated at $W = 0$, where
-every $W_\ell$ vanishes from the constraint and the displacement \emph{is} the factorisation. That
-is the only configuration at which the two coincide, and it is the configuration
-Section~\ref{sec:degeneracy} is about.
-
-The solution of \eqref{eq:static} is classical in form and is governed by a Schatten quasi-norm.
-Writing $\|\cdot\|_{S_p}$ for the Schatten-$p$ quasi-norm,
-$\|A\|_{S_p} = (\sum_k \sigma_k(A)^p)^{1/p}$:
-
-\begin{proposition}[Minimal realisation]
-\label{prop:minimal}
-The optimum of \eqref{eq:static} equals $L \, \|P^\star\|_{S_{2/L}}^{2/L}$, and is attained by
-any factorisation whose factors share the singular vectors of $P^\star$ in the chain and distribute
-its singular values as $\sigma_k^{1/L}$ in every factor. In particular the optimal factorisation is
-\emph{balanced}: $W_{\ell+1}^\top W_{\ell+1} = W_\ell W_\ell^\top$ for all $\ell$.
-\end{proposition}
-
-The proof is by a Bellman recursion over the depth with value function
-$V_a(Y) = a\|Y\|_{S_{2/a}}^{2/a}$ for a sub-chain of depth $a$, together with the arithmetic
-mean--geometric mean inequality to establish that the per-mode split is the equalising one; it is
-given in Appendix~\ref{app:proofs}. The quasi-norm appearing here is the same object that arises
-as a non-convex surrogate for rank, and whose direct minimisation is studied algorithmically by
-\citet{shang2016scalable}; the difference is that it emerges for us as the value of
-\eqref{eq:static} rather than being imposed as a penalty.
-
-Proposition~\ref{prop:minimal} says something about the literature, but it is important to say
-exactly what. Balancedness enters the classical analysis as a hypothesis on the
-\emph{initialisation}, preserved thereafter by the conservation law of \citet{du2018algorithmic}.
-Here it appears instead as a consequence of minimality --- but of minimality in \eqref{eq:static},
-that is, of the step taken \emph{from zero}. It does not follow that minimal displacement produces
-balance in general, and Section~\ref{sec:conserve} shows it does not: away from the origin the
-minimal step conserves whatever imbalance the weights already carry, exactly as gradient flow does.
-Started unbalanced, the reference step stays unbalanced. Measured on a deliberately unbalanced
-depth-$4$ chain, the per-layer imbalance
-$\|W_{\ell+1}^\top W_{\ell+1} - W_\ell W_\ell^\top\|$ moves from $(514.3, 94.8, 98.2)$ to
-$(513.4, 94.6, 97.7)$ over $300$ minimal-displacement steps, while the minimiser of
-\eqref{eq:static} for the same operator would report $(0,0,0)$.
-
-\subsection{Degeneracy: where derivative-based methods stop and the prescribed step does not}
-\label{sec:degeneracy}
-
-The practically important feature of the prescribed step is that it remains solvable at parameter
-values where gradient information vanishes entirely. At such a point the weights contribute nothing
-to the constraint, so \eqref{eq:prescribed} collapses to \eqref{eq:static} --- a problem that never
-references a gradient and is solvable for every target.
-
-\begin{definition}[Degenerate point]
-A parameter value $W$ is \emph{degenerate} if $P = 0$ and all contexts vanish, i.e.\ $A_\ell = 0$
-or $B_\ell = 0$ for every $\ell$.
-\end{definition}
-
-\begin{proposition}[Exactness from degeneracy]
-\label{prop:degen}
-At a degenerate point, $\partial \mathcal{L}/\partial W_\ell = 0$ for every $\ell$, so every
-method whose update is a function of the gradient --- gradient descent, momentum, Adam, and any
-preconditioned variant --- is stationary. The prescribed step \eqref{eq:prescribed}, which at such
-a point coincides with \eqref{eq:static}, nevertheless has a solution for every $P^\star$ and every
-$L$, and the construction of Section~\ref{sec:s1} attains it.
-\end{proposition}
-
-\begin{remark}[Why this is not a statement about the reference step]
-\label{rem:twoproblems}
-The distinction matters and is easy to lose. At a degenerate point $M = 0$, so the linearised
-reference step \eqref{eq:precond} vanishes along with the gradient: as a preconditioned gradient
-method it is stationary there too. Proposition~\ref{prop:degen} is a statement about the
-\emph{exact} problem, which at the origin is \eqref{eq:static}: it asks for factors whose product
-equals a target, rather than for a small update whose first-order effect matches a requested
-change. That problem does not reference the gradient at all, which is why it remains solvable where
-every gradient-based method --- ours included --- stops. Away from the origin the two problems come
-apart again, and it is \eqref{eq:prescribed}, the displacement problem, that the reference step
-approximates.
-\end{remark}
-
-The all-zero chain is the extreme case, but the situation it models is not exotic. In a deep chain
-under a standard random initialisation the product $W_L\cdots W_1$ has a spectrum that contracts
-geometrically with depth; past a moderate $L$ the contexts are numerically indistinguishable from
-zero in the directions that matter, and the gradient carries no usable signal even though it is not
-formally zero. The degenerate point is the idealisation of that regime, and a construction that is
-exact there is well defined throughout it.
+Everything in Part I concerns \eqref{eq:prescribed}; the static problem is mentioned only to keep
+the two apart, since the classical factorisation results --- minimal factors are balanced, and the
+minimal total norm is a Schatten quasi-norm --- describe it and not the step.
 
 \subsection{Minimality conserves imbalance}
 \label{sec:conserve}
 
 The minimum-norm condition in Definition~\ref{def:ref} has a consequence that recovers, from a
-different premise, the conservation law the classical analysis relies on. Note that this is
-conservation, not balancedness: it says the imbalance does not \emph{change}, not that it is
-\emph{zero}. Balancedness is the content of Proposition~\ref{prop:minimal}, which describes
-\eqref{eq:static} --- the step from the origin --- and does not extend to steps taken elsewhere.
+different premise, the conservation law the classical analysis relies on. Note that it is
+conservation and not balancedness: it says the imbalance does not \emph{change}, not that it is
+\emph{zero}. A chain started unbalanced stays unbalanced under minimal-displacement steps, which is
+the opposite of what minimising the weights themselves would give.
 
 \begin{proposition}[Conservation from minimality]
 \label{prop:conserve}
@@ -687,41 +591,6 @@ that form alone. It requires neither gradient flow nor a balanced initialisation
 descent's step $M^\top \Delta_\star$ is of the same form with $\Lambda = \Delta_\star$, the
 classical conservation law is recovered as the special case in which the multiplier is the target
 itself.
-
-\subsection{Solver S1: exact minimal realisation by recursive splitting}
-\label{sec:s1}
-
-This solver addresses \eqref{eq:static}, the minimal realisation from zero, by recursion on the
-depth. By the remark after Definition~\ref{def:static} that makes it an exact solver for the
-prescribed \emph{step} \eqref{eq:prescribed} at a degenerate point, and a reinitialisation rather
-than a step anywhere else --- which is precisely the regime Section~\ref{sec:degeneracy} isolates,
-and the reason the solver is stated here rather than offered as a general training rule. Suppose the chain of depth $L$ is split
-into a lower part of depth $a$ and an upper part of depth $b$, with $a + b = L$, so that
-$P^\star = Y X$ where $X$ is realised by the lower $a$ factors and $Y$ by the upper $b$. Taking the
-singular value decomposition $P^\star = U \Sigma V^\top$, we set
-\begin{equation}
-  Y_0 \;=\; U\, \Sigma^{\,t} , \qquad
-  X_0 \;=\; \Sigma^{\,1-t}\, V^\top , \qquad
-  t \;=\; \frac{b}{a+b} ,
-  \label{eq:split}
-\end{equation}
-and recurse on $X_0$ with depth $a$ and on $Y_0$ with depth $b$. The exponent in \eqref{eq:split}
-is \emph{depth-proportional}: each half receives the share of the singular values corresponding to
-the number of factors it must still produce. An even split $t = 1/2$ is correct only when
-$a = b$, and using it in general is what breaks exactness at odd depths.
-
-The recursion bottoms out at $L = 1$, where the factor is the target itself. It never queries a
-gradient, so it applies unchanged at a degenerate point, which establishes
-Proposition~\ref{prop:degen}. The cost is that of one singular value decomposition per split,
-$O(L)$ of them in total.
-
-\begin{remark}[Relation to alternating least squares]
-An obvious alternative is to solve for one factor at a time holding the others fixed, which is
-block coordinate descent, or alternating least squares. That procedure converges to a realisation
-of the target but not to the \emph{minimal} one: each sweep solves an exactly determined
-sub-problem and has no reason to respect the global norm budget of
-Proposition~\ref{prop:minimal}. We report the resulting gap in Appendix~\ref{app:als}.
-\end{remark}
 
 \subsection{Experiments}
 \label{sec:linear-exp}
@@ -763,11 +632,11 @@ recovers. Looks-linear initialisation is also omitted: the $[\,O \mid -O\,]$ con
 CReLU's doubled feature dimension (Section~\ref{sec:lookslinear}), so on a linear chain it reduces
 to the orthogonal case and contributes no separate panel.
 
-The reference here is the \emph{exact} minimal realisation of Section~\ref{sec:s1}, obtained from a
-damped minimum-norm solve, rather than the Krylov-truncated practical solver of
-Section~\ref{sec:s2}. On a deep linear chain the step map is largely null --- measured at $83\%$
-nullity at $L=6$, width $8$ --- and a truncated solve there reflects the solver rather than the
-rule.
+The reference here is \eqref{eq:ref} solved to convergence --- a damped minimum-norm solve of the
+same minimum-displacement problem --- rather than the Krylov truncation at $k = 50$ used as the
+practical solver in Part II. On a deep linear chain the step map is largely null, measured at $83\%$
+nullity at $L=6$, width $8$, and a truncated solve there reflects the solver's iteration budget
+rather than the rule.
 
 Each arm's step size is swept over a grid spanning $10^{-5}$ to $10^{-1}$ and the run drawn is the
 one that descends most directly among those reaching within a factor of two of that arm's best
@@ -839,8 +708,7 @@ paper.
 
 \emph{A note on the solvers.} Alternating least squares, retained from the previous formulation for
 continuity, requires ridge damping here; undamped it is anti-aligned on $100\%$ of steps at $L=2$
-and diverges to $\|P - P^\star\| = 154$. It is not a minimal realisation, which is the point of the
-contrast (Appendix~\ref{app:als}).
+and diverges to $\|P - P^\star\| = 154$.
 
 % =========================================================================
 \section{Part II --- Gated networks}
@@ -2273,10 +2141,7 @@ not be more than 1 page.
 \section{Proofs}
 \label{app:proofs}
 
-\emph{[Proof of Proposition~\ref{prop:minimal}: Bellman recursion over depth with value function
-$V_a(Y) = a\|Y\|_{S_{2/a}}^{2/a}$, and the arithmetic mean--geometric mean inequality for the
-per-mode split. Proof of Proposition~\ref{prop:degen}: homogeneity and null-consistency of the
-recursive construction. Proof of Proposition~\ref{prop:conserve}: the KKT conditions of
+\emph{[Proof of Proposition~\ref{prop:conserve}: the KKT conditions of
 \eqref{eq:ref} give the shared multiplier \eqref{eq:kkt}, from which
 $\Delta W_{\ell+1}^\top W_{\ell+1}$ and $\Delta W_\ell W_\ell^\top$ are transposes.]}
 
@@ -2285,13 +2150,6 @@ $\Delta W_{\ell+1}^\top W_{\ell+1}$ and $\Delta W_\ell W_\ell^\top$ are transpos
 
 \emph{[Divergence of LSQR past convergence on these step maps; failure of the two natural stopping
 tests; the normal-equation stopping rule and the attained residuals by depth and architecture.]}
-
-\section{Alternating least squares is not a minimal realisation}
-\label{app:als}
-
-\emph{[Measured ratio between the alternating-least-squares realisation and the minimal one, and
-its consequences.]}
-
 
 % =========================================================================
 \section{Hardware, cost, and what each method costs}
