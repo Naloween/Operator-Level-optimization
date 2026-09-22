@@ -28,6 +28,11 @@ def svd_psd(X):
     leans on -- is exactly the repeated-eigenvalue case, so a baseline built on `eigh` would
     crash precisely in the well-conditioned regime.
     """
+    if not torch.isfinite(X).all():
+        # A diverging learning rate poisons the accumulated statistics before the weights
+        # themselves go non-finite, so the first thing to fail is this decomposition. Say so
+        # plainly rather than exhausting three fallbacks on a matrix full of inf.
+        raise ValueError("svd_psd: non-finite input (the optimiser has diverged)")
     try:
         U, s, _ = torch.linalg.svd(X)
         return U, s
@@ -83,7 +88,12 @@ def _buffers(state, key, ref, mutate):
 
 # --------------------------------------------------------------------------- the rules
 def heavyball(g, state, hyper, mutate=True):
-    lr, momentum = hyper
+    # Tolerates a bare learning rate: `step_for` passes `(lr,)` when the sweep supplies a scalar,
+    # and unpacking a 1-tuple into two names raised on every call -- which `traj_grid` was
+    # swallowing in a bare except, and which would have failed every heavyball cell of the queued
+    # sweep with nothing but a "failed" status to show for it.
+    lr = hyper[0] if isinstance(hyper, (list, tuple)) else hyper
+    momentum = hyper[1] if isinstance(hyper, (list, tuple)) and len(hyper) > 1 else 0.9
     buf = _buffers(state, "hb", g, mutate)
     out = []
     for i, gi in enumerate(g):
