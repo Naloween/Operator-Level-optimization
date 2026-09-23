@@ -892,9 +892,12 @@ impossible and serves as an independent check on the solve.
 \paragraph{Status.} \textsc{done}.
 
 \paragraph{Results.}
-$\alpha$ is essentially $1$ everywhere: $1.0000$ for gradient descent in all three gated
-architectures, $0.9942$--$0.9999$ for the reference, and $0.8005$--$0.9997$ for Adam, the last of
-these along Adam's own trajectory where the weights have travelled furthest from initialisation.
+$\alpha = 1.0000$ for gradient descent in all three gated architectures and $0.9942$--$0.9999$ for
+the reference, so for those two the requested change is reachable to within the solve's own
+precision. Adam ranges $0.8005$--$0.9997$: at the low end a fifth of the requested operator change
+is not reachable at all, which is not negligible and is worth keeping in view when reading Adam's
+deflection in E4. It is measured along Adam's own trajectory, where the weights have travelled
+furthest from initialisation.
 
 \paragraph{Conclusions.}
 At this width the model is over-parameterised relative to the batch, the requested operator change
@@ -936,17 +939,17 @@ means over the last half of each run's probes.
 \toprule
 architecture & arm & $\cos_{op}$ & $\cos_{w}$ & $\alpha$ & $\ker M$ fraction \\
 \midrule
-ReLU   & gradient descent & $0.232$ & $0.123$ & $1.0000$ & $0.000$ \\
-       & Adam             & $0.037$ & $0.002$ & $0.8005$ & ${\approx}0.16$ \\
-       & reference        & $0.874$ & $0.323$ & $0.9998$ & $0.000$ \\
+ReLU   & gradient descent & $0.232$ & $0.123$ & $1.0000$ & $0.0000$ \\
+       & Adam             & $0.037$ & $0.002$ & $0.8005$ & $\mathbf{0.485 \pm 0.026}$ \\
+       & reference        & $0.874$ & $0.323$ & $0.9998$ & $0.0007$ \\
 \midrule
-CReLU  & gradient descent & $0.250$ & $0.264$ & $1.0000$ & $0.000$ \\
-       & Adam             & $0.046$ & $0.073$ & $0.9997$ & ${\approx}0.16$ \\
-       & reference        & $0.293$ & $0.132$ & $0.9942$ & $0.000$ \\
+CReLU  & gradient descent & $0.250$ & $0.264$ & $1.0000$ & $0.0000$ \\
+       & Adam             & $0.046$ & $0.073$ & $0.9997$ & $\mathbf{0.616 \pm 0.054}$ \\
+       & reference        & $0.293$ & $0.132$ & $0.9942$ & $0.0010$ \\
 \midrule
-leaky  & gradient descent & $0.203$ & $0.122$ & $1.0000$ & $0.000$ \\
-       & Adam             & $0.070$ & $0.011$ & $0.9945$ & ${\approx}0.16$ \\
-       & reference        & $0.815$ & $0.350$ & $0.9999$ & $0.000$ \\
+leaky  & gradient descent & $0.203$ & $0.122$ & $1.0000$ & $0.0000$ \\
+       & Adam             & $0.070$ & $0.011$ & $0.9945$ & $\mathbf{0.539 \pm 0.083}$ \\
+       & reference        & $0.815$ & $0.350$ & $0.9999$ & $0.0006$ \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -966,10 +969,20 @@ negative in several cells.}
 Three facts, in decreasing order of confidence.
 
 First, the decomposition is exact and structural: gradient descent and the reference lie
-\emph{entirely} in $\mathrm{range}(M^\top)$, measured at $\ker M$ fraction $0.000$, which is forced
-by $\Delta W^{\mathrm{GD}} = M^\top\Delta_\star$ and $\Delta W^{\mathrm{ref}} = M^{+}\Delta_\star$.
-Adam is the only arm with a component that moves weights without moving the operator, and it is
-substantial at ${\approx}16\%$.
+\emph{entirely} in $\mathrm{range}(M^\top)$, which is forced by
+$\Delta W^{\mathrm{GD}} = M^\top\Delta_\star$ and $\Delta W^{\mathrm{ref}} = M^{+}\Delta_\star$.
+The measurement confirms it and calibrates the method at the same time: gradient descent reads
+$0.0000$ and the reference $0.0006$--$0.0010$, the latter being the residual of the projection
+used to make the measurement rather than a property of the step. Adam is the only arm with a
+component that moves weights without moving the operator, and it is large --- $0.49$ to $0.62$ of
+the step by norm, consistently across three seeds. Roughly half of what Adam does to the weights
+is invisible to the operator at the point where it is done.
+
+The projection has to be run to convergence for this to mean anything. At $400$ iterations the same
+measurement reports $0.017$ for gradient descent, $0.553$ for Adam and $0.112$ for the reference;
+only by $3000$ do the two structural zeros actually appear, while Adam's value is stable from
+$1500$ onward. A quantity that is zero by construction is the right calibration for a projection
+whose error one cannot otherwise see.
 
 Second, Adam's operator-space deflection is near zero and sometimes negative: its step is close to
 orthogonal to what the loss asked the operator to do. This is not a statement about its
@@ -1037,9 +1050,40 @@ at.}
 \label{fig:endpoints}
 \end{figure}
 
+\paragraph{The comparison is at matched fit, and at matched loss.}
+Every arm reaches training accuracy $1.000$. That alone is weaker than it sounds: the arms sit at
+training \emph{losses} three to five orders of magnitude apart ($3.0\cdot10^{-4}$ for gradient
+descent on CReLU against $5.7\cdot10^{-8}$ for the reference) and at logit margins from $0.78$ to
+$24.2$, so they are not at comparable points past the interpolation threshold, and one could
+object that the ordering below is a statement about how far each arm has travelled rather than
+about where it went. We therefore also read each arm's test accuracy off its trajectory at
+\emph{matched training loss}:
+
+\begin{center}\small
+\begin{tabular}{lcccc}
+\toprule
+ReLU, at training loss & $10^{-1}$ & $10^{-2}$ & $10^{-3}$ & $10^{-4}$ \\
+\midrule
+gradient descent & $0.518$ & $0.529$ & $0.531$ & $0.532$ \\
+Adam             & $0.566$ & $0.628$ & $0.637$ & $\mathbf{0.641}$ \\
+reference        & $0.515$ & $0.541$ & $0.551$ & $0.557$ \\
+\midrule
+CReLU, at training loss & $10^{-1}$ & $10^{-2}$ & $10^{-3}$ & $10^{-4}$ \\
+\midrule
+gradient descent & $0.495$ & $0.503$ & $0.508$ & --- \\
+Adam             & $0.641$ & $0.620$ & $0.609$ & $\mathbf{0.613}$ \\
+reference        & $0.547$ & $0.580$ & $0.592$ & $0.595$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The ordering gd $<$ reference $<$ Adam holds at every level and in all three
+architectures, with one tie at the loosest ReLU level. It is therefore not an artefact of the arms
+stopping at different depths of interpolation. The dash records that gradient descent never reaches
+$10^{-4}$ on CReLU at any learning rate in its grid, which is itself part of the picture.
+
 \paragraph{Conclusions.}
-Every arm reaches training accuracy $1.000$, so this is a generalisation comparison and not a
-fitting one. The ordering is
+The ordering is
 \[
   \text{gradient descent } (0.51\text{--}0.53) \;<\;
   \text{reference } (0.55\text{--}0.58) \;<\;
@@ -1163,7 +1207,12 @@ on or always off contributes a fixed linear map. \emph{Do the arms differ in how
 they actually use, and does that track generalisation?}
 
 \paragraph{Setup.} The common configuration, final checkpoint, gate patterns evaluated on $256$
-training inputs.
+training inputs. The count matters and is fixed across arms: a unit is called switching if its
+state is not constant over the probe set, so the measured fraction can only rise as the probe
+grows. On CReLU the reference reads $0.728$ at $n = 256$, $0.819$ at $n = 1024$ and $0.856$ at the
+full $4000$, while gradient descent is pinned at $1.000$ throughout. The \emph{ordering} is
+therefore robust to $n$ and the \emph{magnitude} is not, so the percentages below should be read
+as a comparison at fixed $n$ rather than as a property of the network alone.
 
 \paragraph{Measurement.} The fraction of units that switch state across inputs, and the fractions
 always on and always off. For CReLU the gate is the sign pattern of the pre-activation.
@@ -1238,27 +1287,29 @@ directions the operator explores across the dataset.
 \paragraph{Status.} \textsc{done}.
 
 \paragraph{Results.}
-Pointwise rank at the final checkpoint: gradient descent $5.78$--$6.54$, Adam $1.98$--$3.26$,
-reference $1.56$--$2.70$. Operator diversity, against a ceiling of $512$ and the value at
-initialisation:
+All values at the final checkpoint, $n = 512$ inputs, mean over three seeds.
 
 \begin{center}\small
-\begin{tabular}{llccc}
+\begin{tabular}{llcccc}
 \toprule
-architecture & arm & pointwise rank & diversity & \% of initialisation \\
+architecture & arm & pointwise rank & diversity & \% of init. & shared \\
 \midrule
-CReLU & initialisation   & ---    & $264.4$ & $100\%$ \\
-      & gradient descent & $6.54$ & $208.5$ & $78.8\%$ \\
-      & Adam             & $3.11$ & $104.5$ & $39.5\%$ \\
-      & reference        & $7.29$ & $53.2$  & $20.1\%$ \\
+ReLU  & initialisation   & ---             & $241.2$                  & $100\%$          & --- \\
+      & gradient descent & $5.75$          & $206.6 \pm 2.7$          & $86\%$           & $0.070$ \\
+      & Adam             & $1.99$          & $165.5 \pm 8.9$          & $69\%$           & $0.012$ \\
+      & reference        & $\mathbf{1.57}$ & $\mathbf{37.5 \pm 1.8}$  & $\mathbf{16\%}$  & $0.009$ \\
 \midrule
-ReLU  & initialisation   & ---    & $241.2$ & $100\%$ \\
-      & gradient descent & $5.70$ & $207.4$ & $86.0\%$ \\
-      & Adam             & $1.11$ & $28.4$  & $11.8\%$ \\
-      & reference        & $6.24$ & $106.5$ & $44.1\%$ \\
+CReLU & initialisation   & ---             & $266.3$                  & $100\%$          & --- \\
+      & gradient descent & $6.52$          & $209.3 \pm 1.1$          & $79\%$           & $0.113$ \\
+      & Adam             & $3.28$          & $112.4 \pm 18.6$         & $42\%$           & $0.013$ \\
+      & reference        & $\mathbf{2.57}$ & $\mathbf{60.1 \pm 24.1}$ & $\mathbf{23\%}$  & $0.095$ \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\noindent Diversity is a participation ratio over $n$ stacked operators, so its ceiling is $n$ and
+it rises with the probe size for every arm. The column is a comparison at fixed $n = 512$, not a
+quantity intrinsic to the network --- the same caution as for the switching fraction in E8.
 
 \begin{figure}[H]
 \centering
@@ -1266,22 +1317,29 @@ ReLU  & initialisation   & ---    & $241.2$ & $100\%$ \\
 \hfill
 \includegraphics[width=0.49\textwidth]{pointwise_vs_diversity.pdf}
 \caption{Operator diversity along training (left) and the relationship between pointwise rank and
-diversity across arms (right). The two measures are not interchangeable.}
+diversity across arms (right).}
 \label{fig:diversity}
 \end{figure}
 
 \paragraph{Conclusions.}
-The two measures tell different stories and must not be conflated. Gradient descent keeps a
-\emph{high} pointwise rank and a \emph{high} diversity: it barely reorganises the operator at all.
-Adam collapses both. The reference collapses diversity hardest on CReLU while keeping pointwise rank
-high, which is a different regime from Adam's: a small number of distinct linear maps, each of
-relatively high rank.
+The two measures order the arms the same way, and the order is the reverse of what "Adam is the
+aggressive optimiser" would suggest. Gradient descent barely reorganises the operator at all: it
+keeps $79$--$86\%$ of its initial diversity and the highest pointwise rank, $5.75$--$6.52$. Adam
+collapses both moderately. The \emph{reference} collapses both hardest --- to $16$--$23\%$ of
+initial diversity and a pointwise rank of $1.57$--$2.57$, close to a rank-one map at each input and
+close to the same map across inputs.
 
-Pointwise rank separates Adam from gradient descent and orders correctly with accuracy on ReLU, but
-it does not order the reference consistently, and Section~\ref{sec:e16} shows that rank comparisons
-across arms are confounded with the operator norm the arms arrive at.
+This is one coherent picture rather than two competing ones, and it agrees with E10, where the
+reference's final-layer representation is two-dimensional to numerical precision. The arm that
+follows the operator gradient most faithfully ends with the simplest operator, and it is the middle
+performer. Whatever Adam's advantage is, it does not sit at either extreme of operator complexity,
+which is what makes this measure another elimination rather than an explanation.
 
-% ---------------------------------------------------------------------------
+The \emph{shared} column separates the two architectures and is worth a line. On CReLU the
+reference retains a large common component ($0.095$ against Adam's $0.013$), so its collapse is
+towards a single shared map; on ReLU it does not ($0.009$). The route to low diversity is therefore
+not the same in both, which cautions against reading the diversity column on its own.
+
 \subsubsection{E10 --- What the representation looks like layer by layer}
 \label{sec:e10}
 
@@ -1525,10 +1583,13 @@ the reference does early, even with $75\%$ of the budget afterwards}. Conversely
 \emph{to} the reference is cheap --- Adam for $6000$ then the reference for $6000$ gives $0.606$,
 only $0.04$ below pure Adam. The reference can largely hold what Adam built; it cannot build it.
 
-On CReLU the mixture beats both pure arms: Adam for $3000$ steps then the reference for $9000$ gives
-$0.660 \pm 0.008$, above pure Adam ($0.596 \pm 0.070$) and pure reference ($0.561$). It appears at
-two adjacent handover points with tight seed spreads, so it is unlikely to be noise, though pure
-Adam's wide CReLU spread argues for more seeds before the claim is leaned on.
+On CReLU the mixture is the best cell in the table: Adam for $3000$ steps then the reference for
+$9000$ gives $0.660 \pm 0.008$, against pure reference $0.561$ and pure Adam $0.596 \pm 0.070$. We
+do \emph{not} claim it beats pure Adam. That cell's five seeds span $0.204$, so $0.596 + 0.070$
+already reaches $0.666$ and the two intervals overlap. What the comparison does support is the
+claim against the pure \emph{reference}, which is $0.099$ lower with a seed spread of $0.076$, and
+the observation that the mixture's own spread is an order of magnitude tighter than pure Adam's.
+Settling whether the mixture genuinely exceeds pure Adam needs more seeds on that one cell.
 
 This is the clearest positive result in Part II and it sharpens the open question: what does Adam do
 in the first few thousand steps that the reference does not, and why is it irreversible?
@@ -1587,6 +1648,11 @@ Right: the same data plane at successive snapshots.}
 \end{figure}
 
 \paragraph{Conclusions.}
+These are single-seed observations. The effects below are large relative to the seed spreads seen
+elsewhere in Part II ($0.010$--$0.070$ in test accuracy), but continuing three seeds to $300$k
+steps was not affordable, so each statement should be read as one trajectory rather than an
+average.
+
 \emph{Gradient descent is frozen.} Over $275000$ steps past convergence, test accuracy moves by
 $0.002$, linear regions by $-1.2\%$, switching by $0.001$ and operator rank by $0.04$. Whatever
 gradient descent was going to do, it has done by step $25000$.
@@ -2061,9 +2127,9 @@ measure & gradient descent & Adam & reference & separates \\
 $\cos_{op}$ (E4)                 & $0.20$--$0.25$ & $0.04$--$0.07$ & $0.29$--$0.87$ & all three, inversely to accuracy \\
 $\cos_w$ (E4)                    & $0.12$--$0.26$ & $0.00$--$0.07$ & $0.13$--$0.35$ & all three \\
 reachability $\alpha$ (E3)       & $1.000$        & $0.80$--$1.00$ & $0.99$--$1.00$ & nothing \\
-$\ker M$ fraction (E4)           & $0.000$        & ${\approx}0.16$ & $0.000$       & Adam, structurally \\
-operator rank (E9)               & $5.8$--$6.5$   & $2.0$--$3.3$   & $1.6$--$2.7$   & gradient descent from both \\
-operator diversity (E9)          & $79$--$86\%$   & $12$--$40\%$   & $20$--$44\%$   & gradient descent from both \\
+$\ker M$ fraction (E4)           & $0.0000$       & $0.49$--$0.62$ & $0.001$        & Adam, structurally \\
+operator rank (E9)               & $5.8$--$6.5$   & $2.0$--$3.3$   & $1.6$--$2.6$   & all three, same order as diversity \\
+operator diversity (E9)          & $79$--$86\%$   & $42$--$69\%$   & $16$--$23\%$   & all three, same order as rank \\
 switching fraction (E8)          & $0.996$--$1.000$ & $0.91$--$1.00$ & $0.71$--$0.76$ & the reference from both \\
 region concentration (E11)       & baseline       & $+0.001$--$0.02$ & $+0.09$--$0.15$ & the reference from both \\
 CW-PGD$_{0.05}$ / clean (E16)    & $58$--$59\%$   & $65$--$66\%$   & $62$--$65\%$   & nothing \\
@@ -2074,10 +2140,13 @@ test accuracy (E5)               & $0.51$--$0.53$ & $0.61$--$0.66$ & $0.55$--$0.
 \end{center}
 
 Two groups emerge. Switching and region concentration separate the \emph{reference from both
-baselines}; operator rank and diversity separate \emph{gradient descent from both}. Neither grouping
-matches the accuracy ordering, and in particular nothing here explains the gradient-descent--Adam
-gap, which is the largest of the three: on region concentration the two are statistically
-indistinguishable ($t = +0.1$ on CReLU), and on switching they differ in the wrong direction.
+baselines}. Operator rank and diversity, which agree with each other, order all three --- but
+monotonically in the \emph{opposite} direction to accuracy: gradient descent keeps the most
+operator complexity and generalises worst, the reference keeps the least and sits in the middle,
+Adam is between them on both and generalises best. So neither grouping matches the accuracy
+ordering, and in particular nothing here explains the gradient-descent--Adam gap, which is the
+largest of the three: on region concentration the two are statistically indistinguishable
+($t = +0.1$ on CReLU), and on switching they differ in the wrong direction.
 
 $\cos_{op}$ is the only measure that cleanly separates all three, and it orders them \emph{inversely}
 to accuracy. E15 shows that this inversion must not be read as a causal claim, and why: the
@@ -2088,10 +2157,14 @@ reference rule does not recover Adam's advantage. So the framework's central dia
 and reproducible ordering of optimisers that does \emph{not} reduce to generalisation, and one whose
 value for momentum-carrying rules is a statement about their steps rather than their trajectories.
 
-Two cautions on reading the table. Operator rank and robustness vary more \emph{within} an arm
+Four cautions on reading the table. Operator rank and robustness vary more \emph{within} an arm
 across its hyper-parameter grid than \emph{between} arms at their best settings, so a per-arm row
-understates the variation. And the reference's $\cos_{op}$ row is partly a statement about Krylov
-truncation at $k = 50$ rather than about the rule, as E4 and E17 discuss.
+understates the variation. The reference's $\cos_{op}$ row is partly a statement about Krylov
+truncation at $k = 50$ rather than about the rule, as E4 and E17 discuss. The switching and
+diversity rows are comparisons at a fixed probe size and would move with it, though not in their
+ordering. And the $\ker M$ row is the one quantity here with a known ground truth --- two of its
+three entries are zero by construction --- which is what makes it usable as a calibration of the
+projection that measures it, rather than only as a comparison.
 
 \section{Conclusion}
 \label{sec:conclusion}
