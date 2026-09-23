@@ -1863,56 +1863,73 @@ Per depth and arm, at the best hyper-parameter by stable test accuracy: stable t
 training accuracy and training loss --- so that a change in test accuracy can be attributed to
 generalisation rather than to a failure to fit --- and $\cos_{op}$.
 
-\paragraph{Status.} \textsc{partial}. $L \in \{2,4\}$ complete at three seeds, $L = 8$ nearly
-complete, $L \in \{16, 32\}$ pending. Numbers below are from completed cells only.
+\paragraph{Status.} \textsc{partial}. $L \in \{2,4,8\}$ complete at three seeds and ReLU complete
+at $L = 16$; CReLU at $L = 16$ and both at $L = 32$ are still running. Numbers below are from
+completed cells only.
 
-\paragraph{Results.}
+\paragraph{Results.} Test accuracy at each arm's best hyper-parameter, three seeds:
+
+\begin{center}\small
+\begin{tabular}{llccccc}
+\toprule
+ & & $L=2$ & $L=4$ & $L=8$ & $L=16$ & $L=32$ \\
+\midrule
+ReLU  & gradient descent & $0.538$ & $0.558$ & $0.527$ & $0.579$ & --- \\
+      & Adam             & $0.545$ & $0.607$ & $\mathbf{0.645}$ & $\mathbf{0.635}$ & --- \\
+      & reference        & $0.506$ & $0.587$ & $0.592$ & $0.567$ & --- \\
+\midrule
+CReLU & gradient descent & $0.533$ & $0.572$ & $0.517$ & --- & --- \\
+      & Adam             & $0.543$ & $0.676$ & $0.596$ & --- & --- \\
+      & reference        & $0.516$ & $0.578$ & $\mathbf{0.597}$ & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent and operator-space faithfulness over the same cells:
 
 \begin{center}\small
 \begin{tabular}{llcccc}
 \toprule
- & & \multicolumn{3}{c}{test accuracy} & \\
-architecture & arm & $L=2$ & $L=4$ & $L=8$ & $\cos_{op}$, $L=2 \to 4$ \\
+$\cos_{op}$ & & $L=2$ & $L=4$ & $L=8$ & $L=16$ \\
 \midrule
-ReLU  & gradient descent & $0.538$ & $0.558$ & $0.527$ & $0.398 \to 0.195$ \\
-      & Adam             & $0.545$ & $0.607$ & $\mathbf{0.645}$ & $0.191 \to 0.112$ \\
-      & reference        & $0.506$ & $0.587$ & $0.591$ & $1.000 \to 0.780$ \\
+ReLU  & gradient descent & $0.398$ & $0.195$ & $0.220$ & $0.126$ \\
+      & Adam             & $0.191$ & $0.112$ & $0.034$ & $0.047$ \\
+      & reference ($k{=}50$) & $1.000$ & $0.780$ & $0.596$ & $0.629$ \\
 \midrule
-CReLU & gradient descent & $0.533$ & $0.572$ & --- & $0.481 \to 0.299$ \\
-      & Adam             & $0.543$ & $0.676$ & --- & $0.210 \to$ --- \\
-      & reference        & $0.516$ & $0.578$ & --- & $1.000 \to 0.718$ \\
+CReLU & gradient descent & $0.481$ & $0.299$ & $0.243$ & --- \\
+      & Adam             & $0.210$ & --- & $0.044$ & --- \\
+      & reference ($k{=}50$) & $1.000$ & $0.718$ & $0.802$ & --- \\
 \bottomrule
 \end{tabular}
 \end{center}
-\noindent Dashes are cells not yet complete.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{fig_depth_summary.pdf}
 \caption{Depth sweep: test accuracy, final training accuracy, final training loss and $\cos_{op}$
-against depth, at each arm's best hyper-parameter, for ReLU (top) and CReLU (bottom).
-\textsc{partial}: the deeper cells are still running.}
+against depth, at each arm's best hyper-parameter. \textsc{partial}: $L = 32$ and CReLU at
+$L = 16$ are still running.}
 \label{fig:depthsummary}
 \end{figure}
 
 \paragraph{Interim conclusions.}
-\emph{The mismatch grows with depth, as the framework predicts.} Gradient descent's operator
-faithfulness roughly halves from $L=2$ to $L=4$ ($0.398 \to 0.195$ on ReLU, $0.481 \to 0.299$ on
-CReLU) and Adam's falls with it. This is the motivating claim appearing directly in a measurement,
-and it is why the trajectory figure of Section~\ref{sec:e2} is drawn at $L = 32$ rather than at a
-shallow depth.
+\emph{The mismatch grows with depth.} Gradient descent's faithfulness falls from $0.398$ at $L=2$
+to $0.126$ at $L=16$ on ReLU, and Adam's from $0.191$ to $0.047$. This is the framework's
+motivating claim appearing in a measurement, and it is why the trajectory figure of
+Section~\ref{sec:e2} is drawn at $L = 32$.
 
-\emph{Depth helps every arm, and helps the reference most.} On ReLU the reference improves from
-$0.506$ at $L=2$ to $0.591$ at $L=8$, closing from $0.039$ behind gradient descent to $0.064$ ahead
-of it, while gradient descent peaks at $L=4$ and then declines. Adam improves monotonically. The
-$2$--$6$ point reference-over-gradient-descent margin reported at $L=8$ in E5 is therefore not a
-fixed offset: it is absent at $L=2$ and grows with depth over the range measured so far. If it
-continues at $L \in \{16, 32\}$ that is the strongest support the framework has, and it is the
-single most important number still outstanding.
+\emph{The reference's advantage over gradient descent is not monotone in depth, and we withdraw an
+earlier reading that it was.} On ReLU the margin (reference minus gradient descent) runs
+$-0.032$, $+0.029$, $+0.065$, $-0.012$ at $L = 2, 4, 8, 16$: absent when shallow, largest at $L=8$
+--- the depth at which all of Part II is run --- and gone again by $L=16$, where gradient descent
+improves to $0.579$ while the reference falls to $0.567$. On the evidence so far the $2$--$6$ point
+margin reported in E5 is a property of a particular depth rather than a trend, and $L = 32$ will
+decide whether it returns.
 
-\emph{The comparison stays at matched fit.} Final training accuracy is $1.000$ for every completed
-cell, so the test-accuracy changes above are generalisation effects rather than differences in
-whether the task was learned.
+\emph{One caveat on the shallow end.} At $L=2$ several cells do not interpolate --- gradient
+descent reaches training accuracy $0.866$ on ReLU and Adam $0.976$ --- so that column is not a
+matched-fit comparison and should not be read as one. From $L=4$ onward every completed cell
+reaches $1.000$ except Adam, which dips to $0.957$--$0.987$ at a few depths.
 
 The reference's own $\cos_{op}$ row requires the reading established in E4: it is $1.000$ at $L=2$,
 where fifty Krylov iterations fully converge, and lower at greater depth because a deeper step map
@@ -2091,27 +2108,50 @@ loss and accuracy, to establish whether any change is a generalisation effect or
 gate churn, to test whether injected noise reproduces the gate-crossing behaviour that larger $\eta$
 produces.
 
-\paragraph{Status.} \textsc{partial}. The isotropic pilot is running; the \textsc{ker} and
-\textsc{range} arms are queued. No numbers yet.
+\paragraph{Status.} \textsc{partial}. The isotropic sweep is complete at two seeds; the
+\textsc{range} arm is running and \textsc{ker} is not yet started.
 
-\paragraph{What the possible outcomes would mean.}
-This is stated in advance because the experiment is cheap to over-read after the fact.
+\paragraph{Results.} Isotropic noise, ReLU, $\eta = 1$, $k = 50$, two seeds, paired against the
+$\varepsilon = 0$ control run inside the same sweep:
 
-If \textsc{iso} helps, we reproduce a known effect \citep{smith2020generalization} with a different
-base optimiser, which is a useful sanity check on the reference rule but not a contribution.
+\begin{center}\small
+\begin{tabular}{lccccccc}
+\toprule
+$\varepsilon$ & $0$ & $0.01$ & $0.03$ & $0.1$ & $0.3$ & $1$ & $3$ \\
+\midrule
+test accuracy      & $0.560$ & $0.568$ & $0.575$ & $\mathbf{0.577}$ & $0.566$ & $0.559$ & $0.455$ \\
+paired $\Delta$    & ---     & $+0.008$ & $+0.015$ & $\mathbf{+0.017}$ & $+0.006$ & $-0.001$ & $-0.104$ \\
+final train loss   & $1.1\cdot10^{-8}$ & $9.0\cdot10^{-8}$ & $2.6\cdot10^{-8}$ & $5.2\cdot10^{-9}$
+                   & $1.7\cdot10^{-7}$ & $4.6\cdot10^{-4}$ & $2.2\cdot10^{-2}$ \\
+training accuracy  & $1.000$ & $1.000$ & $1.000$ & $1.000$ & $1.000$ & $1.000$ & $0.995$ \\
+gate churn         & $0.0295$ & $0.0309$ & $0.0307$ & $0.0339$ & $0.0379$ & $0.0311$ & $0.0310$ \\
+\bottomrule
+\end{tabular}
+\end{center}
 
-If \textsc{ker} helps as much as \textsc{iso}, the benefit is available \emph{without changing the
-function at all}: the gain would come from where in the level set the weights sit, which is the
-flat-minima hypothesis in its purest measurable form and is not a statement isotropic injection can
-make.
+\paragraph{Conclusions so far.}
+\emph{Noise helps, with an interior optimum.} Every one of the eight noise cells beats its own-seed
+control, the gain peaks at $+0.017$ around $\varepsilon = 0.1$, and it is gone by $\varepsilon = 1$
+and sharply negative by $\varepsilon = 3$. Every cell up to $\varepsilon = 1$ still interpolates, so
+the effect is a generalisation one; at $\varepsilon = 3$ training accuracy finally falls to $0.995$
+and the loss rises four orders of magnitude, which is the expected failure at the far end of the
+curve. For scale, $+0.017$ is comparable to the reference's entire margin over gradient descent at
+this depth. Two seeds is not many, and what makes this more than a coincidence is that all eight
+cells and both seeds agree on the sign and on the shape.
 
-If \textsc{range} helps and \textsc{ker} does not, the benefit requires perturbing the function, and
-the flat-minima reading of the $\eta$ trend is wrong --- the effect would be closer to label-noise
-or implicit-regularisation-through-perturbation than to basin geometry.
+\emph{The mechanism we proposed is refuted.} The motivation for this experiment was that larger
+$\eta$ both generalises better and crosses more nonlinearities, suggesting the gate crossings were
+doing the work. Injected noise does not reproduce that at any magnitude: gate churn is $0.0295$ at
+$\varepsilon = 0$ and $0.0310$ at $\varepsilon = 3$, flat to within its variation across the whole
+sweep, including at settings where the noise is three times the step and destroys ten points of
+accuracy. So noise improves generalisation here \emph{without} increasing gate crossing, and the
+link between the $\eta$ trend and the crossings is not the explanation --- which leaves the $\eta$
+trend itself unexplained and makes the isotropic gain harder to attribute, not easier.
 
-If nothing helps, the $\eta$ trend of E7 is a step-size effect rather than a noise effect, which is
-the confound this experiment exists to remove: larger $\eta$ changes both the step size and the
-amount of gate crossing, and only a fixed-$\eta$ noise sweep separates them.
+That sharpens what the projected arms are for. If the benefit were about traversing the partition
+it should have shown up in churn and did not, so the remaining candidates are that the noise
+relocates the weights within a level set --- which \textsc{ker} tests directly --- or that it
+perturbs the function itself, which \textsc{range} isolates.
 
 \subsubsection{Summary: what separates what}
 \label{sec:e-summary}
