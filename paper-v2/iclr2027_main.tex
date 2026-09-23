@@ -245,6 +245,28 @@ requests, one per input:
 \end{equation}
 \end{definition}
 
+\begin{remark}[The reference arm normalises this target, and what that changes]
+\label{rem:normalise}
+Definition~\ref{def:ref} and everything derived from it use $\Delta_\star$ exactly as written above,
+and so does every \emph{diagnostic}: the alignment probe, reachability and deflection are all
+computed against $(-\eta G(x))_x$. The reference \emph{arm}, when used to train, instead supplies
+$\big(-\eta\, G(x)/\|G\|\big)_x$, normalising the residual so that $\eta$ sets the size of the
+requested operator change directly rather than in proportion to the gradient.
+
+This is deliberate --- it is what makes $\eta$ a scale-free target size, and it is why a single
+$\eta$ transfers across depths at which the baselines' learning rates move by two to three orders
+of magnitude (Section~\ref{sec:e2}) --- but it has a consequence that must be stated. The arm does
+not slow down as it converges. At the end of a ReLU run its training loss is $1.4\cdot10^{-10}$
+while its step is still of size $\eta$, roughly $10^{7}$ times the step the unnormalised rule would
+take on that residual. Past interpolation it therefore continues to move at constant speed, driven
+by a normalised residual that is dominated by whichever few samples are least well fit.
+
+Two readings in this paper depend on that. The post-interpolation rank collapse of E9 occurs in
+exactly this regime, and the endpoint values of E5 and E9 are taken while the arm is still moving
+--- which is part of why every number is reported as a last-quarter mean rather than a final value.
+Gradient descent and Adam, whose steps are proportional to the gradient, do come to rest.
+\end{remark}
+
 The target is defined without reference to the parameterisation. It is the statement ``move the
 operator this way'', and it is the reference against which everything below is measured.
 
@@ -1352,8 +1374,8 @@ The correct statement is therefore not that the reference has a low-rank bias. W
 is the arm that preserves operator complexity best, which is what one would expect of a rule that
 removes the parameterisation's contribution to the step. The endpoint table records what the rule
 does once the loss has nothing left to ask of it, which is a different question --- and one that
-depends on an implementation choice noted in Section~\ref{sec:s2}, since the operator arm's step
-size does not decay as the residual does.
+depends on the normalisation recorded in Remark~\ref{rem:normalise}: the operator arm's step size
+does not decay as the residual does, so past interpolation it keeps moving at constant speed.
 
 \paragraph{Conclusions.}
 Gradient descent barely reorganises the operator at any point: it settles at rank $5.7$--$6.5$
