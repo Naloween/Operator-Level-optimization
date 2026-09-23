@@ -1321,19 +1321,51 @@ diversity across arms (right).}
 \label{fig:diversity}
 \end{figure}
 
-\paragraph{Conclusions.}
-The two measures order the arms the same way, and the order is the reverse of what "Adam is the
-aggressive optimiser" would suggest. Gradient descent barely reorganises the operator at all: it
-keeps $79$--$86\%$ of its initial diversity and the highest pointwise rank, $5.75$--$6.52$. Adam
-collapses both moderately. The \emph{reference} collapses both hardest --- to $16$--$23\%$ of
-initial diversity and a pointwise rank of $1.57$--$2.57$, close to a rank-one map at each input and
-close to the same map across inputs.
+\paragraph{The endpoint is misleading on its own.}
+Read as a table of final values this says the reference ends with the simplest operator, which
+invites the conclusion that a rule built to follow the operator gradient carries a strong low-rank
+bias. The trajectory says something different, and we report it because it reverses the reading.
+Pointwise rank along training on ReLU, all arms from the same initialisation:
 
-This is one coherent picture rather than two competing ones, and it agrees with E10, where the
-reference's final-layer representation is two-dimensional to numerical precision. The arm that
-follows the operator gradient most faithfully ends with the simplest operator, and it is the middle
-performer. Whatever Adam's advantage is, it does not sit at either extreme of operator complexity,
-which is what makes this measure another elimination rather than an explanation.
+\begin{center}\small
+\begin{tabular}{lcccccc}
+\toprule
+step & $0$ & $1000$ & $2000$ & $4000$ & $8000$ & $12000$ \\
+\midrule
+gradient descent & $7.02$ & $5.60$ & $5.69$ & $5.70$ & $5.71$ & $5.72$ \\
+Adam             & $7.02$ & $3.86$ & $3.42$ & $2.79$ & $2.02$ & $1.98$ \\
+reference        & $7.02$ & $\mathbf{7.67}$ & $\mathbf{7.30}$ & $\mathbf{7.01}$ & $3.04$ & $1.58$ \\
+\midrule
+reference, train loss & $3.1$ & $3.5\cdot10^{-3}$ & $9.3\cdot10^{-6}$ & $2.4\cdot10^{-8}$
+ & $2.9\cdot10^{-9}$ & $1.4\cdot10^{-10}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent While the reference is learning it holds the \emph{highest} operator rank of the three,
+above even its own initialisation, and it does so through step $4000$ --- by which point the
+training loss is $2.4\cdot10^{-8}$ and the task is long since fit. Adam collapses the rank
+monotonically from the first probe. The reference's collapse happens entirely \emph{after}
+interpolation.
+
+The correct statement is therefore not that the reference has a low-rank bias. While it learns it
+is the arm that preserves operator complexity best, which is what one would expect of a rule that
+removes the parameterisation's contribution to the step. The endpoint table records what the rule
+does once the loss has nothing left to ask of it, which is a different question --- and one that
+depends on an implementation choice noted in Section~\ref{sec:s2}, since the operator arm's step
+size does not decay as the residual does.
+
+\paragraph{Conclusions.}
+Gradient descent barely reorganises the operator at any point: it settles at rank $5.7$--$6.5$
+within the first thousand steps and stays there, keeping $79$--$86\%$ of its initial diversity.
+Adam reduces both steadily throughout training. The reference preserves both while it learns, then
+reduces them afterwards.
+
+None of these orderings matches the accuracy ordering, at the endpoint or along the way, so the
+measure is another elimination rather than an explanation. Its value is the negative one: operator
+complexity, pointwise or across inputs, does not predict generalisation here --- and the arm that
+follows the operator gradient most faithfully is, while it is learning, the one that keeps the
+\emph{most} operator complexity, not the least.
 
 The \emph{shared} column separates the two architectures and is worth a line. On CReLU the
 reference retains a large common component ($0.095$ against Adam's $0.013$), so its collapse is
@@ -2168,8 +2200,8 @@ $\cos_{op}$ (E4)                 & $0.20$--$0.25$ & $0.04$--$0.07$ & $0.29$--$0.
 $\cos_w$ (E4)                    & $0.12$--$0.26$ & $0.00$--$0.07$ & $0.13$--$0.35$ & all three \\
 reachability $\alpha$ (E3)       & $1.000$        & $0.80$--$1.00$ & $0.99$--$1.00$ & nothing \\
 $\ker M$ fraction (E4)           & $0.0000$       & $0.49$--$0.62$ & $0.001$        & Adam, structurally \\
-operator rank (E9)               & $5.8$--$6.5$   & $2.0$--$3.3$   & $1.6$--$2.6$   & all three, same order as diversity \\
-operator diversity (E9)          & $79$--$86\%$   & $42$--$69\%$   & $16$--$23\%$   & all three, same order as rank \\
+operator rank (E9)$^\dagger$     & $5.8$--$6.5$   & $2.0$--$3.3$   & $1.6$--$2.6$   & all three, same order as diversity \\
+operator diversity (E9)$^\dagger$ & $79$--$86\%$  & $42$--$69\%$   & $16$--$23\%$   & all three, same order as rank \\
 switching fraction (E8)          & $0.996$--$1.000$ & $0.91$--$1.00$ & $0.71$--$0.76$ & the reference from both \\
 region concentration (E11)       & baseline       & $+0.001$--$0.02$ & $+0.09$--$0.15$ & the reference from both \\
 CW-PGD$_{0.05}$ / clean (E16)    & $58$--$59\%$   & $65$--$66\%$   & $62$--$65\%$   & nothing \\
@@ -2179,11 +2211,14 @@ test accuracy (E5)               & $0.51$--$0.53$ & $0.61$--$0.66$ & $0.55$--$0.
 \end{tabular}
 \end{center}
 
+$^\dagger$ These two rows are \emph{endpoint} values and E9 shows they invert along the way: the
+reference holds the highest pointwise rank of the three --- above its own initialisation --- for as
+long as it is learning, and collapses only after interpolation. Read the row as where each arm
+stops, not as what it does.
+
 Two groups emerge. Switching and region concentration separate the \emph{reference from both
-baselines}. Operator rank and diversity, which agree with each other, order all three --- but
-monotonically in the \emph{opposite} direction to accuracy: gradient descent keeps the most
-operator complexity and generalises worst, the reference keeps the least and sits in the middle,
-Adam is between them on both and generalises best. So neither grouping matches the accuracy
+baselines}. Operator rank and diversity, which agree with each other, order all three at the
+endpoint, in the \emph{opposite} direction to accuracy. So neither grouping matches the accuracy
 ordering, and in particular nothing here explains the gradient-descent--Adam gap, which is the
 largest of the three: on region concentration the two are statistically indistinguishable
 ($t = +0.1$ on CReLU), and on switching they differ in the wrong direction.
