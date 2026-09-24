@@ -221,6 +221,85 @@ def test_kfac_shapes():
         assert drift == 0.0
 
 
+def test_kfac_fisher_factor_scaling():
+    """K-FAC's G factor must be built from PER-EXAMPLE pre-activation gradients.
+
+    The Fisher block is A (x) G with G = E[d d^T] and d = dL_i/ds, the gradient of the per-example
+    loss. Backprop through a mean loss delivers d/n, so an implementation must undo the batch mean
+    -- the reference implementation writes `z_grads[k] * B` with that comment. Ours takes the
+    residual directly and forms d = A_k^T r, which is already per-example, so `step_for` must pass
+    R and not R/n.
+
+    Getting this wrong is silent and severe: G is then n^2 too small while the damping stays
+    fixed, so the effective damping is n^2 too large, both factors collapse toward a multiple of
+    the identity, and K-FAC degenerates into rescaled gradient descent. It measured cos 0.89 to
+    the plain gradient step that way, against 0.16 when correct. Nothing raises; the optimiser
+    simply stops being K-FAC.
+    """
+    import baselines, gpu, exp
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    n, arch = 100, "relu"
+    Ws = [w.double() for w in gpu.init_net(40, 128, 10, 8, arch, 0, dev)]
+    D = exp.mnist1d(4000, 1000, 1000, 0, dev)
+    X, Y = D["Xtr"][:n].double(), D["Ytr"][:n]
+    out, _ = gpu.forward(Ws, X, arch)
+    _, R, _ = exp.ce(out, Y)
+    R = R.double()
+    grad = gpu.coord_grad(Ws, X, R / n, arch)
+    gflat = torch.cat([x.reshape(-1) for x in grad])
+
+    step = exp.step_for("kfac", Ws, X, R, 1e-3, arch, {}, 0)
+    sflat = torch.cat([x.reshape(-1) for x in step])
+    cos = float(sflat @ (-gflat) / (sflat.norm() * gflat.norm()))
+    assert cos < 0.5, (
+        f"kfac step is cos {cos:.3f} to the plain gradient step: the preconditioner is doing "
+        f"almost nothing, which is what an n^2 factor-scaling error looks like")
+    print(f"  [ok ] kfac preconditions rather than rescaling: cos to -grad {cos:.3f} (want < 0.5)")
+
+
+def test_kfac_survives_singular_factors():
+    """K-FAC must not crash when a Kronecker factor is singular, which here is always.
+
+    A_k = h^T h / n and G_k = d^T d / n are built from a batch of n samples at width w. Whenever
+    n < w -- the standard case in this paper, n = 100 against w = 128 -- both are rank-deficient by
+    construction and the solve is well posed only because of the damping. The pi split can remove
+    that damping from one factor (it multiplies one and divides the other), and the first version
+    of this file then raised `torch.linalg.solve: singular matrix` a few seconds into a run. That
+    read like K-FAC diverging at a large learning rate and was not: it was this implementation
+    failing. The guard is a clamp on pi plus a floor on each factor's damping relative to its own
+    scale.
+
+    This test drives pi to both extremes by scaling the residual, which scales G without touching
+    A, and asks only that the step stay finite.
+    """
+    import baselines, gpu, exp
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    Ws = gpu.init_net(40, 128, 10, 8, "relu", 0, dev)
+    D = exp.mnist1d(4000, 1000, 1000, 0, dev)
+    X, Y = D["Xtr"][:100], D["Ytr"][:100]
+    out, gs = gpu.forward(Ws, X, "relu")
+    _, R, _ = exp.ce(out, Y)
+    A, B = gpu.contexts(Ws, gs, X, "relu")
+    n = X.shape[0]
+    rankA = min(n, Ws[4].shape[1])
+    assert rankA < Ws[4].shape[1] or n < Ws[4].shape[1], "test assumes rank deficiency"
+    worst = 0.0
+    for scale in (1e-8, 1e-4, 1.0, 1e4, 1e8):
+        Rs = R * scale
+        grad = []
+        for k in range(len(Ws)):
+            d = torch.einsum("nji,nj->ni", A[k], Rs)
+            h = torch.einsum("nij,nj->ni", B[k], X)
+            grad.append(d.T @ h / n)
+        for lr in (0.01, 0.1, 0.3):
+            step = baselines.kfac(Ws, X, Rs / n, grad, {}, (lr,), "relu", True)
+            ok = all(torch.isfinite(t).all().item() for t in step)
+            assert ok, f"kfac produced non-finite step at scale {scale}, lr {lr}"
+            worst = max(worst, max(float(t.abs().max()) for t in step))
+    print(f"  [ok ] kfac stays finite across 1e16 of residual scaling "
+          f"(factors rank <= {n} at width 128); largest |step| {worst:.2e}")
+
+
 if __name__ == "__main__":
     print(REFERENCE_NOTES)
     print("agreement with the published algorithms:")
@@ -233,4 +312,6 @@ if __name__ == "__main__":
     test_scoring_does_not_mutate()
     print("kfac on the real chain:")
     test_kfac_shapes()
+    test_kfac_fisher_factor_scaling()
+    test_kfac_survives_singular_factors()
     print("all baseline tests passed")

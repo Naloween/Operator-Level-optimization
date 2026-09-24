@@ -92,8 +92,10 @@ def fig_partitions(runs, arch="relu", seed=0, lim=2.2, n=420, dev=None):
     fig, axes = plt.subplots(1, len(arms), figsize=(4.6 * len(arms), 4.5), squeeze=False)
     for ax, arm in zip(axes[0], arms):
         c, r, d = load_arm(runs, arch, arm, seed)
-        s = snaps(d)
-        Ws = [w.to(dev) for w in torch.load(s[-1][1], map_location=dev,
+        # The convergence-phase snapshot, not the last: the operator arm's partition keeps moving
+        # after interpolation (E9), so its final slice is not the one it built while learning.
+        cs = analysis.conv_snapshot(r, d)
+        Ws = [w.to(dev) for w in torch.load(cs[1], map_location=dev,
                                             weights_only=False)["Ws"]]
         lab, marg = decision(Ws, X, arch, A.shape)
         E = partition_edges(Ws, X, arch, A.shape)
@@ -197,7 +199,7 @@ def fig_data_slice(runs, arch="relu", seed=0, anchors=(0, 1, 2), n=360, lim=(-0.
     A, B, G, anc = data_plane(D, idx, lim, n, dev)
     arms = []
     for arm in ("gd", "adam", "op"):
-        got = analysis.pick(runs, arch, arm, width=128, steps=12000, by="stable")
+        got = analysis.pick_converged(runs, arch, arm, width=128, steps=12000)
         if not got:
             continue
         _, g = got
@@ -207,8 +209,10 @@ def fig_data_slice(runs, arch="relu", seed=0, anchors=(0, 1, 2), n=360, lim=(-0.
         return None
     fig, axes = plt.subplots(1, len(arms), figsize=(4.7 * len(arms), 4.7), squeeze=False)
     for ax, (arm, (c, r, d)) in zip(axes[0], arms):
-        s = snaps(d)
-        Ws = [w.to(dev) for w in torch.load(s[-1][1], map_location=dev,
+        # The convergence-phase snapshot, not the last: the operator arm's partition keeps moving
+        # after interpolation (E9), so its final slice is not the one it built while learning.
+        cs = analysis.conv_snapshot(r, d)
+        Ws = [w.to(dev) for w in torch.load(cs[1], map_location=dev,
                                             weights_only=False)["Ws"]]
         with torch.no_grad():
             out, _ = gpu.forward(Ws, G, arch)
@@ -261,13 +265,14 @@ def fig_complexity_vs_distance(runs, arch="relu", seed=0, n=360, lim=(-0.6, 1.6)
     ctr = 0.5 * (edges[1:] + edges[:-1])
     fig, ax = plt.subplots(figsize=(6.4, 4.4))
     for arm in ("gd", "adam", "op"):
-        got = analysis.pick(runs, arch, arm, width=128, steps=12000, by="stable")
+        got = analysis.pick_converged(runs, arch, arm, width=128, steps=12000)
         if not got:
             continue
         _, g = got
         cand = [z for z in g if z[0]["seed"] == seed] or g
         c, r, d = cand[0]
-        Ws = [w.to(dev) for w in torch.load(snaps(d)[-1][1], map_location=dev,
+        cs = analysis.conv_snapshot(r, d)
+        Ws = [w.to(dev) for w in torch.load(cs[1], map_location=dev,
                                             weights_only=False)["Ws"]]
         E = partition_edges(Ws, G, arch, A.shape).ravel().astype(float)
         dens = [E[(dist >= edges[i]) & (dist < edges[i + 1])].mean() for i in range(nbins)]
@@ -323,7 +328,7 @@ def fig_slice_with_knn(runs, arch="relu", seed=0, n=360, lim=(-0.6, 1.6), knn_k=
     A, B, G, anc = data_plane(D, idx, lim, n, dev)
     panels = []
     for arm in ("gd", "adam", "op"):
-        got = analysis.pick(runs, arch, arm, width=128, steps=12000, by="stable")
+        got = analysis.pick_converged(runs, arch, arm, width=128, steps=12000)
         if not got:
             continue
         _, g = got
@@ -332,7 +337,8 @@ def fig_slice_with_knn(runs, arch="relu", seed=0, n=360, lim=(-0.6, 1.6), knn_k=
     fig, axes = plt.subplots(1, len(panels) + 1, figsize=(4.5 * (len(panels) + 1), 4.6),
                              squeeze=False)
     for ax, (arm, (c, r, d)) in zip(axes[0], panels):
-        Ws = [w.to(dev) for w in torch.load(snaps(d)[-1][1], map_location=dev,
+        cs = analysis.conv_snapshot(r, d)
+        Ws = [w.to(dev) for w in torch.load(cs[1], map_location=dev,
                                             weights_only=False)["Ws"]]
         with torch.no_grad():
             out, _ = gpu.forward(Ws, G, arch)
@@ -397,16 +403,19 @@ def complexity_curves(runs, arch="relu", seeds=(0, 1, 2), n_planes=8, n=240,
             chosen.append([int(rng.choice(np.where(y == c)[0])) for c in cls])
         loaded = {}
         for arm in ("gd", "adam", "op"):
-            got = analysis.pick(runs, arch, arm, width=128, steps=steps, by="stable")
+            got = analysis.pick_converged(runs, arch, arm, width=128, steps=steps)
             if not got:
                 continue
             _, g = got
             cand = [z for z in g if z[0]["seed"] == seed] or g
             c, r, d = cand[0]
-            s = snaps(d)
-            if not s:
+            # The convergence-phase snapshot, not the last one. The reference keeps moving after
+            # interpolation (see the E9 rank collapse), so its final partition is not the one it
+            # built while learning.
+            cs = analysis.conv_snapshot(r, d)
+            if cs is None:
                 continue
-            loaded[arm] = [w.to(dev) for w in torch.load(s[-1][1], map_location=dev,
+            loaded[arm] = [w.to(dev) for w in torch.load(cs[1], map_location=dev,
                                                          weights_only=False)["Ws"]]
         for idx in chosen:
             A, B, G, anc = data_plane(D, idx, lim, n, dev)

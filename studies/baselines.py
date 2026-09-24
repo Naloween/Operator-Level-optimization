@@ -281,8 +281,30 @@ def kfac(Ws, X, R, g, state, hyper, arch, mutate=True):
         trG = float(Gcov[k].diagonal().sum()) / Gcov[k].shape[0]
         pi = (max(trA, 1e-30) / max(trG, 1e-30)) ** 0.5
         rl = (damping + eps) ** 0.5
-        nat = (torch.linalg.solve(Gcov[k] + (rl / pi) * eG, eG) @ g[k]
-               @ torch.linalg.solve(Acov[k] + (rl * pi) * eA, eA))
+        # Both factors are SINGULAR BY CONSTRUCTION here: A_k = h^T h / n and G_k = d^T d / n are
+        # built from a batch of n = 100 samples at width 128, so their rank is at most 100 < 128.
+        # The solve is therefore well posed only because of the damping, and the pi split can take
+        # that away: pi multiplies one factor's damping and divides the other's, so a large pi
+        # leaves G with rl/pi ~ 0 and torch.linalg.solve raises on a singular matrix. That is a
+        # numerical failure of this implementation, not divergence of K-FAC, and it is exactly what
+        # it looked like -- crashes seconds into a run rather than blow-ups late in one.
+        # Two guards, neither of which changes the method where it was already working: clamp the
+        # split so it cannot become pathological, and floor each factor's damping relative to that
+        # factor's own scale so positive-definiteness is guaranteed whatever pi does.
+        pi = min(max(pi, 1e-4), 1e4)
+        dA = max(rl * pi, 1e-6 * max(trA, 1e-30))
+        dG = max(rl / pi, 1e-6 * max(trG, 1e-30))
+        for _ in range(6):                       # escalate if it still fails, rather than crash
+            try:
+                nat = torch.cholesky_solve(
+                    (torch.cholesky_solve(g[k], torch.linalg.cholesky(Gcov[k] + dG * eG))
+                     ).T.contiguous(),
+                    torch.linalg.cholesky(Acov[k] + dA * eA)).T.contiguous()
+                break
+            except Exception:
+                dA, dG = dA * 10, dG * 10
+        else:
+            nat = g[k]                            # fully damped: fall back to the gradient step
         out.append(-lr * nat)
     if mutate and fresh:
         state["kf_A"], state["kf_G"] = Acov, Gcov

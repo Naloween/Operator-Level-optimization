@@ -310,14 +310,46 @@ def _restore_state(z, dev):
     return st
 
 
-def step_for(arm, Ws, X, R, hyper, arch, state, step, dtype_ok=False):
-    """The update each arm would take. `state` holds Adam's moments and is updated in place.
+# Which buffer each stateful arm needs before its step means anything. Scoring one of these from
+# an empty state does not measure the rule: heavy ball with a zero momentum buffer takes the plain
+# gradient step (which lies in range(M^T) BY CONSTRUCTION), Adam with m = v = 0 takes sign(g), and
+# K-FAC with no accumulated covariances takes a single-batch natural gradient. That mistake has
+# produced two wrong measurements in this project -- the ker M fractions of E4 and E18, where heavy
+# ball read 0.0002 because it was scored as plain gradient descent -- so `step_for` now refuses
+# rather than silently returning some other optimiser's step.
+_ARM_STATE = {"opmom": "u", "heavyball": "hb", "muon": "muon", "shampoo": "sh_L",
+              "soap": "so_m", "kfac": "kf_A"}
+
+
+def requires_state(arm):
+    """The state key `arm` must carry for a scored step to be that arm's step, or None."""
+    return _ARM_STATE.get(arm)
+
+
+def step_for(arm, Ws, X, R, hyper, arch, state, step, dtype_ok=False, allow_cold=False):
+    """The update each arm would take. `state` holds the optimiser buffers, updated in place.
+
+    SCORING A STATEFUL ARM: pass the state that arm's own trajectory produced. Scoring with an
+    empty state silently evaluates a different rule (see `_ARM_STATE`), so that raises unless
+    `allow_cold=True` says the cold-start step is genuinely what is wanted.
 
     `switch` hands over from one rule to another partway through training, to ask WHEN an
     optimiser's advantage is created: if Adam's benefit is established in the first few hundred
     steps and merely preserved thereafter, a run that starts with Adam and finishes with the
     reference should keep it. If the benefit requires Adam throughout, it should not.
     """
+    # Only on the SCORING path, and never at step 0. Training legitimately starts without the
+    # buffer and creates it on the first step; the alignment probe also runs at step 0, BEFORE
+    # that first step, so a cold state there is correct rather than a mistake -- guarding it
+    # raised on every cell of a stateful arm and killed a whole K-FAC sweep in 8.8 minutes.
+    # What the guard is for is scoring a rule at step t > 0 with a state its own trajectory never
+    # produced, which is how the ker M fractions of E4 and E18 came out wrong.
+    need = _ARM_STATE.get(arm)
+    if dtype_ok and step > 0 and need is not None and not allow_cold and need not in state:
+        raise ValueError(
+            f"step_for({arm!r}) called without its {need!r} buffer: a cold {arm} step is a "
+            f"different optimiser, not {arm}. Pass the run's own state, or allow_cold=True if "
+            f"the cold-start step is genuinely what you want.")
     n = X.shape[0]
     if arm == "opmom":
         # Momentum on the STEP, not on a gradient. The reference step already carries eta, so
@@ -401,7 +433,14 @@ def step_for(arm, Ws, X, R, hyper, arch, state, step, dtype_ok=False):
             return baselines.shampoo(g, state, h, mutate)
         if arm == "soap":
             return baselines.soap(g, state, h, step, mutate)
-        return baselines.kfac(Ws, X, R / n, g, state, h, arch, mutate)
+        # R, not R/n. K-FAC's G factor is the covariance of the PER-EXAMPLE pre-activation
+        # gradient, so it must not carry the batch mean: the original implementation writes
+        # `z_grads[k] * B  # undo the batch mean` for exactly this reason. Passing R/n here made
+        # G a factor n^2 too small while the damping stayed fixed, which multiplied the effective
+        # damping by n^2 and left both factors effectively replaced by a multiple of the identity
+        # -- measured: the step was then cos 0.89 to plain gradient descent instead of cos 0.16.
+        # `g` is and must remain the MEAN gradient; only the Fisher factors change here.
+        return baselines.kfac(Ws, X, R, g, state, h, arch, mutate)
     b1, b2, e = 0.9, 0.999, 1e-8
     m, v = state["m"], state["v"]
     out = []

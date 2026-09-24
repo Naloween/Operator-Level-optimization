@@ -1,0 +1,13 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.26 (TeX Live 2025/dev/Debian) (preloaded format=pdflatex)
+ restricted \write18 enabled.
+entering extended mode
+! I can't find file `iclr2027_main.tex'.
+<*> iclr2027_main.tex
+                     
+(Press Enter to retry, or Control-D to exit)
+Please type another input file name
+! Emergency stop.
+<*> iclr2027_main.tex
+                     
+!  ==> Fatal error occurred, no output PDF file produced!
+Transcript written on texput.log.
